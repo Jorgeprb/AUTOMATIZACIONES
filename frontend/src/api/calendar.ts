@@ -2,9 +2,23 @@ import { apiRequest } from "@/api/client";
 import type {
   CalendarList,
   CalendarStatus,
+  GoogleOAuthDiagnostics,
+  GoogleOAuthStartUrl,
   WorkerCalendarResult,
   WorkerFreeBusyResult,
 } from "@/schemas/domain";
+
+export function getGoogleOAuthDiagnostics(
+  clinicId: string,
+): Promise<GoogleOAuthDiagnostics> {
+  return apiRequest(`/api/admin/clinics/${clinicId}/google-oauth/diagnostics`);
+}
+
+export function getGoogleOAuthStartUrl(
+  clinicId: string,
+): Promise<GoogleOAuthStartUrl> {
+  return apiRequest(`/api/admin/clinics/${clinicId}/google-oauth/start-url`);
+}
 
 export function getCalendarStatus(clinicId: string): Promise<CalendarStatus> {
   return apiRequest(`/api/admin/clinics/${clinicId}/calendar-status`);

@@ -530,9 +530,14 @@ chmod +x deploy.sh scripts/backup_postgres.sh
 Guía completa:
 
 - [Despliegue en VPS](docs/deployment-vps.md)
+- [Despliegue en Render](docs/deployment-render.md)
 - [Privacidad del MVP](docs/privacy-mvp.md)
 - [Prompts dinámicos por clínica](docs/dynamic-clinic-prompts.md)
 - [VoIP Studio y OpenAI SIP](docs/voipstudio-openai-sip.md)
+
+También puedes desplegar el monorepo en Render con `../render.yaml`: backend
+Docker, frontend Static Site y PostgreSQL gestionado. Render ejecuta
+`alembic upgrade head` como `preDeployCommand` y el backend usa `PORT`.
 
 En producción:
 

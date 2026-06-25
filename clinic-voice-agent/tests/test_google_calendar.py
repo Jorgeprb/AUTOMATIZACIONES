@@ -4,19 +4,25 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Callable, Generator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
+import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.calendar.auth import (
     GOOGLE_CALENDAR_SCOPES,
     complete_google_oauth,
     create_google_authorization_request,
     decode_google_oauth_state,
+    diagnose_google_oauth_configuration,
     save_google_credentials,
 )
 from app.calendar.google_client import (
@@ -27,10 +33,54 @@ from app.calendar.google_client import (
     list_available_calendars,
 )
 from app.calendar.scheduler import build_worker_event_body, query_freebusy
-from app.config import Settings
+from app.config import Settings, get_settings
+from app.db import get_db
 from app.main import create_app
 from app.models import AppointmentSource, Clinic, GoogleCredential, Worker
 from app.utils.security import TokenCipher
+
+ADMIN_KEY = "test-admin-api-key-with-32-characters"
+ADMIN_HEADERS = {"X-Admin-API-Key": ADMIN_KEY}
+
+
+def _factory(engine: Engine) -> sessionmaker[Session]:
+    return sessionmaker(
+        bind=engine,
+        class_=Session,
+        expire_on_commit=False,
+    )
+
+
+def _db_override(
+    factory: sessionmaker[Session],
+) -> Callable[[], Generator[Session, None, None]]:
+    def override() -> Generator[Session, None, None]:
+        with factory() as session:
+            yield session
+
+    return override
+
+
+def _app(engine: Engine, settings: Settings) -> FastAPI:
+    app = create_app(settings)
+    app.dependency_overrides[get_db] = _db_override(_factory(engine))
+    app.dependency_overrides[get_settings] = lambda: settings
+    return app
+
+
+def _valid_oauth_settings(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "_env_file": None,
+        "admin_api_key": ADMIN_KEY,
+        "google_client_id": "1234567890-test.apps.googleusercontent.com",
+        "google_client_secret": "GOCSPX-real-looking-secret",
+        "google_redirect_uri": "https://voice.test/auth/google/callback",
+        "google_token_encryption_key": "8O2kjVBitzftnS456ehnuY5iSmFpJbqJNUnWVallRe4=",
+        "public_base_url": "https://voice.test",
+        "frontend_base_url": "http://localhost:5173",
+    }
+    values.update(overrides)
+    return Settings(**values)
 
 
 def test_oauth_authorization_request_contains_offline_access() -> None:
@@ -354,6 +404,110 @@ def test_freebusy_and_event_metadata_support_independent_workers() -> None:
         "source": "voice_bot",
         "call_id": "call-test",
     }
+
+
+def test_oauth_diagnostics_detect_invalid_fernet_key() -> None:
+    """Bad token encryption keys should be reported before OAuth starts."""
+    settings = _valid_oauth_settings(
+        google_token_encryption_key="not-a-fernet-key",
+    )
+
+    diagnostics = diagnose_google_oauth_configuration(settings)
+
+    assert diagnostics.configured is False
+    assert diagnostics.can_start_oauth is False
+    assert any(
+        issue.variable == "GOOGLE_TOKEN_ENCRYPTION_KEY"
+        and issue.severity == "error"
+        and "Fernet" in issue.message
+        for issue in diagnostics.issues
+    )
+
+
+@pytest.mark.anyio
+async def test_google_oauth_bad_config_returns_clear_errors(
+    database_engine: Engine,
+) -> None:
+    """Malformed .env values must not become an Internal Server Error."""
+    settings = _valid_oauth_settings(
+        google_client_id="replace-with-google-client-id",
+        google_client_secret="replace-with-google-client-secret",
+        google_redirect_uri="https://replace-me.ngrok-free.app/auth/google/callback",
+        google_token_encryption_key="replace-with-a-generated-fernet-key",
+    )
+    clinic = Clinic(
+        name="Clínica OAuth Bad",
+        timezone="Europe/Madrid",
+        phone_number="+34910000190",
+    )
+    factory = _factory(database_engine)
+    with factory() as session:
+        session.add(clinic)
+        session.commit()
+        clinic_id = clinic.id
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(database_engine, settings)),
+        base_url="http://testserver",
+    ) as client:
+        diagnostics = await client.get(
+            f"/api/admin/clinics/{clinic_id}/google-oauth/diagnostics",
+            headers=ADMIN_HEADERS,
+        )
+        start_url = await client.get(
+            f"/api/admin/clinics/{clinic_id}/google-oauth/start-url",
+            headers=ADMIN_HEADERS,
+        )
+        public_start = await client.get(
+            f"/auth/google/start?clinic_id={clinic_id}",
+            follow_redirects=False,
+        )
+
+    assert diagnostics.status_code == 200
+    payload = diagnostics.json()
+    assert payload["configured"] is False
+    assert payload["can_start_oauth"] is False
+    assert "GOOGLE_TOKEN_ENCRYPTION_KEY" in {
+        issue["variable"] for issue in payload["issues"]
+    }
+    assert start_url.status_code == 503
+    assert "GOOGLE_TOKEN_ENCRYPTION_KEY" in start_url.text
+    assert public_start.status_code == 503
+    assert "GOOGLE_TOKEN_ENCRYPTION_KEY" in public_start.text
+
+
+@pytest.mark.anyio
+async def test_google_oauth_start_url_returns_google_url_when_configured(
+    database_engine: Engine,
+) -> None:
+    """The panel should receive a usable Google OAuth URL when .env is valid."""
+    settings = _valid_oauth_settings()
+    clinic = Clinic(
+        name="Clínica OAuth Good",
+        timezone="Europe/Madrid",
+        phone_number="+34910000191",
+    )
+    factory = _factory(database_engine)
+    with factory() as session:
+        session.add(clinic)
+        session.commit()
+        clinic_id = clinic.id
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(database_engine, settings)),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.get(
+            f"/api/admin/clinics/{clinic_id}/google-oauth/start-url",
+            headers=ADMIN_HEADERS,
+        )
+
+    assert response.status_code == 200
+    authorization_url = response.json()["authorization_url"]
+    query = parse_qs(urlparse(authorization_url).query)
+    assert authorization_url.startswith("https://accounts.google.com/")
+    assert query["redirect_uri"] == ["https://voice.test/auth/google/callback"]
+    assert query["access_type"] == ["offline"]
 
 
 def test_google_calendar_routes_are_registered() -> None:

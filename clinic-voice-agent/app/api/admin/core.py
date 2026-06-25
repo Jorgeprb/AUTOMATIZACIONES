@@ -43,6 +43,11 @@ from app.api.admin.common import (
 )
 from app.api.calendar import calendar_status, list_calendars
 from app.api.workers import create_worker_calendar, link_worker_calendar
+from app.calendar.auth import (
+    GoogleOAuthConfigurationError,
+    create_google_authorization_request,
+    diagnose_google_oauth_configuration,
+)
 from app.calendar.google_client import (
     GoogleAuthorizationRequired,
     get_authorized_calendar_client,
@@ -66,6 +71,9 @@ from app.schemas import (
     CalendarListResponse,
     CalendarStatusResponse,
     FreeBusyPeriodResponse,
+    GoogleOAuthDiagnosticIssueResponse,
+    GoogleOAuthDiagnosticResponse,
+    GoogleOAuthStartUrlResponse,
     WorkerCalendarCreateRequest,
     WorkerCalendarLinkRequest,
     WorkerCalendarResponse,
@@ -461,7 +469,7 @@ def delete_worker(
 @router.get(
     "/clinics/{clinic_id}/calendar-status",
     response_model=CalendarStatusResponse,
-    tags=["Admin · Workers"],
+    tags=["Admin · Google Calendar"],
 )
 def get_admin_calendar_status(
     clinic_id: uuid.UUID,
@@ -473,9 +481,79 @@ def get_admin_calendar_status(
 
 
 @router.get(
+    "/clinics/{clinic_id}/google-oauth/diagnostics",
+    response_model=GoogleOAuthDiagnosticResponse,
+    tags=["Admin · Google Calendar"],
+)
+def get_admin_google_oauth_diagnostics(
+    clinic_id: uuid.UUID,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> GoogleOAuthDiagnosticResponse:
+    """Return safe Google OAuth configuration and connection diagnostics."""
+    clinic_or_404(session, clinic_id)
+    configuration = diagnose_google_oauth_configuration(settings)
+    connected = False
+    needs_reauthorization = False
+    account_email: str | None = None
+    status_payload: CalendarStatusResponse | None = None
+    if configuration.can_start_oauth:
+        status_payload = calendar_status(clinic_id, session, settings)
+        connected = status_payload.connected
+        needs_reauthorization = status_payload.needs_reauthorization
+        account_email = status_payload.account_email
+    return GoogleOAuthDiagnosticResponse(
+        clinic_id=clinic_id,
+        configured=configuration.configured,
+        can_start_oauth=configuration.can_start_oauth,
+        connected=connected,
+        needs_reauthorization=needs_reauthorization,
+        account_email=account_email,
+        redirect_uri=configuration.redirect_uri,
+        public_base_url=configuration.public_base_url,
+        frontend_base_url=configuration.frontend_base_url,
+        issues=[
+            GoogleOAuthDiagnosticIssueResponse(
+                variable=issue.variable,
+                severity=issue.severity,
+                message=issue.message,
+                help=issue.help,
+            )
+            for issue in configuration.issues
+        ],
+    )
+
+
+@router.get(
+    "/clinics/{clinic_id}/google-oauth/start-url",
+    response_model=GoogleOAuthStartUrlResponse,
+    tags=["Admin · Google Calendar"],
+)
+def get_admin_google_oauth_start_url(
+    clinic_id: uuid.UUID,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> GoogleOAuthStartUrlResponse:
+    """Return the Google authorization URL only when OAuth settings are valid."""
+    clinic_or_404(session, clinic_id)
+    try:
+        authorization = create_google_authorization_request(settings, clinic_id)
+    except GoogleOAuthConfigurationError as exc:
+        variables = ", ".join(issue.variable for issue in exc.issues)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Google OAuth is not configured correctly. Check: {variables}.",
+        ) from exc
+    return GoogleOAuthStartUrlResponse(
+        clinic_id=clinic_id,
+        authorization_url=authorization.authorization_url,
+    )
+
+
+@router.get(
     "/clinics/{clinic_id}/calendars",
     response_model=CalendarListResponse,
-    tags=["Admin · Workers"],
+    tags=["Admin · Google Calendar"],
 )
 def list_admin_calendars(
     clinic_id: uuid.UUID,
@@ -489,7 +567,7 @@ def list_admin_calendars(
 @router.post(
     "/clinics/{clinic_id}/workers/{worker_id}/create-calendar",
     response_model=WorkerCalendarResponse,
-    tags=["Admin · Workers"],
+    tags=["Admin · Google Calendar"],
 )
 def create_admin_worker_calendar(
     clinic_id: uuid.UUID,
@@ -509,7 +587,7 @@ def create_admin_worker_calendar(
 @router.post(
     "/clinics/{clinic_id}/workers/{worker_id}/link-calendar",
     response_model=WorkerCalendarResponse,
-    tags=["Admin · Workers"],
+    tags=["Admin · Google Calendar"],
 )
 def link_admin_worker_calendar(
     clinic_id: uuid.UUID,
@@ -526,7 +604,7 @@ def link_admin_worker_calendar(
 @router.post(
     "/clinics/{clinic_id}/workers/{worker_id}/test-freebusy",
     response_model=WorkerFreeBusyTestResponse,
-    tags=["Admin · Workers"],
+    tags=["Admin · Google Calendar"],
 )
 def test_admin_worker_freebusy(
     clinic_id: uuid.UUID,

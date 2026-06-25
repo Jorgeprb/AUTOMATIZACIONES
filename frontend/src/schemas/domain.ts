@@ -293,6 +293,31 @@ export interface CalendarStatus {
   workers_linked: number;
 }
 
+export interface GoogleOAuthDiagnosticIssue {
+  variable: string;
+  severity: "error" | "warning";
+  message: string;
+  help: string;
+}
+
+export interface GoogleOAuthDiagnostics {
+  clinic_id: string;
+  configured: boolean;
+  can_start_oauth: boolean;
+  connected: boolean;
+  needs_reauthorization: boolean;
+  account_email: string | null;
+  redirect_uri: string | null;
+  public_base_url: string | null;
+  frontend_base_url: string;
+  issues: GoogleOAuthDiagnosticIssue[];
+}
+
+export interface GoogleOAuthStartUrl {
+  clinic_id: string;
+  authorization_url: string;
+}
+
 export interface CalendarInfo {
   id: string;
   summary: string;

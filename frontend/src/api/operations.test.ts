@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { linkWorkerCalendar } from "@/api/calendar";
+import {
+  getGoogleOAuthDiagnostics,
+  getGoogleOAuthStartUrl,
+  linkWorkerCalendar,
+} from "@/api/calendar";
 import { apiRequest, toQuery } from "@/api/client";
 import { activateAssistantConfig } from "@/api/assistants";
 import { cancelAppointment } from "@/api/appointments";
@@ -73,6 +77,20 @@ describe("operational API calls", () => {
           color_id: "7",
         }),
       },
+    );
+  });
+
+  it("loads Google OAuth diagnostics and safe start URL", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ configured: false });
+    await getGoogleOAuthDiagnostics("clinic-1");
+    await getGoogleOAuthStartUrl("clinic-1");
+    expect(apiRequest).toHaveBeenNthCalledWith(
+      1,
+      "/api/admin/clinics/clinic-1/google-oauth/diagnostics",
+    );
+    expect(apiRequest).toHaveBeenNthCalledWith(
+      2,
+      "/api/admin/clinics/clinic-1/google-oauth/start-url",
     );
   });
 

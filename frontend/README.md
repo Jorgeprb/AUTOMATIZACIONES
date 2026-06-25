@@ -28,11 +28,19 @@ El backend debe permitir el origen:
 
 ```dotenv
 CORS_ORIGINS=http://localhost:5173
+FRONTEND_BASE_URL=http://localhost:5173
 ```
 
-La API key se inyecta en el build de Vite. Esto solo es aceptable para el MVP
-local. Antes de publicar el panel se necesita login y una capa servidor que no
-exponga `ADMIN_API_KEY` al navegador.
+La API key se inyecta en el build de Vite. Esto solo es aceptable para el MVP.
+El panel tiene una barrera visual simple en `/login`, pero no sustituye una
+autenticaciÃ³n real de backend.
+
+Credenciales del MVP:
+
+```text
+usuario: admin
+contraseÃ±a: Tatodobajocontrol
+```
 
 ## Arranque
 
@@ -49,6 +57,22 @@ npm run dev
 
 Abre <http://localhost:5173>.
 
+## Render
+
+En Render el panel se despliega como Static Site desde `frontend/` usando el
+`render.yaml` de la raíz.
+
+Variables del Static Site:
+
+```dotenv
+VITE_API_BASE_URL=https://BACKEND_RENDER_URL
+VITE_ADMIN_API_KEY=misma-clave-que-ADMIN_API_KEY
+VITE_ENABLE_DEV_FALLBACKS=false
+```
+
+El backend debe tener `FRONTEND_BASE_URL` y `CORS_ORIGINS` apuntando a la URL
+del Static Site.
+
 ## Flujo de configuración
 
 1. Crea o selecciona una clínica.
@@ -61,6 +85,11 @@ Abre <http://localhost:5173>.
 8. Crea los servicios, duración y precios.
 9. Configura el asistente, sus prompts y la base de conocimiento.
 10. Usa la consola de prueba antes de conectar llamadas reales.
+
+La pantalla Calendario llama al diagnóstico OAuth del backend. Si falta
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` o
+`GOOGLE_TOKEN_ENCRYPTION_KEY`, el botón “Conectar Google Calendar” queda
+deshabilitado y muestra ayuda para arreglar `.env`.
 
 ## Funcionalidad operativa
 

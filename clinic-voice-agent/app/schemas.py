@@ -42,6 +42,37 @@ class GoogleOAuthCallbackResponse(BaseModel):
     account_email: str
 
 
+class GoogleOAuthDiagnosticIssueResponse(BaseModel):
+    """Safe Google OAuth configuration issue visible in the admin panel."""
+
+    variable: str
+    severity: Literal["error", "warning"]
+    message: str
+    help: str
+
+
+class GoogleOAuthDiagnosticResponse(BaseModel):
+    """Google OAuth configuration and connection diagnostics."""
+
+    clinic_id: uuid.UUID
+    configured: bool
+    can_start_oauth: bool
+    connected: bool
+    needs_reauthorization: bool
+    account_email: str | None
+    redirect_uri: str | None
+    public_base_url: str | None
+    frontend_base_url: str
+    issues: list[GoogleOAuthDiagnosticIssueResponse]
+
+
+class GoogleOAuthStartUrlResponse(BaseModel):
+    """Admin-safe response containing the next Google OAuth URL."""
+
+    clinic_id: uuid.UUID
+    authorization_url: str
+
+
 class CalendarStatusResponse(BaseModel):
     """Connection status for a clinic's single Google account."""
 

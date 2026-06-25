@@ -40,6 +40,7 @@ Copia [.env.example](./.env.example). Las variables principales son:
 - `ADMIN_API_KEY` y `VITE_ADMIN_API_KEY`: deben coincidir.
 - `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET`, `OPENAI_PROJECT_ID`.
 - `PUBLIC_BASE_URL`: dominio HTTPS público de la API.
+- `FRONTEND_BASE_URL`: URL del panel para volver tras OAuth.
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`.
 - `GOOGLE_TOKEN_ENCRYPTION_KEY`: clave Fernet para tokens OAuth.
 - `DATABASE_URL` es reemplazada por Docker en local.
@@ -74,6 +75,10 @@ En Google Cloud:
 4. conecta la cuenta desde la pantalla Calendario;
 5. crea o enlaza un calendario por trabajador.
 
+Si alguna variable OAuth falta o `GOOGLE_TOKEN_ENCRYPTION_KEY` no es una clave
+Fernet válida, la pantalla Calendario bloquea el botón de conexión y muestra
+exactamente qué variable corregir.
+
 No se usan service accounts.
 
 ## Exposición local
@@ -107,6 +112,22 @@ Resumen:
    chmod +x deploy.sh
    ./deploy.sh
    ```
+
+## Render
+
+Este monorepo también queda preparado para Render con un único
+[render.yaml](./render.yaml):
+
+- `clinic-voice-agent-api`: Web Service Docker usando
+  `clinic-voice-agent/Dockerfile`;
+- `clinic-voice-agent-admin`: Static Site desde `frontend/`;
+- `clinic-voice-agent-db`: PostgreSQL gestionado.
+
+Render ejecuta `alembic upgrade head` antes de arrancar el backend y Uvicorn
+usa `PORT` con fallback `10000`.
+
+Guía completa:
+[deployment-render.md](./clinic-voice-agent/docs/deployment-render.md).
 
 Caddy obtiene TLS automáticamente. La API queda en `APP_DOMAIN` y el panel en
 `APP_ADMIN_DOMAIN`.

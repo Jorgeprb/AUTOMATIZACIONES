@@ -10,6 +10,17 @@ from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def normalize_database_url(value: str) -> str:
+    """Normalize platform Postgres URLs to the installed psycopg driver."""
+    if value.startswith("postgresql+psycopg://"):
+        return value
+    if value.startswith("postgresql://"):
+        return value.replace("postgresql://", "postgresql+psycopg://", 1)
+    if value.startswith("postgres://"):
+        return value.replace("postgres://", "postgresql+psycopg://", 1)
+    return value
+
+
 class Settings(BaseSettings):
     """Typed runtime settings.
 
@@ -47,12 +58,13 @@ class Settings(BaseSettings):
     test_console_model: str = "gpt-5.4-mini"
 
     public_base_url: str
+    frontend_base_url: str = "http://localhost:5173"
     database_url: str
 
-    google_client_id: str
-    google_client_secret: SecretStr
-    google_redirect_uri: str
-    google_token_encryption_key: SecretStr
+    google_client_id: str = ""
+    google_client_secret: SecretStr = SecretStr("")
+    google_redirect_uri: str = ""
+    google_token_encryption_key: SecretStr = SecretStr("")
 
     clinic_timezone: str = "Europe/Madrid"
     clinic_name: str
@@ -75,6 +87,10 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_API_KEY must contain at least 32 characters")
         if not self.public_base_url.startswith("https://"):
             raise ValueError("PUBLIC_BASE_URL must use https in production")
+        if not self.google_client_id:
+            raise ValueError("GOOGLE_CLIENT_ID is required in production")
+        if not self.google_redirect_uri:
+            raise ValueError("GOOGLE_REDIRECT_URI is required in production")
         if not self.google_redirect_uri.startswith("https://"):
             raise ValueError("GOOGLE_REDIRECT_URI must use https in production")
         placeholders = ("replace", "changeme", "example")
@@ -91,13 +107,27 @@ class Settings(BaseSettings):
                 raise ValueError(f"{name} must contain a real production value")
         return self
 
-    @field_validator("public_base_url", "google_redirect_uri")
+    @field_validator("public_base_url", "google_redirect_uri", "frontend_base_url")
     @classmethod
     def validate_http_url(cls, value: str) -> str:
         """Require externally usable HTTP(S) URLs and normalize trailing slashes."""
+        if not value:
+            return value
         if not value.startswith(("http://", "https://")):
             raise ValueError("must start with http:// or https://")
         return value.rstrip("/")
+
+    @field_validator("database_url")
+    @classmethod
+    def validate_database_url(cls, value: str) -> str:
+        """Accept Render-style PostgreSQL URLs and force psycopg driver usage."""
+        normalized = normalize_database_url(value)
+        if not normalized.startswith(("postgresql+psycopg://", "sqlite://")):
+            raise ValueError(
+                "DATABASE_URL must start with postgresql://, postgres://, "
+                "postgresql+psycopg:// or sqlite://"
+            )
+        return normalized
 
     @field_validator("clinic_timezone")
     @classmethod
@@ -170,11 +200,14 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         """Return normalized comma-separated browser origins."""
-        return [
+        origins = [
             origin.strip()
             for origin in self.cors_origins.split(",")
             if origin.strip()
         ]
+        if self.frontend_base_url and self.frontend_base_url not in origins:
+            origins.append(self.frontend_base_url)
+        return origins
 
 
 @lru_cache

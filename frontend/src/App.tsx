@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { LoadingState } from "@/components/common/LoadingState";
+import { RequireAuth } from "@/components/layout/RequireAuth";
 
 const DashboardPage = lazy(() =>
   import("@/pages/DashboardPage").then((module) => ({
@@ -69,38 +70,58 @@ const SettingsPage = lazy(() =>
     default: module.SettingsPage,
   })),
 );
+const LoginPage = lazy(() =>
+  import("@/pages/LoginPage").then((module) => ({
+    default: module.LoginPage,
+  })),
+);
 
 export default function App() {
   return (
     <Suspense fallback={<div className="p-8"><LoadingState rows={6} /></div>}>
       <Routes>
-        <Route element={<AppShell />}>
-          <Route index element={<DashboardPage />} />
-          <Route path="clinics" element={<ClinicsPage />} />
-          <Route path="clinics/:clinicId" element={<ClinicDetailPage />} />
-          <Route path="clinics/:clinicId/workers" element={<WorkersPage />} />
-          <Route path="clinics/:clinicId/services" element={<ServicesPage />} />
-          <Route
-            path="clinics/:clinicId/assistant"
-            element={<AssistantConfigPage />}
-          />
-          <Route path="clinics/:clinicId/flows" element={<FlowEditorPage />} />
-          <Route
-            path="clinics/:clinicId/knowledge"
-            element={<KnowledgePage />}
-          />
-          <Route
-            path="clinics/:clinicId/conversations"
-            element={<ConversationsPage />}
-          />
-          <Route
-            path="clinics/:clinicId/conversations/:callId"
-            element={<ConversationDetailPage />}
-          />
-          <Route path="clinics/:clinicId/calendar" element={<CalendarPage />} />
-          <Route path="clinics/:clinicId/test" element={<TestConsolePage />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="login" element={<LoginPage />} />
+        <Route element={<RequireAuth />}>
+          <Route element={<AppShell />}>
+            <Route index element={<DashboardPage />} />
+            <Route path="clinics" element={<ClinicsPage />} />
+            <Route path="clinics/:clinicId" element={<ClinicDetailPage />} />
+            <Route path="clinics/:clinicId/workers" element={<WorkersPage />} />
+            <Route
+              path="clinics/:clinicId/services"
+              element={<ServicesPage />}
+            />
+            <Route
+              path="clinics/:clinicId/assistant"
+              element={<AssistantConfigPage />}
+            />
+            <Route
+              path="clinics/:clinicId/flows"
+              element={<FlowEditorPage />}
+            />
+            <Route
+              path="clinics/:clinicId/knowledge"
+              element={<KnowledgePage />}
+            />
+            <Route
+              path="clinics/:clinicId/conversations"
+              element={<ConversationsPage />}
+            />
+            <Route
+              path="clinics/:clinicId/conversations/:callId"
+              element={<ConversationDetailPage />}
+            />
+            <Route
+              path="clinics/:clinicId/calendar"
+              element={<CalendarPage />}
+            />
+            <Route
+              path="clinics/:clinicId/test"
+              element={<TestConsolePage />}
+            />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
         </Route>
       </Routes>
     </Suspense>

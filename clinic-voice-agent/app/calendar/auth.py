@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow  # type: ignore[import-untyped]
@@ -18,12 +19,18 @@ from app.config import Settings
 from app.models import Clinic, GoogleCredential
 from app.utils.security import TokenCipher
 
+logger = logging.getLogger(__name__)
+
 GOOGLE_CALENDAR_SCOPES = (
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/calendar",
 )
 OAUTH_STATE_TTL_SECONDS = 10 * 60
+FERNET_KEY_HELP = (
+    'Generate one with: python -c "from cryptography.fernet import Fernet; '
+    'print(Fernet.generate_key().decode())"'
+)
 
 
 class GoogleOAuthError(RuntimeError):
@@ -32,6 +39,45 @@ class GoogleOAuthError(RuntimeError):
 
 class InvalidGoogleOAuthState(GoogleOAuthError):
     """Raised when the OAuth state is invalid, expired, or malformed."""
+
+
+class GoogleOAuthConfigurationError(GoogleOAuthError):
+    """Raised when server-side Google OAuth variables are not usable."""
+
+    def __init__(self, issues: list[GoogleOAuthConfigurationIssue]) -> None:
+        self.issues = issues
+        variables = ", ".join(issue.variable for issue in issues if issue.is_blocking)
+        super().__init__(
+            "Google OAuth is not configured correctly."
+            + (f" Check: {variables}." if variables else "")
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleOAuthConfigurationIssue:
+    """One safe-to-display Google OAuth configuration problem."""
+
+    variable: str
+    severity: Literal["error", "warning"]
+    message: str
+    help: str
+
+    @property
+    def is_blocking(self) -> bool:
+        """Return whether this issue blocks OAuth start."""
+        return self.severity == "error"
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleOAuthConfigurationDiagnostics:
+    """Safe diagnostic result for Google OAuth settings."""
+
+    configured: bool
+    can_start_oauth: bool
+    redirect_uri: str | None
+    public_base_url: str | None
+    frontend_base_url: str
+    issues: list[GoogleOAuthConfigurationIssue]
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +102,204 @@ class GoogleOAuthResult:
 
     clinic_id: uuid.UUID
     account_email: str
+
+
+def _looks_placeholder(value: str) -> bool:
+    """Detect common example values without exposing the actual secret."""
+    lowered = value.strip().casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            "replace",
+            "changeme",
+            "placeholder",
+            "your-",
+            "tu_",
+            "tu-",
+        )
+    )
+
+
+def _required_value_issue(
+    variable: str,
+    help_text: str,
+) -> GoogleOAuthConfigurationIssue:
+    """Build a consistent missing-value issue."""
+    return GoogleOAuthConfigurationIssue(
+        variable=variable,
+        severity="error",
+        message=f"{variable} is missing.",
+        help=help_text,
+    )
+
+
+def diagnose_google_oauth_configuration(
+    settings: Settings,
+) -> GoogleOAuthConfigurationDiagnostics:
+    """Return safe diagnostics for the clinic Google OAuth flow."""
+    issues: list[GoogleOAuthConfigurationIssue] = []
+
+    client_id = settings.google_client_id.strip()
+    client_secret = settings.google_client_secret.get_secret_value().strip()
+    redirect_uri = settings.google_redirect_uri.strip()
+    encryption_key = settings.google_token_encryption_key.get_secret_value().strip()
+    public_base_url = settings.public_base_url.strip()
+    frontend_base_url = settings.frontend_base_url.strip() or "http://localhost:5173"
+
+    if not client_id:
+        issues.append(
+            _required_value_issue(
+                "GOOGLE_CLIENT_ID",
+                "Create an OAuth Web Client in Google Cloud and paste its client ID.",
+            )
+        )
+    elif _looks_placeholder(client_id):
+        issues.append(
+            GoogleOAuthConfigurationIssue(
+                variable="GOOGLE_CLIENT_ID",
+                severity="error",
+                message="GOOGLE_CLIENT_ID still looks like an example value.",
+                help="Replace it with the OAuth Client ID from Google Cloud.",
+            )
+        )
+
+    if not client_secret:
+        issues.append(
+            _required_value_issue(
+                "GOOGLE_CLIENT_SECRET",
+                "Paste the OAuth Web Client secret from Google Cloud.",
+            )
+        )
+    elif _looks_placeholder(client_secret):
+        issues.append(
+            GoogleOAuthConfigurationIssue(
+                variable="GOOGLE_CLIENT_SECRET",
+                severity="error",
+                message="GOOGLE_CLIENT_SECRET still looks like an example value.",
+                help="Replace it with the real client secret. Do not commit it.",
+            )
+        )
+
+    if not redirect_uri:
+        issues.append(
+            _required_value_issue(
+                "GOOGLE_REDIRECT_URI",
+                "Use your public backend callback, for example https://YOUR_DOMAIN/auth/google/callback.",
+            )
+        )
+    elif _looks_placeholder(redirect_uri):
+        issues.append(
+            GoogleOAuthConfigurationIssue(
+                variable="GOOGLE_REDIRECT_URI",
+                severity="error",
+                message="GOOGLE_REDIRECT_URI still looks like an example URL.",
+                help="Set it to the exact callback URL authorized in Google Cloud.",
+            )
+        )
+    elif not redirect_uri.startswith(("http://", "https://")):
+        issues.append(
+            GoogleOAuthConfigurationIssue(
+                variable="GOOGLE_REDIRECT_URI",
+                severity="error",
+                message="GOOGLE_REDIRECT_URI must start with http:// or https://.",
+                help=(
+                    "For local testing use ngrok/cloudflared or "
+                    "http://localhost:8000/auth/google/callback if authorized."
+                ),
+            )
+        )
+    elif not redirect_uri.endswith("/auth/google/callback"):
+        issues.append(
+            GoogleOAuthConfigurationIssue(
+                variable="GOOGLE_REDIRECT_URI",
+                severity="warning",
+                message="GOOGLE_REDIRECT_URI does not end with /auth/google/callback.",
+                help="Make sure Google Cloud contains the exact same redirect URI.",
+            )
+        )
+
+    if not encryption_key:
+        issues.append(
+            _required_value_issue(
+                "GOOGLE_TOKEN_ENCRYPTION_KEY",
+                FERNET_KEY_HELP,
+            )
+        )
+    elif _looks_placeholder(encryption_key):
+        issues.append(
+            GoogleOAuthConfigurationIssue(
+                variable="GOOGLE_TOKEN_ENCRYPTION_KEY",
+                severity="error",
+                message=(
+                    "GOOGLE_TOKEN_ENCRYPTION_KEY still looks like an example "
+                    "value."
+                ),
+                help=(
+                    "Generate a real Fernet key. Keep it stable after "
+                    "connecting Google."
+                ),
+            )
+        )
+    else:
+        try:
+            TokenCipher(encryption_key)
+        except (TypeError, ValueError) as exc:
+            issues.append(
+                GoogleOAuthConfigurationIssue(
+                    variable="GOOGLE_TOKEN_ENCRYPTION_KEY",
+                    severity="error",
+                    message="GOOGLE_TOKEN_ENCRYPTION_KEY is not a valid Fernet key.",
+                    help=FERNET_KEY_HELP,
+                )
+            )
+            logger.info(
+                "google_oauth_invalid_fernet_key",
+                extra={"error_type": type(exc).__name__},
+            )
+
+    if not public_base_url:
+        issues.append(
+            GoogleOAuthConfigurationIssue(
+                variable="PUBLIC_BASE_URL",
+                severity="warning",
+                message="PUBLIC_BASE_URL is empty.",
+                help="Set it to the public backend URL used by OpenAI and webhooks.",
+            )
+        )
+    elif _looks_placeholder(public_base_url):
+        issues.append(
+            GoogleOAuthConfigurationIssue(
+                variable="PUBLIC_BASE_URL",
+                severity="warning",
+                message="PUBLIC_BASE_URL still looks like an example URL.",
+                help=(
+                    "Set it to your ngrok/cloudflared URL locally or your "
+                    "domain in production."
+                ),
+            )
+        )
+
+    blocking_count = sum(1 for issue in issues if issue.is_blocking)
+    return GoogleOAuthConfigurationDiagnostics(
+        configured=blocking_count == 0,
+        can_start_oauth=blocking_count == 0,
+        redirect_uri=redirect_uri or None,
+        public_base_url=public_base_url or None,
+        frontend_base_url=frontend_base_url,
+        issues=issues,
+    )
+
+
+def ensure_google_oauth_configuration(settings: Settings) -> None:
+    """Raise a controlled error when Google OAuth cannot be started."""
+    diagnostics = diagnose_google_oauth_configuration(settings)
+    blocking = [issue for issue in diagnostics.issues if issue.is_blocking]
+    if blocking:
+        logger.warning(
+            "google_oauth_misconfigured",
+            extra={"variables": [issue.variable for issue in blocking]},
+        )
+        raise GoogleOAuthConfigurationError(blocking)
 
 
 def _client_config(settings: Settings) -> dict[str, Any]:
@@ -94,6 +338,7 @@ def create_google_authorization_request(
     clinic_id: uuid.UUID,
 ) -> GoogleAuthorizationRequest:
     """Create an offline OAuth authorization URL for one clinic."""
+    ensure_google_oauth_configuration(settings)
     code_verifier = secrets.token_urlsafe(64)
     state_payload = json.dumps(
         {

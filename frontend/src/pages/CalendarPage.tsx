@@ -7,10 +7,10 @@ import {
   Search,
   Unlink,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
-import { apiConfig } from "@/api/client";
 import {
   cancelAppointment,
   listAppointments,
@@ -19,6 +19,8 @@ import {
 import {
   createWorkerCalendar,
   getCalendarStatus,
+  getGoogleOAuthDiagnostics,
+  getGoogleOAuthStartUrl,
   linkWorkerCalendar,
   listCalendars,
   testWorkerFreeBusy,
@@ -53,6 +55,7 @@ interface WorkerCalendarSelection {
 
 export function CalendarPage() {
   const clinicId = useClinicRoute();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const enabled = Boolean(clinicId);
   const [selections, setSelections] = useState<
@@ -70,10 +73,18 @@ export function CalendarPage() {
     queryFn: () => getCalendarStatus(clinicId as string),
     enabled,
   });
+  const diagnosticsQuery = useQuery({
+    queryKey: ["google-oauth-diagnostics", clinicId],
+    queryFn: () => getGoogleOAuthDiagnostics(clinicId as string),
+    enabled,
+  });
   const calendarsQuery = useQuery({
     queryKey: ["calendars", clinicId],
     queryFn: () => listCalendars(clinicId as string),
-    enabled: enabled && Boolean(statusQuery.data?.connected),
+    enabled:
+      enabled &&
+      Boolean(statusQuery.data?.connected) &&
+      Boolean(diagnosticsQuery.data?.configured),
   });
   const workersQuery = useQuery({
     queryKey: ["workers", clinicId],
@@ -96,9 +107,19 @@ export function CalendarPage() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["workers", clinicId] }),
       queryClient.invalidateQueries({ queryKey: ["calendar-status", clinicId] }),
+      queryClient.invalidateQueries({
+        queryKey: ["google-oauth-diagnostics", clinicId],
+      }),
       queryClient.invalidateQueries({ queryKey: ["calendars", clinicId] }),
     ]);
   };
+  const startOAuthMutation = useMutation({
+    mutationFn: () => getGoogleOAuthStartUrl(clinicId as string),
+    onSuccess: (result) => {
+      window.location.href = result.authorization_url;
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
   const createMutation = useMutation({
     mutationFn: ({
       workerId,
@@ -181,9 +202,35 @@ export function CalendarPage() {
     }));
   };
 
-  if (statusQuery.isLoading) return <LoadingState rows={5} />;
+  useEffect(() => {
+    const outcome = searchParams.get("google_oauth");
+    const message = searchParams.get("message");
+    if (outcome === "connected") {
+      toast.success(message || "Google Calendar conectado");
+      void refresh();
+    }
+    if (outcome === "error") {
+      toast.error(message || "Google Calendar no se pudo conectar");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  if (statusQuery.isLoading || diagnosticsQuery.isLoading) {
+    return <LoadingState rows={5} />;
+  }
   if (statusQuery.error) return <ErrorState error={statusQuery.error} />;
+  if (diagnosticsQuery.error) {
+    return <ErrorState error={diagnosticsQuery.error} />;
+  }
   const status = statusQuery.data;
+  const diagnostics = diagnosticsQuery.data;
+  const blockingIssues =
+    diagnostics?.issues.filter((issue) => issue.severity === "error") ?? [];
+  const warningIssues =
+    diagnostics?.issues.filter((issue) => issue.severity === "warning") ?? [];
+  const googleIsConfigured = Boolean(diagnostics?.configured);
+  const canStartOAuth = Boolean(diagnostics?.can_start_oauth);
+  const googleConnected = Boolean(status?.connected);
   const appointmentColumns: Array<DataTableColumn<AppointmentAnalysis>> = [
     {
       key: "date",
@@ -276,22 +323,27 @@ export function CalendarPage() {
         title="Google Calendar"
         description="OAuth, calendarios secundarios, colores y diagnóstico FreeBusy."
         actions={
-          clinicId && !status?.connected ? (
-            <Button asChild>
-              <a
-                href={`${apiConfig.baseUrl}/auth/google/start?clinic_id=${clinicId}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <Link2 className="size-4" />
-                Conectar Google Calendar
-              </a>
+          clinicId && !googleConnected ? (
+            <Button
+              disabled={!canStartOAuth || startOAuthMutation.isPending}
+              onClick={() => {
+                if (!canStartOAuth) {
+                  toast.error("Corrige la configuraciÃ³n OAuth antes de conectar.");
+                  return;
+                }
+                startOAuthMutation.mutate();
+              }}
+            >
+              <Link2 className="size-4" />
+              {startOAuthMutation.isPending
+                ? "Preparando OAuth..."
+                : "Conectar Google Calendar"}
             </Button>
           ) : (
             <Button
               variant="outline"
               onClick={() => void refresh()}
-              disabled={!status?.connected}
+              disabled={!googleConnected}
             >
               <RefreshCw className="size-4" />
               Actualizar
@@ -305,12 +357,14 @@ export function CalendarPage() {
           <div className="flex items-start gap-4">
             <div
               className={`grid size-11 place-items-center rounded-xl ${
-                status?.connected
+                googleConnected
                   ? "bg-[#e9f8ef] text-[#24804a]"
-                  : "bg-[#fff4df] text-[#ad7111]"
+                  : googleIsConfigured
+                    ? "bg-[#fff4df] text-[#ad7111]"
+                    : "bg-[#ffecec] text-[#b42318]"
               }`}
             >
-              {status?.connected ? (
+              {googleConnected ? (
                 <CheckCircle2 className="size-5" />
               ) : (
                 <Unlink className="size-5" />
@@ -318,13 +372,17 @@ export function CalendarPage() {
             </div>
             <div>
               <h3 className="font-semibold text-[#27334a]">
-                {status?.connected
+                {googleConnected
                   ? "Google Calendar conectado"
-                  : "Google Calendar pendiente"}
+                  : googleIsConfigured
+                    ? "Google Calendar pendiente"
+                    : "Google OAuth mal configurado"}
               </h3>
               <p className="mt-1 text-sm text-[#758197]">
                 {status?.account_email ||
-                  "Autoriza la cuenta Google única de esta clínica."}
+                  (googleIsConfigured
+                    ? "Autoriza la cuenta Google única de esta clínica."
+                    : "Corrige .env antes de iniciar OAuth. El botón queda bloqueado para evitar errores 500.")}
               </p>
               {status?.needs_reauthorization ? (
                 <p className="mt-2 text-sm font-medium text-[#ad7111]">
@@ -345,7 +403,62 @@ export function CalendarPage() {
         </Card>
       </div>
 
-      {status?.connected ? (
+      {!googleIsConfigured || warningIssues.length > 0 ? (
+        <Card className={!googleIsConfigured ? "border-[#ffd2d2]" : ""}>
+          <CardHeader>
+            <CardTitle>
+              {!googleIsConfigured
+                ? "Configuración OAuth incompleta"
+                : "Avisos de configuración OAuth"}
+            </CardTitle>
+            <CardDescription>
+              Revisa estas variables en el archivo .env del backend antes de
+              conectar Google.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {[...blockingIssues, ...warningIssues].map((issue) => (
+              <div
+                key={`${issue.variable}-${issue.message}`}
+                className={`rounded-xl border p-4 ${
+                  issue.severity === "error"
+                    ? "border-[#ffd2d2] bg-[#fff7f7]"
+                    : "border-[#ffe4b5] bg-[#fffaf0]"
+                }`}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge
+                    status={issue.severity === "error" ? "danger" : "warning"}
+                  >
+                    {issue.severity === "error" ? "Bloquea OAuth" : "Aviso"}
+                  </StatusBadge>
+                  <code className="rounded bg-white px-2 py-1 text-xs font-semibold text-[#27334a]">
+                    {issue.variable}
+                  </code>
+                </div>
+                <p className="mt-3 text-sm font-medium text-[#27334a]">
+                  {issue.message}
+                </p>
+                <p className="mt-1 text-sm text-[#758197]">{issue.help}</p>
+              </div>
+            ))}
+            <div className="rounded-xl bg-[#f7f8fb] p-4 text-sm text-[#596579]">
+              <p className="font-semibold text-[#27334a]">
+                Variables mínimas para Google:
+              </p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                <li>GOOGLE_CLIENT_ID</li>
+                <li>GOOGLE_CLIENT_SECRET</li>
+                <li>GOOGLE_REDIRECT_URI</li>
+                <li>GOOGLE_TOKEN_ENCRYPTION_KEY</li>
+                <li>FRONTEND_BASE_URL para volver al panel tras OAuth</li>
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {googleConnected ? (
         <>
           <Card>
             <CardHeader>

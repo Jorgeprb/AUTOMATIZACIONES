@@ -35,8 +35,8 @@ docker run --rm python:3.12-slim \
 ```
 
 `APP_DOMAIN` debe coincidir con `PUBLIC_BASE_URL` y con el webhook de OpenAI.
-`APP_ADMIN_DOMAIN` publica el panel React. Caddy obtiene TLS automáticamente
-para ambos dominios.
+`APP_ADMIN_DOMAIN` publica el panel React y debe coincidir con
+`FRONTEND_BASE_URL`. Caddy obtiene TLS automáticamente para ambos dominios.
 
 ## Despliegue
 
@@ -77,6 +77,10 @@ docker compose --env-file .env.production -f docker-compose.prod.yml ps
 
 El panel MVP incluye `ADMIN_API_KEY` en el bundle del navegador. Debe
 reemplazarse por autenticación de usuario antes de abrir el panel a terceros.
+
+Si Google OAuth está mal configurado, el panel no lanza OAuth: muestra el
+diagnóstico del backend y la variable exacta que falta o está mal, incluida una
+validación de `GOOGLE_TOKEN_ENCRYPTION_KEY` como clave Fernet.
 
 ## Logs
 

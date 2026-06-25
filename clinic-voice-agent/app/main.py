@@ -59,6 +59,10 @@ OPENAPI_TAGS = [
         "name": "Admin · Dashboard",
         "description": "Clinic readiness checklist and operational metrics.",
     },
+    {
+        "name": "Admin · Google Calendar",
+        "description": "Google OAuth diagnostics and worker calendar linking.",
+    },
     {"name": "google-auth", "description": "Google OAuth connection."},
     {"name": "calendar", "description": "Internal Google Calendar operations."},
     {"name": "workers", "description": "Internal worker calendar operations."},
