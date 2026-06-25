@@ -1,0 +1,45 @@
+# Secrets / local environment
+.env
+.env.*
+!.env.example
+clinic-voice-agent/.env
+clinic-voice-agent/.env.*
+!clinic-voice-agent/.env.example
+!clinic-voice-agent/.env.development.example
+!clinic-voice-agent/.env.production.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite-dev*.log
+
+# Build artifacts
+build/
+dist/
+
+# Logs / OS / IDE
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Backups generated locally
+clinic-voice-agent/backups/*
+!clinic-voice-agent/backups/.gitkeep

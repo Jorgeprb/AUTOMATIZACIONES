@@ -1,0 +1,140 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        INSTALL_DEV: "false"
+    env_file:
+      - ${PRODUCTION_ENV_FILE:-.env.production}
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "${WEB_CONCURRENCY:-1}"
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+    expose:
+      - "8000"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *default-logging
+    mem_limit: 512m
+
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - ${PRODUCTION_ENV_FILE:-.env.production}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - postgres_backups:/backups
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging: *default-logging
+    mem_limit: 512m
+
+  frontend:
+    build:
+      context: ../frontend
+      target: production
+      args:
+        VITE_API_BASE_URL: https://${APP_DOMAIN}
+        VITE_ADMIN_API_KEY: ${ADMIN_API_KEY}
+        VITE_ENABLE_DEV_FALLBACKS: "false"
+    expose:
+      - "80"
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -qO-
+        - http://127.0.0.1/
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *default-logging
+    mem_limit: 256m
+
+  caddy:
+    image: caddy:2-alpine
+    env_file:
+      - ${PRODUCTION_ENV_FILE:-.env.production}
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      APP_ADMIN_DOMAIN: ${APP_ADMIN_DOMAIN}
+      CADDY_EMAIL: ${CADDY_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - caddy
+        - validate
+        - --config
+        - /etc/caddy/Caddyfile
+        - --adapter
+        - caddyfile
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *default-logging
+    mem_limit: 256m
+
+volumes:
+  postgres_data:
+  postgres_backups:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,20 @@
+{
+  "type": "response.done",
+  "event_id": "event_create_appointment",
+  "response": {
+    "object": "realtime.response",
+    "id": "resp_create_appointment",
+    "status": "completed",
+    "output": [
+      {
+        "object": "realtime.item",
+        "id": "item_create_appointment",
+        "type": "function_call",
+        "status": "completed",
+        "name": "create_appointment",
+        "call_id": "call_create_appointment_001",
+        "arguments": "{\"clinic_id\":\"11111111-1111-1111-1111-111111111111\",\"worker_id\":\"33333333-3333-3333-3333-333333333333\",\"service_id\":\"22222222-2222-2222-2222-222222222222\",\"patient_name\":\"Eva\",\"patient_phone\":\"+34600111222\",\"start_at\":\"2026-06-23T09:00:00+02:00\",\"end_at\":\"2026-06-23T09:30:00+02:00\",\"confirmed_by_caller\":true}"
+      }
+    ]
+  }
+}

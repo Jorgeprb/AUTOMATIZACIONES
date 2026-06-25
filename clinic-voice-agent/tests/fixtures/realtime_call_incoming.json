@@ -1,0 +1,23 @@
+{
+  "object": "event",
+  "id": "evt_incoming_test",
+  "type": "realtime.call.incoming",
+  "created_at": 1782000000,
+  "data": {
+    "call_id": "rtc_test_incoming_001",
+    "sip_headers": [
+      {
+        "name": "From",
+        "value": "sip:+34600111222@sip.voip.example"
+      },
+      {
+        "name": "To",
+        "value": "sip:+34919999999@sip.api.openai.com"
+      },
+      {
+        "name": "Call-ID",
+        "value": "provider-call-test-001"
+      }
+    ]
+  }
+}
