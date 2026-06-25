@@ -530,14 +530,16 @@ chmod +x deploy.sh scripts/backup_postgres.sh
 Guía completa:
 
 - [Despliegue en VPS](docs/deployment-vps.md)
-- [Despliegue en Render](docs/deployment-render.md)
+- [Despliegue gratuito Cloudflare + Render + Supabase](docs/deployment-free-tier.md)
+- [Despliegue completo en Render](docs/deployment-render.md)
 - [Privacidad del MVP](docs/privacy-mvp.md)
 - [Prompts dinámicos por clínica](docs/dynamic-clinic-prompts.md)
 - [VoIP Studio y OpenAI SIP](docs/voipstudio-openai-sip.md)
 
-También puedes desplegar el monorepo en Render con `../render.yaml`: backend
-Docker, frontend Static Site y PostgreSQL gestionado. Render ejecuta
-`alembic upgrade head` como `preDeployCommand` y el backend usa `PORT`.
+También puedes desplegar la opción gratuita con `../render.yaml`: backend
+Docker en Render Free, frontend en Cloudflare Pages y PostgreSQL en Supabase
+Free. El `render.yaml` actual no crea una base de datos Render. Render ejecuta
+`alembic upgrade head` antes de arrancar y el backend usa `PORT`.
 
 En producción:
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import SecretStr, field_validator, model_validator
@@ -11,14 +12,33 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def normalize_database_url(value: str) -> str:
-    """Normalize platform Postgres URLs to the installed psycopg driver."""
+    """Normalize hosted Postgres URLs to the installed psycopg driver.
+
+    Render and Supabase commonly expose plain ``postgresql://`` or
+    ``postgres://`` URLs. The app uses the SQLAlchemy psycopg driver, so those
+    URLs are converted to ``postgresql+psycopg://``. Supabase hosts also get
+    ``sslmode=require`` when the parameter is missing.
+    """
     if value.startswith("postgresql+psycopg://"):
+        normalized = value
+    elif value.startswith("postgresql://"):
+        normalized = value.replace("postgresql://", "postgresql+psycopg://", 1)
+    elif value.startswith("postgres://"):
+        normalized = value.replace("postgres://", "postgresql+psycopg://", 1)
+    else:
         return value
-    if value.startswith("postgresql://"):
-        return value.replace("postgresql://", "postgresql+psycopg://", 1)
-    if value.startswith("postgres://"):
-        return value.replace("postgres://", "postgresql+psycopg://", 1)
-    return value
+
+    parsed = urlsplit(normalized)
+    hostname = parsed.hostname or ""
+    if "supabase." not in hostname and "supabase.com" not in hostname:
+        return normalized
+
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    if any(key.lower() == "sslmode" for key, _ in query_pairs):
+        return normalized
+
+    query = urlencode([*query_pairs, ("sslmode", "require")])
+    return urlunsplit(parsed._replace(query=query))
 
 
 class Settings(BaseSettings):

@@ -29,6 +29,25 @@ def test_render_postgres_url_is_normalized_to_psycopg() -> None:
     )
 
 
+def test_supabase_postgres_url_requires_ssl() -> None:
+    """Supabase URLs should use psycopg and SSL by default."""
+    assert (
+        normalize_database_url(
+            "postgresql://postgres:pass@db.project.supabase.co:5432/postgres"
+        )
+        == "postgresql+psycopg://postgres:pass@db.project.supabase.co:5432/postgres"
+        "?sslmode=require"
+    )
+    assert (
+        normalize_database_url(
+            "postgresql://postgres:pass@aws-0-eu.pooler.supabase.com:6543/postgres"
+            "?sslmode=verify-full"
+        )
+        == "postgresql+psycopg://postgres:pass@aws-0-eu.pooler.supabase.com:6543/postgres"
+        "?sslmode=verify-full"
+    )
+
+
 def test_frontend_base_url_is_allowed_in_cors_origins() -> None:
     """Render frontend URL should be accepted even if CORS_ORIGINS is separate."""
     settings = Settings(

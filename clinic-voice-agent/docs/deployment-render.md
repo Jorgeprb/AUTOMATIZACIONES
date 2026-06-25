@@ -1,5 +1,12 @@
 # Despliegue en Render
 
+> Nota: esta guÃ­a describe la alternativa de ejecutar backend, frontend y
+> PostgreSQL dentro de Render. La opciÃ³n gratuita actual usa Render solo para
+> el backend, Cloudflare Pages para el frontend y Supabase Free para
+> PostgreSQL. Sigue [deployment-free-tier.md](deployment-free-tier.md) para esa
+> configuraciÃ³n. El `render.yaml` actual de la raÃ­z no crea Postgres de Render
+> ni Static Site de Render.
+
 Este proyecto se despliega en Render como monorepo:
 
 - `clinic-voice-agent/`: backend FastAPI como Web Service Docker.

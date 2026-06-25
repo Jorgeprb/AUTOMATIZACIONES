@@ -57,12 +57,16 @@ npm run dev
 
 Abre <http://localhost:5173>.
 
-## Render
+## Cloudflare Pages
 
-En Render el panel se despliega como Static Site desde `frontend/` usando el
-`render.yaml` de la raíz.
+En la opción gratuita el panel se despliega en Cloudflare Pages desde este
+directorio:
 
-Variables del Static Site:
+- root directory: `frontend`
+- build command: `npm ci && npm run build`
+- output directory: `dist`
+
+Variables del proyecto Pages:
 
 ```dotenv
 VITE_API_BASE_URL=https://BACKEND_RENDER_URL
@@ -70,8 +74,9 @@ VITE_ADMIN_API_KEY=misma-clave-que-ADMIN_API_KEY
 VITE_ENABLE_DEV_FALLBACKS=false
 ```
 
-El backend debe tener `FRONTEND_BASE_URL` y `CORS_ORIGINS` apuntando a la URL
-del Static Site.
+El backend en Render debe tener `FRONTEND_BASE_URL` y `CORS_ORIGINS` apuntando
+a la URL de Cloudflare Pages. `frontend/public/_redirects` evita 404 al
+refrescar rutas internas del panel.
 
 ## Flujo de configuración
 

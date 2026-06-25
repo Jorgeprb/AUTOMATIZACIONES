@@ -113,24 +113,29 @@ Resumen:
    ./deploy.sh
    ```
 
-## Render
+## Despliegue gratuito
 
-Este monorepo también queda preparado para Render con un único
-[render.yaml](./render.yaml):
+El monorepo está preparado para la opción gratuita:
 
-- `clinic-voice-agent-api`: Web Service Docker usando
-  `clinic-voice-agent/Dockerfile`;
-- `clinic-voice-agent-admin`: Static Site desde `frontend/`;
-- `clinic-voice-agent-db`: PostgreSQL gestionado.
+- backend FastAPI en Render Free Web Service usando [render.yaml](./render.yaml);
+- frontend React/Vite en Cloudflare Pages desde `frontend/`;
+- PostgreSQL en Supabase Free.
 
-Render ejecuta `alembic upgrade head` antes de arrancar el backend y Uvicorn
-usa `PORT` con fallback `10000`.
+No se usa PostgreSQL de Render. `DATABASE_URL` debe venir de Supabase. La app
+acepta URLs `postgresql://...`, las convierte a `postgresql+psycopg://...` y
+añade `sslmode=require` para hosts Supabase si falta.
+
+Render arranca el backend con:
+
+```bash
+alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}
+```
 
 Guía completa:
-[deployment-render.md](./clinic-voice-agent/docs/deployment-render.md).
+[deployment-free-tier.md](./clinic-voice-agent/docs/deployment-free-tier.md).
 
-Caddy obtiene TLS automáticamente. La API queda en `APP_DOMAIN` y el panel en
-`APP_ADMIN_DOMAIN`.
+La guía antigua de Render completo queda como referencia:
+[deployment-render.md](./clinic-voice-agent/docs/deployment-render.md).
 
 ## Pruebas
 
@@ -153,6 +158,7 @@ npm run build
 
 ## Seguridad del MVP
 
-El panel V1 envía `ADMIN_API_KEY` desde el navegador. Es suficiente para una
-instalación privada controlada, pero no para una plataforma pública con
-usuarios externos. La siguiente fase debe incorporar login, sesiones y roles.
+El panel V1 tiene login simple en navegador, pero sigue enviando
+`ADMIN_API_KEY` desde el bundle. Es suficiente para una instalación privada
+controlada, pero no para una plataforma pública con usuarios externos. La
+siguiente fase debe incorporar autenticación real de backend, sesiones y roles.

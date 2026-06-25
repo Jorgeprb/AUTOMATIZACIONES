@@ -2,11 +2,11 @@ services:
   - type: web
     name: clinic-voice-agent-api
     runtime: docker
+    plan: free
     dockerfilePath: ./clinic-voice-agent/Dockerfile
     dockerContext: ./clinic-voice-agent
     healthCheckPath: /health/ready
-    preDeployCommand: alembic upgrade head
-    dockerCommand: sh -c "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"
+    dockerCommand: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"
     envVars:
       - key: APP_ENVIRONMENT
         value: production
@@ -21,9 +21,7 @@ services:
       - key: MAX_WEBHOOK_BODY_BYTES
         value: "1000000"
       - key: DATABASE_URL
-        fromDatabase:
-          name: clinic-voice-agent-db
-          property: connectionString
+        sync: false
       - key: PUBLIC_BASE_URL
         sync: false
       - key: FRONTEND_BASE_URL
@@ -70,32 +68,3 @@ services:
       paths:
         - clinic-voice-agent/**
         - render.yaml
-
-  - type: web
-    name: clinic-voice-agent-admin
-    runtime: static
-    rootDir: frontend
-    buildCommand: npm ci --no-audit --no-fund && npm run build
-    staticPublishPath: dist
-    envVars:
-      - key: VITE_API_BASE_URL
-        sync: false
-      - key: VITE_ADMIN_API_KEY
-        sync: false
-      - key: VITE_ENABLE_DEV_FALLBACKS
-        value: "false"
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
-    buildFilter:
-      paths:
-        - frontend/**
-        - render.yaml
-
-databases:
-  - name: clinic-voice-agent-db
-    databaseName: clinic_voice_agent
-    user: clinic_voice_agent
-    postgresMajorVersion: "16"
-    ipAllowList: []
