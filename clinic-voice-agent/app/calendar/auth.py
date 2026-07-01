@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from cryptography.fernet import InvalidToken
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow  # type: ignore[import-untyped]
 from googleapiclient.discovery import build  # type: ignore[import-untyped]
@@ -51,6 +52,18 @@ class GoogleOAuthConfigurationError(GoogleOAuthError):
             "Google OAuth is not configured correctly."
             + (f" Check: {variables}." if variables else "")
         )
+
+
+class GoogleOAuthProviderError(GoogleOAuthError):
+    """Raised when Google rejects token exchange or user-info lookup."""
+
+
+class GoogleOAuthPersistenceError(GoogleOAuthError):
+    """Raised when encrypted credentials cannot be saved."""
+
+
+class GoogleOAuthCredentialEncryptionError(GoogleOAuthError):
+    """Raised when credential encryption/decryption fails."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,33 +477,59 @@ def complete_google_oauth(
     authorization_response: str,
 ) -> GoogleOAuthResult:
     """Exchange the callback code and persist encrypted Google credentials."""
+    ensure_google_oauth_configuration(settings)
     oauth_state = decode_google_oauth_state(settings, state)
     clinic = session.get(Clinic, oauth_state.clinic_id)
     if clinic is None:
         raise GoogleOAuthError("Clinic does not exist.")
 
-    flow = _build_flow(
-        settings,
-        state=state,
-        code_verifier=oauth_state.code_verifier,
-    )
-    flow.fetch_token(authorization_response=authorization_response)
-    credentials: Credentials = flow.credentials
-    oauth_service = build(
-        "oauth2",
-        "v2",
-        credentials=credentials,
-        cache_discovery=False,
-    )
-    user_info = oauth_service.userinfo().get().execute()
-    account_email = str(user_info["email"])
-    save_google_credentials(
-        session,
-        settings,
-        clinic_id=clinic.id,
-        account_email=account_email,
-        credentials_json=credentials.to_json(),
-    )
+    try:
+        flow = _build_flow(
+            settings,
+            state=state,
+            code_verifier=oauth_state.code_verifier,
+        )
+        flow.fetch_token(authorization_response=authorization_response)
+        credentials: Credentials = flow.credentials
+    except Exception as exc:
+        raise GoogleOAuthProviderError(
+            "Google token exchange failed. Check GOOGLE_REDIRECT_URI and the "
+            "authorized redirect URI in Google Cloud."
+        ) from exc
+
+    try:
+        oauth_service = build(
+            "oauth2",
+            "v2",
+            credentials=credentials,
+            cache_discovery=False,
+        )
+        user_info = oauth_service.userinfo().get().execute()
+        account_email = str(user_info["email"])
+    except Exception as exc:
+        raise GoogleOAuthProviderError(
+            "Google account lookup failed after token exchange."
+        ) from exc
+
+    try:
+        save_google_credentials(
+            session,
+            settings,
+            clinic_id=clinic.id,
+            account_email=account_email,
+            credentials_json=credentials.to_json(),
+        )
+    except (InvalidToken, TypeError, ValueError, json.JSONDecodeError) as exc:
+        session.rollback()
+        raise GoogleOAuthCredentialEncryptionError(
+            "Google credentials could not be encrypted or decrypted. Check "
+            "GOOGLE_TOKEN_ENCRYPTION_KEY and reconnect Google."
+        ) from exc
+    except Exception as exc:
+        session.rollback()
+        raise GoogleOAuthPersistenceError(
+            "Google credentials could not be stored in the database."
+        ) from exc
     return GoogleOAuthResult(
         clinic_id=clinic.id,
         account_email=account_email,

@@ -8,7 +8,7 @@ from collections.abc import Callable, Generator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import pytest
 from fastapi import FastAPI
@@ -19,6 +19,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.calendar.auth import (
     GOOGLE_CALENDAR_SCOPES,
+    GoogleOAuthPersistenceError,
+    GoogleOAuthProviderError,
+    GoogleOAuthResult,
     complete_google_oauth,
     create_google_authorization_request,
     decode_google_oauth_state,
@@ -508,6 +511,156 @@ async def test_google_oauth_start_url_returns_google_url_when_configured(
     assert authorization_url.startswith("https://accounts.google.com/")
     assert query["redirect_uri"] == ["https://voice.test/auth/google/callback"]
     assert query["access_type"] == ["offline"]
+
+
+@pytest.mark.anyio
+async def test_google_oauth_callback_uses_configured_public_redirect_uri(
+    database_engine: Engine,
+) -> None:
+    """Callback token exchange should use GOOGLE_REDIRECT_URI, not local HTTP."""
+    settings = _valid_oauth_settings()
+    clinic = Clinic(
+        name="ClÃ­nica OAuth Callback URI",
+        timezone="Europe/Madrid",
+        phone_number="+34910000192",
+    )
+    factory = _factory(database_engine)
+    with factory() as session:
+        session.add(clinic)
+        session.commit()
+        clinic_id = clinic.id
+    state = create_google_authorization_request(settings, clinic_id).state
+    query = urlencode({"state": state, "code": "test-code"})
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(database_engine, settings)),
+        base_url="http://internal-localhost",
+    ) as client:
+        with patch(
+            "app.api.google_auth.complete_google_oauth",
+            return_value=GoogleOAuthResult(
+                clinic_id=clinic_id,
+                account_email="clinica@gmail.com",
+            ),
+        ) as complete:
+            response = await client.get(
+                f"/auth/google/callback?{query}",
+                follow_redirects=False,
+            )
+
+    assert response.status_code == 302
+    location = response.headers["location"]
+    redirect_query = parse_qs(urlparse(location).query)
+    assert redirect_query["google"] == ["connected"]
+    assert redirect_query["reason"] == ["connected"]
+    authorization_response = complete.call_args.kwargs["authorization_response"]
+    assert authorization_response.startswith(
+        "https://voice.test/auth/google/callback?"
+    )
+    assert "code=test-code" in authorization_response
+    assert "state=" in authorization_response
+
+
+@pytest.mark.anyio
+async def test_google_oauth_callback_google_failure_redirects_with_reason(
+    database_engine: Engine,
+) -> None:
+    """Google token exchange failures should redirect instead of returning 500."""
+    settings = _valid_oauth_settings()
+    clinic = Clinic(
+        name="ClÃ­nica OAuth Google Fail",
+        timezone="Europe/Madrid",
+        phone_number="+34910000193",
+    )
+    factory = _factory(database_engine)
+    with factory() as session:
+        session.add(clinic)
+        session.commit()
+        clinic_id = clinic.id
+    state = create_google_authorization_request(settings, clinic_id).state
+    query = urlencode({"state": state, "code": "bad-code"})
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(database_engine, settings)),
+        base_url="http://testserver",
+    ) as client:
+        with patch(
+            "app.api.google_auth.complete_google_oauth",
+            side_effect=GoogleOAuthProviderError("Google token exchange failed."),
+        ):
+            response = await client.get(
+                f"/auth/google/callback?{query}",
+                follow_redirects=False,
+            )
+
+    assert response.status_code == 302
+    redirect_query = parse_qs(urlparse(response.headers["location"]).query)
+    assert redirect_query["google"] == ["error"]
+    assert redirect_query["reason"] == ["google_token_exchange_failed"]
+
+
+@pytest.mark.anyio
+async def test_google_oauth_callback_db_failure_redirects_with_reason(
+    database_engine: Engine,
+) -> None:
+    """DB persistence failures should redirect instead of returning 500."""
+    settings = _valid_oauth_settings()
+    clinic = Clinic(
+        name="ClÃ­nica OAuth DB Fail",
+        timezone="Europe/Madrid",
+        phone_number="+34910000194",
+    )
+    factory = _factory(database_engine)
+    with factory() as session:
+        session.add(clinic)
+        session.commit()
+        clinic_id = clinic.id
+    state = create_google_authorization_request(settings, clinic_id).state
+    query = urlencode({"state": state, "code": "test-code"})
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(database_engine, settings)),
+        base_url="http://testserver",
+    ) as client:
+        with patch(
+            "app.api.google_auth.complete_google_oauth",
+            side_effect=GoogleOAuthPersistenceError(
+                "Google credentials could not be stored in the database."
+            ),
+        ):
+            response = await client.get(
+                f"/auth/google/callback?{query}",
+                follow_redirects=False,
+            )
+
+    assert response.status_code == 302
+    redirect_query = parse_qs(urlparse(response.headers["location"]).query)
+    assert redirect_query["google"] == ["error"]
+    assert redirect_query["reason"] == ["db_save_failed"]
+
+
+@pytest.mark.anyio
+async def test_google_oauth_callback_invalid_state_redirects_with_reason(
+    database_engine: Engine,
+) -> None:
+    """Bad Fernet/state input should redirect with a clear reason."""
+    settings = _valid_oauth_settings()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(database_engine, settings)),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.get(
+            "/auth/google/callback?state=bad-state&code=test-code",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 302
+    location = response.headers["location"]
+    assert location.startswith("http://localhost:5173/settings?")
+    redirect_query = parse_qs(urlparse(location).query)
+    assert redirect_query["google"] == ["error"]
+    assert redirect_query["reason"] == ["invalid_state"]
 
 
 def test_google_calendar_routes_are_registered() -> None:

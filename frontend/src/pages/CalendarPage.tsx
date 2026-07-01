@@ -203,8 +203,9 @@ export function CalendarPage() {
   };
 
   useEffect(() => {
-    const outcome = searchParams.get("google_oauth");
-    const message = searchParams.get("message");
+    const outcome = searchParams.get("google") ?? searchParams.get("google_oauth");
+    const reason = searchParams.get("reason");
+    const message = searchParams.get("message") ?? reason;
     if (outcome === "connected") {
       toast.success(message || "Google Calendar conectado");
       void refresh();

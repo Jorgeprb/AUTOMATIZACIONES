@@ -13,7 +13,10 @@ from sqlalchemy.orm import Session
 
 from app.calendar.auth import (
     GoogleOAuthConfigurationError,
+    GoogleOAuthCredentialEncryptionError,
     GoogleOAuthError,
+    GoogleOAuthPersistenceError,
+    GoogleOAuthProviderError,
     InvalidGoogleOAuthState,
     complete_google_oauth,
     create_google_authorization_request,
@@ -25,6 +28,13 @@ from app.models import Clinic
 
 router = APIRouter(prefix="/auth/google", tags=["google-auth"])
 logger = logging.getLogger(__name__)
+
+
+def _safe_error_type(exc: BaseException) -> str:
+    """Return wrapped cause type without leaking exception content."""
+    if exc.__cause__ is not None:
+        return type(exc.__cause__).__name__
+    return type(exc).__name__
 
 
 def _configuration_error_detail(exc: GoogleOAuthConfigurationError) -> str:
@@ -39,6 +49,7 @@ def _frontend_redirect(
     *,
     clinic_id: uuid.UUID | None,
     outcome: str,
+    reason: str,
     message: str,
     account_email: str | None = None,
 ) -> RedirectResponse:
@@ -46,6 +57,8 @@ def _frontend_redirect(
     base_url = settings.frontend_base_url.rstrip("/") or "http://localhost:5173"
     path = f"/clinics/{clinic_id}/calendar" if clinic_id else "/settings"
     query = {
+        "google": outcome,
+        "reason": reason,
         "google_oauth": outcome,
         "message": message,
     }
@@ -68,6 +81,20 @@ def _clinic_id_from_state(
         return decode_google_oauth_state(settings, state_value).clinic_id
     except GoogleOAuthError:
         return None
+
+
+def _authorization_response_url(settings: Settings, request: Request) -> str:
+    """Return the exact public callback URL used for token exchange.
+
+    Local tunnels terminate HTTPS before forwarding to Uvicorn, so
+    ``request.url`` may look like ``http://...`` even when Google called the
+    public ngrok HTTPS URL. OAuth token exchange must use the configured public
+    redirect URI exactly, plus Google's original query string.
+    """
+    query_string = request.url.query
+    if not query_string:
+        return settings.google_redirect_uri
+    return f"{settings.google_redirect_uri}?{query_string}"
 
 
 @router.get("/start", response_class=RedirectResponse)
@@ -100,67 +127,187 @@ def google_oauth_callback(
     request: Request,
     session: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
-    state_value: Annotated[str, Query(alias="state")],
+    state_value: Annotated[str | None, Query(alias="state")] = None,
+    code: Annotated[str | None, Query()] = None,
     error: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
     """Exchange Google's authorization code and store encrypted credentials."""
     clinic_id = _clinic_id_from_state(settings, state_value)
+    logger.info(
+        "google_oauth_callback_received",
+        extra={
+            "clinic_id": str(clinic_id) if clinic_id else None,
+            "redirect_uri": settings.google_redirect_uri,
+            "has_code": bool(code),
+            "has_error": bool(error),
+        },
+    )
     if error:
         logger.info(
             "google_oauth_callback_rejected",
-            extra={"clinic_id": clinic_id, "google_error": error},
+            extra={
+                "clinic_id": str(clinic_id) if clinic_id else None,
+                "google_error": error,
+            },
         )
         return _frontend_redirect(
             settings,
             clinic_id=clinic_id,
             outcome="error",
+            reason="google_rejected",
             message=f"Google authorization failed: {error}",
         )
+    if not state_value:
+        logger.warning(
+            "google_oauth_callback_missing_state",
+            extra={"redirect_uri": settings.google_redirect_uri},
+        )
+        return _frontend_redirect(
+            settings,
+            clinic_id=None,
+            outcome="error",
+            reason="missing_state",
+            message="Google OAuth callback is missing state.",
+        )
     try:
+        authorization_response = _authorization_response_url(settings, request)
         result = complete_google_oauth(
             session,
             settings,
             state=state_value,
-            authorization_response=str(request.url),
+            authorization_response=authorization_response,
         )
     except GoogleOAuthConfigurationError as exc:
         logger.warning(
             "google_oauth_callback_misconfigured",
-            extra={"variables": [issue.variable for issue in exc.issues]},
+            extra={
+                "clinic_id": str(clinic_id) if clinic_id else None,
+                "redirect_uri": settings.google_redirect_uri,
+                "variables": [issue.variable for issue in exc.issues],
+            },
+            exc_info=True,
         )
         return _frontend_redirect(
             settings,
             clinic_id=clinic_id,
             outcome="error",
+            reason="oauth_misconfigured",
             message=_configuration_error_detail(exc),
         )
     except InvalidGoogleOAuthState as exc:
-        logger.info("google_oauth_callback_invalid_state")
+        logger.warning(
+            "google_oauth_callback_invalid_state_or_fernet",
+            extra={
+                "clinic_id": str(clinic_id) if clinic_id else None,
+                "redirect_uri": settings.google_redirect_uri,
+                "error_type": type(exc).__name__,
+            },
+            exc_info=True,
+        )
         return _frontend_redirect(
             settings,
             clinic_id=clinic_id,
             outcome="error",
+            reason="invalid_state",
+            message=str(exc),
+        )
+    except GoogleOAuthProviderError as exc:
+        logger.warning(
+            "google_oauth_callback_google_failed",
+            extra={
+                "clinic_id": str(clinic_id) if clinic_id else None,
+                "redirect_uri": settings.google_redirect_uri,
+                "error_type": _safe_error_type(exc),
+            },
+            exc_info=True,
+        )
+        return _frontend_redirect(
+            settings,
+            clinic_id=clinic_id,
+            outcome="error",
+            reason="google_token_exchange_failed",
+            message=str(exc),
+        )
+    except GoogleOAuthCredentialEncryptionError as exc:
+        logger.warning(
+            "google_oauth_callback_credential_encryption_failed",
+            extra={
+                "clinic_id": str(clinic_id) if clinic_id else None,
+                "redirect_uri": settings.google_redirect_uri,
+                "error_type": _safe_error_type(exc),
+            },
+            exc_info=True,
+        )
+        return _frontend_redirect(
+            settings,
+            clinic_id=clinic_id,
+            outcome="error",
+            reason="credential_encryption_failed",
+            message=str(exc),
+        )
+    except GoogleOAuthPersistenceError as exc:
+        logger.exception(
+            "google_oauth_callback_db_failed",
+            extra={
+                "clinic_id": str(clinic_id) if clinic_id else None,
+                "redirect_uri": settings.google_redirect_uri,
+                "error_type": _safe_error_type(exc),
+            },
+        )
+        return _frontend_redirect(
+            settings,
+            clinic_id=clinic_id,
+            outcome="error",
+            reason="db_save_failed",
             message=str(exc),
         )
     except GoogleOAuthError as exc:
         logger.warning(
             "google_oauth_callback_failed",
-            extra={"clinic_id": clinic_id, "error_type": type(exc).__name__},
+            extra={
+                "clinic_id": str(clinic_id) if clinic_id else None,
+                "redirect_uri": settings.google_redirect_uri,
+                "error_type": type(exc).__name__,
+            },
+            exc_info=True,
         )
         return _frontend_redirect(
             settings,
             clinic_id=clinic_id,
             outcome="error",
+            reason="oauth_failed",
             message=str(exc),
+        )
+    except Exception as exc:
+        session.rollback()
+        logger.exception(
+            "google_oauth_callback_unexpected_failed",
+            extra={
+                "clinic_id": str(clinic_id) if clinic_id else None,
+                "redirect_uri": settings.google_redirect_uri,
+                "error_type": type(exc).__name__,
+            },
+        )
+        return _frontend_redirect(
+            settings,
+            clinic_id=clinic_id,
+            outcome="error",
+            reason="unexpected_error",
+            message="Unexpected Google OAuth callback error. Check backend logs.",
         )
     logger.info(
         "google_oauth_connected",
-        extra={"clinic_id": result.clinic_id, "account_email": result.account_email},
+        extra={
+            "clinic_id": str(result.clinic_id),
+            "account_email": result.account_email,
+            "redirect_uri": settings.google_redirect_uri,
+        },
     )
     return _frontend_redirect(
         settings,
         clinic_id=result.clinic_id,
         outcome="connected",
+        reason="connected",
         message="Google Calendar conectado.",
         account_email=result.account_email,
     )
