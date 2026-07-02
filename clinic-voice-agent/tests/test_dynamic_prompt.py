@@ -259,6 +259,16 @@ def test_dynamic_prompt_respects_assistant_behavior_fields(
     config = _assistant_config(clinic, name="Config avanzada")
     config.tone = "comercial"
     config.response_length = "corta"
+    config.conversation_style = "natural"
+    config.initiative_level = "alto"
+    config.max_consecutive_questions = 1
+    config.allow_bookings = True
+    config.allow_price_answers = False
+    config.ask_service = True
+    config.commercial_call_handling = "declinar"
+    config.commercial_call_message = "No atendemos llamadas comerciales."
+    config.human_transfer_rules = "Transfiere quejas y dudas fuera de alcance."
+    config.conversation_extra_rules = "No repitas preguntas."
     config.max_proposed_slots = 1
     config.allow_cancellations = False
     config.use_prices = False
@@ -295,6 +305,12 @@ def test_dynamic_prompt_respects_assistant_behavior_fields(
     assert "Propón como máximo 1 horarios" in prompt
     assert "Cancelaciones permitidas: no" in prompt
     assert "Uso de precios desactivado" in prompt
+    assert "Estilo conversacional: natural" in prompt
+    assert "Nivel de iniciativa: alto" in prompt
+    assert "No atendemos llamadas comerciales" in prompt
+    assert "Transfiere quejas" in prompt
+    assert "pending_slots" in prompt
+    assert "No repitas preguntas" in prompt
     assert "25.00 EUR" not in prompt
     assert "Base de conocimiento desactivada" in prompt
     assert "Esto no debe entrar" not in prompt

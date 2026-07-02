@@ -54,7 +54,14 @@ export interface AssistantConfig {
   ask_patient_phone: boolean;
   ask_general_reason: boolean;
   allow_booking_without_worker: boolean;
+  allow_bookings: boolean;
+  allow_price_answers: boolean;
+  ask_service: boolean;
   max_proposed_slots: number;
+  max_consecutive_questions: number;
+  conversation_style: "natural" | "formal" | "comercial" | "breve";
+  initiative_level: "bajo" | "medio" | "alto";
+  commercial_call_handling: "declinar" | "transferir" | "responder_basico";
   allow_cancellations: boolean;
   allow_reschedules: boolean;
   natural_confirmation_required: boolean;
@@ -65,6 +72,9 @@ export interface AssistantConfig {
   missing_calendar_message: string | null;
   emergency_message: string | null;
   human_transfer_message: string | null;
+  human_transfer_rules: string | null;
+  commercial_call_message: string | null;
+  conversation_extra_rules: string | null;
   closing_message: string | null;
   use_prices: boolean;
   use_knowledge_base: boolean;

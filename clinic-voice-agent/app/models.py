@@ -403,6 +403,28 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "max_proposed_slots BETWEEN 1 AND 10",
             name="valid_assistant_max_proposed_slots",
         ),
+        CheckConstraint(
+            (
+                "conversation_style IN "
+                "('natural', 'formal', 'comercial', 'breve')"
+            ),
+            name="valid_assistant_conversation_style",
+        ),
+        CheckConstraint(
+            "initiative_level IN ('bajo', 'medio', 'alto')",
+            name="valid_assistant_initiative_level",
+        ),
+        CheckConstraint(
+            "max_consecutive_questions BETWEEN 1 AND 5",
+            name="valid_assistant_max_consecutive_questions",
+        ),
+        CheckConstraint(
+            (
+                "commercial_call_handling IN "
+                "('declinar', 'transferir', 'responder_basico')"
+            ),
+            name="valid_assistant_commercial_call_handling",
+        ),
     )
 
     clinic_id: Mapped[uuid.UUID] = mapped_column(
@@ -465,10 +487,52 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=True,
         nullable=False,
     )
+    allow_bookings: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    allow_price_answers: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    ask_service: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
     max_proposed_slots: Mapped[int] = mapped_column(
         Integer,
         server_default=text("3"),
         default=3,
+        nullable=False,
+    )
+    max_consecutive_questions: Mapped[int] = mapped_column(
+        Integer,
+        server_default=text("2"),
+        default=2,
+        nullable=False,
+    )
+    conversation_style: Mapped[str] = mapped_column(
+        String(32),
+        server_default=text("'natural'"),
+        default="natural",
+        nullable=False,
+    )
+    initiative_level: Mapped[str] = mapped_column(
+        String(16),
+        server_default=text("'medio'"),
+        default="medio",
+        nullable=False,
+    )
+    commercial_call_handling: Mapped[str] = mapped_column(
+        String(32),
+        server_default=text("'declinar'"),
+        default="declinar",
         nullable=False,
     )
     allow_cancellations: Mapped[bool] = mapped_column(
@@ -501,6 +565,9 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     missing_calendar_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     emergency_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     human_transfer_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    human_transfer_rules: Mapped[str | None] = mapped_column(Text, nullable=True)
+    commercial_call_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    conversation_extra_rules: Mapped[str | None] = mapped_column(Text, nullable=True)
     closing_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     use_prices: Mapped[bool] = mapped_column(
         Boolean,

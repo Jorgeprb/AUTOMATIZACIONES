@@ -21,6 +21,7 @@ from app.admin_schemas import (
 )
 from app.audio import TTSGenerationError, synthesize_openai_speech
 from app.config import Settings
+from app.conversation_policy import load_conversation_state
 from app.models import (
     AssistantConfig,
     CallEvent,
@@ -139,21 +140,32 @@ def _extracted_state(
 ) -> TestExtractedState:
     """Expose simulator state without leaking internal implementation details."""
     state = dict(call.conversation_state_json)
+    conversation_state = load_conversation_state(state)
     draft = dict(state.get("draft", {}))
-    appointment_id = state.get("appointment_id")
+    appointment_id = conversation_state.appointment_id or state.get("appointment_id")
     if not appointment_id:
         for trace in reversed(traces):
             if trace.name == "create_appointment" and trace.result.get("ok"):
                 appointment_id = trace.result.get("appointment_id")
                 break
+    service_name = draft.get("service_name")
+    if not service_name and conversation_state.service:
+        service_name = conversation_state.service.get("name")
+    worker_name = draft.get("worker_name")
+    if not worker_name and conversation_state.worker:
+        worker_name = conversation_state.worker.get("name")
     return TestExtractedState(
-        patient_name=draft.get("patient_name"),
-        patient_phone=draft.get("patient_phone"),
-        service_name=draft.get("service_name"),
-        worker_name=draft.get("worker_name"),
-        preferred_date=draft.get("preferred_date"),
-        preferred_time_window=draft.get("preferred_time_window"),
-        phase=str(state.get("phase", "idle")),
+        patient_name=conversation_state.patient_name or draft.get("patient_name"),
+        patient_phone=conversation_state.patient_phone or draft.get("patient_phone"),
+        service_name=service_name,
+        worker_name=worker_name,
+        preferred_date=conversation_state.preferred_date or draft.get("preferred_date"),
+        preferred_time_window=(
+            conversation_state.preferred_time_window
+            or conversation_state.preferred_time
+            or draft.get("preferred_time_window")
+        ),
+        phase=str(conversation_state.intent or state.get("phase", "idle")),
         appointment_confirmed=bool(appointment_id),
         appointment_id=appointment_id,
         emergency_detected=bool(state.get("emergency_detected")),

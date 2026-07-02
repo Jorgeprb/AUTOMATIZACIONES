@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.conversation_flows import render_flow_prompt
+from app.conversation_policy import conversation_policy_from_config
 from app.db import get_session_factory
 from app.models import (
     AssistantConfig,
@@ -336,6 +337,7 @@ def build_realtime_instructions(context: ClinicContext) -> str:
     tone = _clean(config.tone) or "profesional"
     response_length = _clean(config.response_length) or "normal"
     max_slots = max(1, min(int(config.max_proposed_slots), 10))
+    conversation_policy = conversation_policy_from_config(config)
 
     service_lines = []
     for service in context.services:
@@ -347,7 +349,7 @@ def build_realtime_instructions(context: ClinicContext) -> str:
         description = _clean(service.description) or "Sin descripción pública."
         price = (
             render_service_price(service)
-            if config.use_prices
+            if config.use_prices and config.allow_price_answers
             else "Uso de precios desactivado; no menciones precios."
         )
         service_lines.append(
@@ -434,8 +436,20 @@ def build_realtime_instructions(context: ClinicContext) -> str:
     closing_message = (
         _clean(config.closing_message) or "Gracias por llamar. Hasta luego."
     )
+    human_transfer_rules = (
+        _clean(config.human_transfer_rules)
+        or "Transfiere si el usuario lo pide o si la peticiÃ³n queda fuera de alcance."
+    )
+    commercial_call_message = (
+        _clean(config.commercial_call_message)
+        or (
+            "Gracias, pero este nÃºmero es para pacientes y gestiÃ³n de citas. "
+            "No podemos atender llamadas comerciales por esta vÃ­a."
+        )
+    )
     additional_instructions = _clean(config.additional_instructions)
     forbidden_phrases = _clean(config.forbidden_phrases)
+    conversation_extra_rules = _clean(config.conversation_extra_rules)
     ask_phone_rule = (
         "sí"
         if config.ask_patient_phone
@@ -448,7 +462,9 @@ def build_realtime_instructions(context: ClinicContext) -> str:
         "sí" if config.natural_confirmation_required else "no"
     )
     price_usage = (
-        "activado" if config.use_prices else "desactivado; no menciones precios"
+        "activado"
+        if config.use_prices and config.allow_price_answers
+        else "desactivado; no menciones precios"
     )
     knowledge_usage = (
         "activado" if config.use_knowledge_base else "desactivado"
@@ -499,6 +515,29 @@ sin vincular nunca equivale a disponibilidad.
 {chr(10).join(knowledge_lines)}
 
 # Política de reservas
+
+# Comportamiento conversacional
+
+Estilo conversacional: {conversation_policy.style}.
+Nivel de iniciativa: {conversation_policy.initiative_level}.
+MÃ¡ximo de preguntas seguidas antes de resumir o proponer siguiente paso:
+{conversation_policy.max_consecutive_questions}.
+Reservas permitidas: {"sÃ­" if conversation_policy.allow_bookings else "no"}.
+Cancelaciones permitidas: {"sÃ­" if conversation_policy.allow_cancellations else "no"}.
+Cambios de cita permitidos: {"sÃ­" if conversation_policy.allow_reschedules else "no"}.
+Responder precios: {"sÃ­" if conversation_policy.allow_price_answers else "no"}.
+Pedir servicio como dato obligatorio:
+{"sÃ­" if conversation_policy.ask_service else "no"}.
+Llamadas comerciales/spam: {conversation_policy.commercial_call_handling}.
+Mensaje para llamada comercial/spam: {commercial_call_message}
+CuÃ¡ndo transferir a humano: {human_transfer_rules}
+Reglas adicionales de conversaciÃ³n: {conversation_extra_rules or "No configuradas."}
+MantÃ©n estado interno con intent, service, worker, preferred_date/time,
+pending_slots, selected_slot, patient_name, patient_phone, appointment_id,
+awaiting_confirmation y last_user_acceptance. No repitas preguntas si el dato
+ya estÃ¡ dado. Usa pending_slots para interpretar "a las 9", "la primera",
+"esa" o "me va bien". Gestiona naturalmente informaciÃ³n, precios, servicios,
+FAQs, reservas, cancelaciones, cambios, transferencia, spam, urgencias y cierre.
 
 {_clean(context.booking_rules.booking_policy)}
 Propón como máximo {max_slots} horarios.
@@ -573,6 +612,9 @@ Palabras o frases prohibidas: {forbidden_phrases or "No configuradas."}
   aceptó semánticamente el hueco, aunque no use una frase exacta.
 - No afirmes que una cita está reservada hasta que create_appointment responda
   con éxito.
+- Para mover o reprogramar una cita, identifica primero la cita actual,
+  propone un nuevo hueco real, crea la nueva cita solo si hay aceptación natural
+  y cancela la cita anterior solo después de que la nueva reserva tenga éxito.
 - Usa cancel_appointment solo después de identificar y confirmar la cita.
 - Usa transfer_to_human cuando la petición quede fuera de alcance o la persona
   lo solicite.

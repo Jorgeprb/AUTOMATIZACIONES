@@ -27,6 +27,7 @@ from app.calendar.google_client import (
 )
 from app.calendar.scheduler import SchedulingError, propose_slots
 from app.config import Settings
+from app.conversation_policy import merge_conversation_state
 from app.models import CallOutcome, CallSession, Clinic, Service, Worker
 from app.schemas import (
     AgentAppointmentConfirmation,
@@ -857,6 +858,22 @@ def _update_call_intent(
     session.commit()
 
 
+def _persist_conversation_state(
+    session: Session,
+    context: ToolExecutionContext,
+    **updates: Any,
+) -> None:
+    """Persist the shared ConversationState subset without losing runtime keys."""
+    call_session = session.get(CallSession, context.call_session_id)
+    if call_session is None:
+        return
+    call_session.conversation_state_json = merge_conversation_state(
+        call_session.conversation_state_json,
+        **updates,
+    )
+    session.commit()
+
+
 def _mark_call_outcome(
     session: Session,
     context: ToolExecutionContext,
@@ -930,6 +947,38 @@ def _execute_tool(
                     for slot in slots
                 ]
             )
+            service_state = None
+            if propose_payload.service_id is not None:
+                service = session.get(Service, propose_payload.service_id)
+                if service is not None:
+                    service_state = {
+                        "id": str(service.id),
+                        "name": service.public_name or service.name,
+                    }
+            worker_state = None
+            if propose_payload.worker_id is not None:
+                worker = session.get(Worker, propose_payload.worker_id)
+                if worker is not None:
+                    worker_state = {
+                        "id": str(worker.id),
+                        "name": worker.name,
+                    }
+            _persist_conversation_state(
+                session,
+                context,
+                intent="create_appointment",
+                service=service_state,
+                worker=worker_state,
+                preferred_date=(
+                    propose_payload.preferred_date.isoformat()
+                    if propose_payload.preferred_date
+                    else None
+                ),
+                preferred_time_window=propose_payload.preferred_time_window,
+                pending_slots=propose_response.model_dump(mode="json")["slots"],
+                selected_slot=None,
+                awaiting_confirmation=bool(propose_response.slots),
+            )
             return {"ok": True, **propose_response.model_dump(mode="json")}
 
         if name == "check_availability":
@@ -961,6 +1010,36 @@ def _execute_tool(
                 start_at=availability_payload.start_at,
                 end_at=availability_payload.end_at,
                 reason=availability.reason,
+            )
+            worker = session.get(Worker, availability_payload.worker_id)
+            service = (
+                session.get(Service, availability_payload.service_id)
+                if availability_payload.service_id is not None
+                else None
+            )
+            _persist_conversation_state(
+                session,
+                context,
+                intent="create_appointment",
+                worker={
+                    "id": str(worker.id),
+                    "name": worker.name,
+                }
+                if worker is not None
+                else None,
+                service={
+                    "id": str(service.id),
+                    "name": service.public_name or service.name,
+                }
+                if service is not None
+                else None,
+                selected_slot={
+                    "worker_id": str(availability_payload.worker_id),
+                    "start_at": availability_payload.start_at.isoformat(),
+                    "end_at": availability_payload.end_at.isoformat(),
+                    "available": availability.available,
+                },
+                awaiting_confirmation=availability.available,
             )
             return {
                 "ok": True,
@@ -1013,6 +1092,34 @@ def _execute_tool(
                 google_calendar_id=appointment.google_calendar_id,
                 google_event_id=appointment.google_event_id,
             )
+            _persist_conversation_state(
+                session,
+                context,
+                intent="create_appointment",
+                service={
+                    "id": str(appointment.service_id),
+                    "name": appointment.service.public_name
+                    if appointment.service is not None
+                    else None,
+                }
+                if appointment.service_id is not None
+                else None,
+                worker={
+                    "id": str(appointment.worker_id),
+                    "name": appointment.worker.name,
+                },
+                selected_slot={
+                    "worker_id": str(appointment.worker_id),
+                    "start_at": appointment.start_at.isoformat(),
+                    "end_at": appointment.end_at.isoformat(),
+                },
+                pending_slots=[],
+                patient_name=appointment.patient_name,
+                patient_phone=appointment.patient_phone,
+                appointment_id=str(appointment.id),
+                awaiting_confirmation=False,
+                last_user_acceptance="confirmed_by_caller",
+            )
             _mark_call_outcome(
                 session,
                 context,
@@ -1048,6 +1155,33 @@ def _execute_tool(
                 worker_id=appointment.worker_id,
                 google_event_id=appointment.google_event_id,
             )
+            _persist_conversation_state(
+                session,
+                context,
+                intent="cancel_appointment",
+                worker={
+                    "id": str(appointment.worker_id),
+                    "name": appointment.worker.name,
+                }
+                if appointment.worker is not None
+                else None,
+                service={
+                    "id": str(appointment.service_id),
+                    "name": appointment.service.public_name
+                    if appointment.service is not None
+                    else None,
+                }
+                if appointment.service_id is not None
+                else None,
+                selected_slot={
+                    "worker_id": str(appointment.worker_id),
+                    "start_at": appointment.start_at.isoformat(),
+                },
+                patient_name=appointment.patient_name,
+                patient_phone=appointment.patient_phone,
+                appointment_id=str(appointment.id),
+                awaiting_confirmation=False,
+            )
             _mark_call_outcome(
                 session,
                 context,
@@ -1064,6 +1198,7 @@ def _execute_tool(
                 session,
                 context,
                 values={
+                    "intent": "transfer_to_human",
                     "handoff_requested": True,
                     "handoff_reason": trusted.get("reason"),
                 },
@@ -1086,6 +1221,7 @@ def _execute_tool(
                 session,
                 context,
                 values={
+                    "intent": "close_conversation",
                     "end_call_requested": True,
                     "end_call_reason": trusted.get("reason"),
                 },

@@ -40,6 +40,7 @@ function FieldError({ message }: { message?: string }) {
 type AssistantConfigTab =
   | "basic"
   | "voice"
+  | "conversation"
   | "prompt"
   | "booking"
   | "safety"
@@ -53,6 +54,7 @@ const assistantConfigTabs: Array<{
 }> = [
   { id: "basic", label: "Básico", help: "Identidad y saludo" },
   { id: "voice", label: "Voz y modelo", help: "Modelo, voz y prueba" },
+  { id: "conversation", label: "Comportamiento", help: "Naturalidad y control" },
   { id: "prompt", label: "Prompt", help: "Prompt general" },
   { id: "booking", label: "Reservas", help: "Datos y agenda" },
   { id: "safety", label: "Seguridad", help: "Límites médicos" },
@@ -266,7 +268,16 @@ export function AssistantConfigForm({
                 ask_general_reason: assistantConfigDefaults.ask_general_reason,
                 allow_booking_without_worker:
                   assistantConfigDefaults.allow_booking_without_worker,
+                allow_bookings: assistantConfigDefaults.allow_bookings,
+                allow_price_answers: assistantConfigDefaults.allow_price_answers,
+                ask_service: assistantConfigDefaults.ask_service,
                 max_proposed_slots: assistantConfigDefaults.max_proposed_slots,
+                max_consecutive_questions:
+                  assistantConfigDefaults.max_consecutive_questions,
+                conversation_style: assistantConfigDefaults.conversation_style,
+                initiative_level: assistantConfigDefaults.initiative_level,
+                commercial_call_handling:
+                  assistantConfigDefaults.commercial_call_handling,
                 allow_cancellations: assistantConfigDefaults.allow_cancellations,
                 allow_reschedules: assistantConfigDefaults.allow_reschedules,
                 natural_confirmation_required:
@@ -283,6 +294,12 @@ export function AssistantConfigForm({
                 emergency_message: assistantConfigDefaults.emergency_message,
                 human_transfer_message:
                   assistantConfigDefaults.human_transfer_message,
+                human_transfer_rules:
+                  assistantConfigDefaults.human_transfer_rules,
+                commercial_call_message:
+                  assistantConfigDefaults.commercial_call_message,
+                conversation_extra_rules:
+                  assistantConfigDefaults.conversation_extra_rules,
                 closing_message: assistantConfigDefaults.closing_message,
                 use_prices: assistantConfigDefaults.use_prices,
                 use_knowledge_base: assistantConfigDefaults.use_knowledge_base,
@@ -552,6 +569,123 @@ export function AssistantConfigForm({
               <p className="mt-2 text-sm leading-6 text-[#47546a]">
                 {firstMessage || "El saludo aparecerá aquí."}
               </p>
+            </div>
+          </FormSection>
+          </div>
+
+          <div className={activeTab === "conversation" ? "contents" : "hidden"}>
+          <FormSection
+            title="Comportamiento conversacional"
+            description="Control flexible para sonar natural sin crear un flujo rígido."
+          >
+            <div>
+              <Label htmlFor="assistant-conversation-style">Estilo</Label>
+              <Select
+                id="assistant-conversation-style"
+                className="mt-1.5"
+                {...register("conversation_style")}
+              >
+                <option value="natural">Natural</option>
+                <option value="formal">Formal</option>
+                <option value="comercial">Comercial</option>
+                <option value="breve">Breve</option>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="assistant-initiative">Nivel de iniciativa</Label>
+              <Select
+                id="assistant-initiative"
+                className="mt-1.5"
+                {...register("initiative_level")}
+              >
+                <option value="bajo">Bajo</option>
+                <option value="medio">Medio</option>
+                <option value="alto">Alto</option>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="assistant-max-questions">
+                Máximo de preguntas seguidas
+              </Label>
+              <Input
+                id="assistant-max-questions"
+                type="number"
+                min="1"
+                max="5"
+                className="mt-1.5"
+                {...register("max_consecutive_questions", {
+                  valueAsNumber: true,
+                })}
+              />
+              <FieldError message={errors.max_consecutive_questions?.message} />
+            </div>
+            <div>
+              <Label htmlFor="assistant-commercial-handling">
+                Llamadas comerciales
+              </Label>
+              <Select
+                id="assistant-commercial-handling"
+                className="mt-1.5"
+                {...register("commercial_call_handling")}
+              >
+                <option value="declinar">Declinar amablemente</option>
+                <option value="transferir">Transferir a humano</option>
+                <option value="responder_basico">Responder básico</option>
+              </Select>
+            </div>
+            <div className="sm:col-span-2 grid gap-2 md:grid-cols-2">
+              {([
+                { name: "allow_bookings", label: "Permitir reservas" },
+                { name: "allow_cancellations", label: "Permitir cancelaciones" },
+                { name: "allow_reschedules", label: "Permitir cambios de cita" },
+                { name: "allow_price_answers", label: "Responder precios" },
+                { name: "ask_patient_name", label: "Pedir nombre" },
+                { name: "ask_patient_phone", label: "Pedir teléfono" },
+                { name: "ask_general_reason", label: "Pedir motivo general" },
+                { name: "ask_service", label: "Pedir servicio" },
+              ] as const).map(({ name, label }) => (
+                <label
+                  key={name}
+                  className="flex min-h-10 items-center gap-3 rounded-lg border px-3 text-sm font-medium"
+                >
+                  <input
+                    type="checkbox"
+                    className="size-4 accent-[#315efb]"
+                    {...register(name)}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <div className="sm:col-span-2">
+              <Label htmlFor="assistant-human-transfer-rules">
+                Cuándo transferir a humano
+              </Label>
+              <Textarea
+                id="assistant-human-transfer-rules"
+                className="mt-1.5 min-h-24"
+                {...register("human_transfer_rules")}
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <Label htmlFor="assistant-commercial-message">
+                Mensaje para spam/comercial
+              </Label>
+              <Textarea
+                id="assistant-commercial-message"
+                className="mt-1.5 min-h-24"
+                {...register("commercial_call_message")}
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <Label htmlFor="assistant-conversation-extra-rules">
+                Reglas adicionales libres por clínica
+              </Label>
+              <Textarea
+                id="assistant-conversation-extra-rules"
+                className="mt-1.5 min-h-28"
+                {...register("conversation_extra_rules")}
+              />
             </div>
           </FormSection>
           </div>

@@ -283,7 +283,16 @@ class AssistantConfigBase(BaseModel):
     ask_patient_phone: bool = True
     ask_general_reason: bool = True
     allow_booking_without_worker: bool = True
+    allow_bookings: bool = True
+    allow_price_answers: bool = True
+    ask_service: bool = True
     max_proposed_slots: int = Field(default=3, ge=1, le=10)
+    max_consecutive_questions: int = Field(default=2, ge=1, le=5)
+    conversation_style: Literal["natural", "formal", "comercial", "breve"] = "natural"
+    initiative_level: Literal["bajo", "medio", "alto"] = "medio"
+    commercial_call_handling: Literal[
+        "declinar", "transferir", "responder_basico"
+    ] = "declinar"
     allow_cancellations: bool = True
     allow_reschedules: bool = True
     natural_confirmation_required: bool = True
@@ -294,6 +303,9 @@ class AssistantConfigBase(BaseModel):
     missing_calendar_message: str | None = None
     emergency_message: str | None = None
     human_transfer_message: str | None = None
+    human_transfer_rules: str | None = None
+    commercial_call_message: str | None = None
+    conversation_extra_rules: str | None = None
     closing_message: str | None = None
     use_prices: bool = True
     use_knowledge_base: bool = True
@@ -331,7 +343,18 @@ class AssistantConfigUpdate(BaseModel):
     ask_patient_phone: bool | None = None
     ask_general_reason: bool | None = None
     allow_booking_without_worker: bool | None = None
+    allow_bookings: bool | None = None
+    allow_price_answers: bool | None = None
+    ask_service: bool | None = None
     max_proposed_slots: int | None = Field(default=None, ge=1, le=10)
+    max_consecutive_questions: int | None = Field(default=None, ge=1, le=5)
+    conversation_style: (
+        Literal["natural", "formal", "comercial", "breve"] | None
+    ) = None
+    initiative_level: Literal["bajo", "medio", "alto"] | None = None
+    commercial_call_handling: (
+        Literal["declinar", "transferir", "responder_basico"] | None
+    ) = None
     allow_cancellations: bool | None = None
     allow_reschedules: bool | None = None
     natural_confirmation_required: bool | None = None
@@ -342,6 +365,9 @@ class AssistantConfigUpdate(BaseModel):
     missing_calendar_message: str | None = None
     emergency_message: str | None = None
     human_transfer_message: str | None = None
+    human_transfer_rules: str | None = None
+    commercial_call_message: str | None = None
+    conversation_extra_rules: str | None = None
     closing_message: str | None = None
     use_prices: bool | None = None
     use_knowledge_base: bool | None = None
@@ -419,7 +445,16 @@ class AssistantRecommendedTemplateResponse(BaseModel):
     ask_patient_phone: bool
     ask_general_reason: bool
     allow_booking_without_worker: bool
+    allow_bookings: bool
+    allow_price_answers: bool
+    ask_service: bool
     max_proposed_slots: int = Field(ge=1, le=10)
+    max_consecutive_questions: int = Field(ge=1, le=5)
+    conversation_style: Literal["natural", "formal", "comercial", "breve"]
+    initiative_level: Literal["bajo", "medio", "alto"]
+    commercial_call_handling: Literal[
+        "declinar", "transferir", "responder_basico"
+    ]
     allow_cancellations: bool
     allow_reschedules: bool
     natural_confirmation_required: bool
@@ -430,6 +465,9 @@ class AssistantRecommendedTemplateResponse(BaseModel):
     missing_calendar_message: str
     emergency_message: str
     human_transfer_message: str
+    human_transfer_rules: str
+    commercial_call_message: str
+    conversation_extra_rules: str
     closing_message: str
     use_prices: bool
     use_knowledge_base: bool

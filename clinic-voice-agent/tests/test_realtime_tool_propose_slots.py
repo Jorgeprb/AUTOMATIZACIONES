@@ -140,6 +140,12 @@ def test_propose_slots_tool_ignores_duration_when_service_id_is_present(
 
     assert result["ok"] is True
     assert _first_slot_duration(result) == timedelta(minutes=30)
+    db_session.refresh(call)
+    state = call.conversation_state_json
+    assert state["intent"] == "create_appointment"
+    assert state["awaiting_confirmation"] is True
+    assert state["service"]["id"] == str(service.id)
+    assert state["pending_slots"][0]["start_at"].startswith("2026-06-22T09:00")
 
 
 def test_propose_slots_tool_allows_duration_when_service_id_is_missing(
@@ -264,6 +270,11 @@ def test_create_appointment_resolves_worker_and_service_names(
 
     assert result["ok"] is True
     assert result["worker_name"] == "Ana"
+    db_session.refresh(call)
+    state = call.conversation_state_json
+    assert state["appointment_id"] == result["appointment_id"]
+    assert state["awaiting_confirmation"] is False
+    assert state["patient_name"] == "Paciente Uno"
 
 
 def test_propose_slots_without_worker_calendar_returns_clear_error(

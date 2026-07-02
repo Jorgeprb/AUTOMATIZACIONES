@@ -871,7 +871,14 @@ def get_recommended_assistant_template() -> AssistantRecommendedTemplateResponse
         ask_patient_phone=True,
         ask_general_reason=True,
         allow_booking_without_worker=True,
+        allow_bookings=True,
+        allow_price_answers=True,
+        ask_service=True,
         max_proposed_slots=3,
+        max_consecutive_questions=2,
+        conversation_style="natural",
+        initiative_level="medio",
+        commercial_call_handling="declinar",
         allow_cancellations=True,
         allow_reschedules=True,
         natural_confirmation_required=True,
@@ -890,6 +897,18 @@ def get_recommended_assistant_template() -> AssistantRecommendedTemplateResponse
             "Si es una urgencia médica, llame al 112 ahora o acuda a urgencias."
         ),
         human_transfer_message="Le paso con una persona si está disponible.",
+        human_transfer_rules=(
+            "Transfiere a humano si el usuario lo pide, si hay queja, si falta "
+            "informaciÃ³n crÃ­tica o si la peticiÃ³n queda fuera de alcance."
+        ),
+        commercial_call_message=(
+            "Gracias, pero este nÃºmero es para pacientes y gestiÃ³n de citas. "
+            "No podemos atender llamadas comerciales por esta vÃ­a."
+        ),
+        conversation_extra_rules=(
+            "No repitas preguntas ya respondidas. Usa pending_slots para "
+            "interpretar 'la primera', 'esa' o una hora concreta."
+        ),
         closing_message="Gracias por llamar. Hasta luego.",
         use_prices=True,
         use_knowledge_base=True,
