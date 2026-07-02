@@ -313,7 +313,7 @@ def _step_summary(step: FlowStep) -> str:
         return f"recoger {step.field} ({requirement})"
     if step.type == "tool":
         return f"usar {step.tool_name}"
-    return "pedir confirmación explícita"
+    return "aceptar confirmación natural del cliente"
 
 
 def render_flow_prompt(flow: ConversationFlow) -> str:
@@ -363,7 +363,7 @@ Herramientas permitidas por este flujo:
 Condiciones de salida:
 {chr(10).join(f"- {condition}" for condition in exits)}
 
-Las reglas globales de seguridad, veracidad y confirmación siguen teniendo
+Las reglas globales de seguridad, veracidad y aceptación natural siguen teniendo
 prioridad. No uses una herramienta fuera de esta lista para cumplir el objetivo
 del flujo, salvo transfer_to_human o end_call cuando sean necesarios por
 seguridad, petición del usuario o cierre natural.

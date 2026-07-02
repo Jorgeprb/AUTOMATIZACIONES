@@ -35,20 +35,67 @@ def test_all_realtime_tools_have_required_function_fields() -> None:
         assert tool["parameters"]["additionalProperties"] is False
 
 
-def test_create_appointment_requires_prior_verbal_confirmation() -> None:
-    """Both prompt and schema should prevent unconfirmed reservations."""
+def test_create_appointment_accepts_natural_slot_confirmation() -> None:
+    """Prompt and schema should allow natural acceptance, not exact phrases."""
     settings = Settings(_env_file=None)
     prompt = build_receptionist_instructions(settings).casefold()
     create_tool = next(
         tool for tool in get_realtime_tools() if tool["name"] == "create_appointment"
     )
 
-    assert "confirmación verbal" in prompt
-    assert "solo después" in prompt
+    assert "aceptación natural" in prompt
+    assert "no pidas una" in prompt
+    assert "frase exacta" in prompt
     assert "create_appointment devuelva éxito" in prompt
     assert "confirmed_by_caller" in create_tool["parameters"]["required"]
     confirmation = create_tool["parameters"]["properties"]["confirmed_by_caller"]
     assert confirmation["const"] is True
+    assert "semánticamente" in confirmation["description"]
+
+
+def test_propose_slots_schema_prefers_service_id_or_duration() -> None:
+    """The model should see service_id and duration_minutes as alternatives."""
+    propose_tool = next(
+        tool for tool in get_realtime_tools() if tool["name"] == "propose_slots"
+    )
+    parameters = propose_tool["parameters"]
+    properties = parameters["properties"]
+
+    assert parameters["oneOf"] == [
+        {"required": ["service_id"]},
+        {"required": ["service_name"]},
+        {"required": ["duration_minutes"]},
+    ]
+    assert "service_id" in properties
+    assert "service_name" in properties
+    assert "duration_minutes" in properties
+    assert "worker_name" in properties
+    assert "no envíes duration_minutes" in properties["service_id"]["description"]
+    assert "No envíes ambos campos" in properties["duration_minutes"]["description"]
+
+
+def test_booking_tools_accept_names_for_server_resolution() -> None:
+    """Realtime tools should allow names when the model does not know IDs."""
+    tools = {tool["name"]: tool for tool in get_realtime_tools()}
+
+    for name in ("check_availability", "create_appointment"):
+        properties = tools[name]["parameters"]["properties"]
+        assert "worker_name" in properties
+        assert "service_name" in properties
+    assert "worker_id" not in tools["check_availability"]["parameters"]["required"]
+    assert "worker_id" not in tools["create_appointment"]["parameters"]["required"]
+
+
+def test_prompt_tells_model_not_to_mix_service_and_duration() -> None:
+    """The assistant prompt must steer tool calls away from duplicated duration."""
+    settings = Settings(_env_file=None)
+    prompt = build_receptionist_instructions(settings).casefold()
+
+    assert "envía service_id" in prompt
+    assert "no envíes" in prompt
+    assert "duration_minutes" in prompt
+    assert "nunca inventes uuid" in prompt
+    assert "worker_name o service_name" in prompt
 
 
 def test_prompt_contains_medical_prohibitions_and_emergency_protocol() -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -14,15 +14,18 @@ from app.admin_schemas import (
     TestSessionCreate,
     TestSessionMessageCreate,
     TestSessionRead,
+    TestSessionTTSRequest,
 )
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import CallSession, TestSession
 from app.test_console import (
     TestConsoleError,
+    close_test_session,
     create_test_session,
     render_test_session,
     send_test_message,
+    synthesize_test_session_audio,
 )
 
 router = APIRouter(prefix="/admin")
@@ -135,6 +138,55 @@ def get_test_session(
     except TestConsoleError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/test-sessions/{session_id}/close",
+    response_model=TestSessionRead,
+    tags=["Admin · Test console"],
+)
+def close_session(
+    session_id: uuid.UUID,
+    session: Annotated[Session, Depends(get_db)],
+) -> TestSessionRead:
+    """Close a browser test conversation without deleting its trace."""
+    test_session = _test_session_or_404(session, session_id, for_update=True)
+    try:
+        closed = close_test_session(session, test_session)
+        return render_test_session(session, closed)
+    except TestConsoleError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/test-sessions/{session_id}/tts",
+    tags=["Admin · Test console"],
+)
+def synthesize_speech(
+    session_id: uuid.UUID,
+    payload: TestSessionTTSRequest,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Response:
+    """Generate finite TTS audio for one assistant message in the browser."""
+    test_session = _test_session_or_404(session, session_id)
+    try:
+        audio = synthesize_test_session_audio(
+            session,
+            settings,
+            test_session,
+            payload.text,
+        )
+        return Response(content=audio, media_type="audio/mpeg")
+    except TestConsoleError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
 

@@ -10,10 +10,14 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.api.admin import content as content_api
+from app.api.admin import core as core_api
 from app.db import get_db
+from app.knowledge.importers import ExtractedKnowledge
 from app.main import create_app
 from app.models import (
     Appointment,
@@ -24,6 +28,7 @@ from app.models import (
     CallSession,
     CallStatus,
     Clinic,
+    KnowledgeItem,
     Service,
     Worker,
 )
@@ -230,6 +235,27 @@ async def test_assistant_knowledge_and_flow_crud(database_engine: Engine) -> Non
             "booking_policy_prompt": "Confirma antes de reservar.",
             "cancellation_policy_prompt": "Confirma antes de cancelar.",
             "transfer_policy_prompt": "Transfiere si se solicita.",
+            "tone": "cercano",
+            "response_length": "corta",
+            "ask_patient_name": True,
+            "ask_patient_phone": True,
+            "ask_general_reason": True,
+            "allow_booking_without_worker": True,
+            "max_proposed_slots": 2,
+            "allow_cancellations": True,
+            "allow_reschedules": True,
+            "natural_confirmation_required": True,
+            "avoid_exact_confirmation_phrases": True,
+            "additional_instructions": "Habla natural.",
+            "forbidden_phrases": "No diga esto",
+            "no_availability_message": "No hay huecos.",
+            "missing_calendar_message": "Falta calendario.",
+            "emergency_message": "Llame al 112.",
+            "human_transfer_message": "Le paso con una persona.",
+            "closing_message": "Hasta luego.",
+            "use_prices": True,
+            "use_knowledge_base": True,
+            "strict_calendar_mode": True,
             "transcript_enabled": True,
             "recording_enabled": False,
             "conversation_retention_days": 45,
@@ -241,6 +267,8 @@ async def test_assistant_knowledge_and_flow_crud(database_engine: Engine) -> Non
             json=config_payload,
         )
         assert first_config.status_code == 201
+        assert first_config.json()["tone"] == "cercano"
+        assert first_config.json()["max_proposed_slots"] == 2
 
         second_active = await client.post(
             f"/api/admin/clinics/{clinic_id}/assistant-configs",
@@ -272,12 +300,16 @@ async def test_assistant_knowledge_and_flow_crud(database_engine: Engine) -> Non
                 "realtime_voice": "cedar",
                 "language": "gl-ES",
                 "conversation_retention_days": 60,
+                "tone": "formal",
+                "max_proposed_slots": 4,
             },
         )
         assert updated_config.status_code == 200
         assert updated_config.json()["realtime_voice"] == "cedar"
         assert updated_config.json()["language"] == "gl-ES"
         assert updated_config.json()["conversation_retention_days"] == 60
+        assert updated_config.json()["tone"] == "formal"
+        assert updated_config.json()["max_proposed_slots"] == 4
 
         selected_preview = await client.post(
             (
@@ -334,6 +366,12 @@ async def test_assistant_knowledge_and_flow_crud(database_engine: Engine) -> Non
             language["id"]
             for language in assistant_options.json()["languages"]
         }
+        recommended_template = await client.get(
+            "/api/admin/assistant-templates/recommended",
+            headers=ADMIN_HEADERS,
+        )
+        assert recommended_template.status_code == 200
+        assert recommended_template.json()["avoid_exact_confirmation_phrases"] is True
 
         knowledge = await client.post(
             f"/api/admin/clinics/{clinic_id}/knowledge",
@@ -560,6 +598,131 @@ async def test_assistant_knowledge_and_flow_crud(database_engine: Engine) -> Non
         )
         assert searched.status_code == 200
         assert searched.json()["total"] == 1
+
+
+@pytest.mark.anyio
+async def test_assistant_voice_preview_returns_audio(
+    database_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The assistant editor should preview voice without creating a conversation."""
+    calls: list[tuple[str, str, str | None]] = []
+
+    def fake_speech(
+        settings: object,
+        *,
+        text: str,
+        voice: str,
+        model: str | None = None,
+    ) -> bytes:
+        calls.append((text, voice, model))
+        return b"mp3-bytes"
+
+    monkeypatch.setattr(core_api, "synthesize_openai_speech", fake_speech)
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(database_engine)),
+        base_url="http://testserver",
+    ) as client:
+        clinic = await _create_clinic(client, "Voz")
+        response = await client.post(
+            f"/api/admin/clinics/{clinic['id']}/assistant-configs/voice-preview",
+            headers=ADMIN_HEADERS,
+            json={
+                "text": "Hola, soy el asistente.",
+                "realtime_voice": "marin",
+                "realtime_model": "gpt-realtime-2",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("audio/mpeg")
+    assert response.content == b"mp3-bytes"
+    assert calls == [("Hola, soy el asistente.", "marin", "gpt-realtime-2")]
+
+
+@pytest.mark.anyio
+async def test_knowledge_pdf_and_url_imports(
+    database_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Knowledge imports should preview extracted text and persist metadata."""
+    monkeypatch.setattr(
+        content_api,
+        "extract_pdf_knowledge",
+        lambda data, filename: ExtractedKnowledge(
+            title="Tarifas demo",
+            content=f"PDF extraído desde {filename}: limpieza 50 euros.",
+            source=filename,
+        ),
+    )
+    monkeypatch.setattr(
+        content_api,
+        "fetch_url_knowledge",
+        lambda url: ExtractedKnowledge(
+            title="FAQ web",
+            content="Horario de atención de lunes a viernes.",
+            source=url,
+        ),
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(database_engine)),
+        base_url="http://testserver",
+    ) as client:
+        clinic = await _create_clinic(client, "Imports")
+        clinic_id = clinic["id"]
+        pdf_preview = await client.post(
+            f"/api/admin/clinics/{clinic_id}/knowledge/import/pdf/preview",
+            headers=ADMIN_HEADERS,
+            files={"file": ("tarifas.pdf", b"%PDF-demo", "application/pdf")},
+            data={"category": "prices"},
+        )
+        assert pdf_preview.status_code == 200
+        assert pdf_preview.json()["source_type"] == "pdf"
+        assert "limpieza 50" in pdf_preview.json()["content"]
+
+        pdf_import = await client.post(
+            f"/api/admin/clinics/{clinic_id}/knowledge/import/pdf",
+            headers=ADMIN_HEADERS,
+            files={"file": ("tarifas.pdf", b"%PDF-demo", "application/pdf")},
+            data={
+                "category": "prices",
+                "title": "Tarifas 2026",
+                "priority": "80",
+                "is_active": "true",
+            },
+        )
+        assert pdf_import.status_code == 201
+        assert pdf_import.json()["title"] == "Tarifas 2026"
+        assert pdf_import.json()["source_type"] == "pdf"
+        assert pdf_import.json()["import_status"] == "imported"
+
+        url_preview = await client.post(
+            f"/api/admin/clinics/{clinic_id}/knowledge/import/url/preview",
+            headers=ADMIN_HEADERS,
+            json={"url": "https://example.test/faq", "category": "faq"},
+        )
+        assert url_preview.status_code == 200
+        assert url_preview.json()["source_type"] == "url"
+        assert "Horario de atención" in url_preview.json()["content"]
+
+        url_import = await client.post(
+            f"/api/admin/clinics/{clinic_id}/knowledge/import/url",
+            headers=ADMIN_HEADERS,
+            json={
+                "url": "https://example.test/faq",
+                "category": "faq",
+                "priority": 20,
+                "is_active": True,
+            },
+        )
+        assert url_import.status_code == 201
+        assert url_import.json()["source_type"] == "url"
+
+    with _factory(database_engine)() as session:
+        imported = session.scalars(
+            select(KnowledgeItem).where(KnowledgeItem.clinic_id == clinic_id)
+        ).all()
+        assert {item.source_type for item in imported} == {"pdf", "url"}
 
 
 @pytest.mark.anyio

@@ -5,8 +5,11 @@ import {
   getGoogleOAuthStartUrl,
   linkWorkerCalendar,
 } from "@/api/calendar";
-import { apiRequest, toQuery } from "@/api/client";
-import { activateAssistantConfig } from "@/api/assistants";
+import { apiBlobRequest, apiRequest, toQuery } from "@/api/client";
+import {
+  activateAssistantConfig,
+  previewAssistantVoice,
+} from "@/api/assistants";
 import { cancelAppointment } from "@/api/appointments";
 import {
   anonymizeCallPhone,
@@ -14,7 +17,13 @@ import {
   getCallDebug,
   listCalls,
 } from "@/api/calls";
-import { createKnowledge } from "@/api/knowledge";
+import {
+  createKnowledge,
+  importPdfKnowledge,
+  importUrlKnowledge,
+  previewPdfKnowledge,
+  previewUrlKnowledge,
+} from "@/api/knowledge";
 import { createService } from "@/api/services";
 import { createWorker } from "@/api/workers";
 import {
@@ -22,9 +31,11 @@ import {
   getSetupStatus,
 } from "@/api/dashboard";
 import {
+  closeTestSession,
   deleteTestSession,
   sendTestMessage,
   startTestSession,
+  synthesizeTestSessionAudio,
 } from "@/api/testConsole";
 import {
   createFlow,
@@ -34,12 +45,16 @@ import {
 import { defaultWeeklyHours } from "@/schemas/hours";
 
 vi.mock("@/api/client", () => ({
+  apiBlobRequest: vi.fn(),
   apiRequest: vi.fn(),
   toQuery: vi.fn(() => ""),
 }));
 
 describe("operational API calls", () => {
-  beforeEach(() => vi.mocked(apiRequest).mockReset());
+  beforeEach(() => {
+    vi.mocked(apiRequest).mockReset();
+    vi.mocked(apiBlobRequest).mockReset();
+  });
 
   it("creates a worker with weekly hours", async () => {
     vi.mocked(apiRequest).mockResolvedValue({ id: "worker-1" });
@@ -131,12 +146,85 @@ describe("operational API calls", () => {
     );
   });
 
+  it("previews and imports PDF/URL knowledge", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ id: "knowledge-1" });
+    const file = new File(["pdf"], "tarifas.pdf", { type: "application/pdf" });
+    await previewPdfKnowledge("clinic-1", {
+      file,
+      category: "prices",
+    });
+    await importPdfKnowledge("clinic-1", {
+      file,
+      title: "Tarifas",
+      category: "prices",
+      priority: 80,
+      is_active: true,
+    });
+    await previewUrlKnowledge("clinic-1", {
+      url: "https://example.test/faq",
+      category: "faq",
+    });
+    await importUrlKnowledge("clinic-1", {
+      url: "https://example.test/faq",
+      category: "faq",
+      priority: 10,
+      is_active: true,
+    });
+
+    expect(apiRequest).toHaveBeenNthCalledWith(
+      1,
+      "/api/admin/clinics/clinic-1/knowledge/import/pdf/preview",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(apiRequest).toHaveBeenNthCalledWith(
+      2,
+      "/api/admin/clinics/clinic-1/knowledge/import/pdf",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(apiRequest).toHaveBeenNthCalledWith(
+      3,
+      "/api/admin/clinics/clinic-1/knowledge/import/url/preview",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(apiRequest).toHaveBeenNthCalledWith(
+      4,
+      "/api/admin/clinics/clinic-1/knowledge/import/url",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("activates the selected assistant configuration", async () => {
     vi.mocked(apiRequest).mockResolvedValue({ id: "config-2", is_active: true });
     await activateAssistantConfig("clinic-1", "config-2");
     expect(apiRequest).toHaveBeenCalledWith(
       "/api/admin/clinics/clinic-1/assistant-configs/config-2/activate",
       { method: "POST" },
+    );
+  });
+
+  it("generates an assistant voice preview as audio", async () => {
+    vi.mocked(apiBlobRequest).mockResolvedValue(new Blob(["mp3"]));
+    const signal = new AbortController().signal;
+    await previewAssistantVoice(
+      "clinic-1",
+      {
+        text: "Hola, soy el asistente.",
+        realtime_voice: "marin",
+        realtime_model: "gpt-realtime-2",
+      },
+      signal,
+    );
+    expect(apiBlobRequest).toHaveBeenCalledWith(
+      "/api/admin/clinics/clinic-1/assistant-configs/voice-preview",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          text: "Hola, soy el asistente.",
+          realtime_voice: "marin",
+          realtime_model: "gpt-realtime-2",
+        }),
+        signal,
+      },
     );
   });
 
@@ -195,7 +283,10 @@ describe("operational API calls", () => {
       engine: "simulator",
     });
     await sendTestMessage("session-1", "Quiero una cita");
+    await closeTestSession("session-1");
     await deleteTestSession("session-1");
+    vi.mocked(apiBlobRequest).mockResolvedValue(new Blob(["mp3"]));
+    await synthesizeTestSessionAudio("session-1", "Hola");
 
     expect(apiRequest).toHaveBeenNthCalledWith(
       1,
@@ -216,12 +307,24 @@ describe("operational API calls", () => {
         method: "POST",
         body: JSON.stringify({ message: "Quiero una cita" }),
       },
-    );
-    expect(apiRequest).toHaveBeenNthCalledWith(
-      3,
-      "/api/admin/test-sessions/session-1",
-      { method: "DELETE" },
-    );
+      );
+      expect(apiRequest).toHaveBeenNthCalledWith(
+        3,
+        "/api/admin/test-sessions/session-1/close",
+        { method: "POST" },
+      );
+      expect(apiRequest).toHaveBeenNthCalledWith(
+        4,
+        "/api/admin/test-sessions/session-1",
+        { method: "DELETE" },
+      );
+      expect(apiBlobRequest).toHaveBeenCalledWith(
+        "/api/admin/test-sessions/session-1/tts",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ text: "Hola" }),
+        }),
+      );
   });
 
   it("loads clinic dashboard and production checklist", async () => {

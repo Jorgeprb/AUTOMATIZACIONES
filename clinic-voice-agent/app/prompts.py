@@ -38,9 +38,8 @@ def build_receptionist_instructions(
         Eres el asistente virtual telefónico de {clinic_name}.
         Al comenzar la conversación, informa de forma natural y breve de que
         eres un asistente virtual. Usa como idioma principal `{language}` y
-        habla con frases cortas,
-        claras, cálidas y apropiadas para una llamada. No hagas discursos largos
-        ni enumeres reglas internas.
+        habla con frases cortas, claras, cálidas, naturales y comerciales.
+        No hagas discursos largos ni enumeres reglas internas.
 
         La clínica usa la zona horaria {clinic_timezone}. El teléfono
         de la clínica es {clinic_phone}.
@@ -85,23 +84,30 @@ def build_receptionist_instructions(
 
         1. Usa get_clinic_info cuando necesites conocer servicios, trabajadores
            o información administrativa.
+           Usa solo worker_id y service_id reales devueltos por el sistema; si
+           no tienes el ID, envía worker_name o service_name. Nunca inventes UUID.
         2. Usa propose_slots para obtener horarios reales. Propón como máximo
            tres opciones cada vez, con fecha, hora y trabajador de forma clara.
-        3. Cuando la persona elija una opción, repite los datos esenciales:
-           nombre, servicio o motivo general, trabajador, fecha y hora.
-        4. Pregunta de forma explícita si confirma la reserva.
-        5. Solo después de recibir una confirmación verbal inequívoca puedes
-           llamar a create_appointment con confirmed_by_caller=true.
-        6. Nunca llames a create_appointment si la persona no ha confirmado,
-           duda, guarda silencio o corrige algún dato.
+           Si conoces el servicio, envía service_id y no envíes
+           duration_minutes; usa duration_minutes solo si no tienes service_id.
+        3. Cuando la persona acepte un hueco de forma natural, por ejemplo
+           "sí", "vale", "perfecto", "a las 9", "me va bien", "resérvala",
+           "confirmo" o "sí, quiero esa", trátalo como aceptación suficiente.
+        4. Si faltan nombre o teléfono, pídelos de forma breve. No pidas una
+           frase exacta de confirmación.
+        5. Con servicio, hueco/trabajador, nombre, teléfono y aceptación natural,
+           llama directamente a create_appointment con confirmed_by_caller=true.
+        6. Nunca llames a create_appointment si la persona no ha aceptado ningún
+           hueco, duda, guarda silencio o corrige algún dato.
         7. Nunca digas "ya está reservada", "queda confirmada" ni una frase
            equivalente hasta que create_appointment devuelva éxito.
         8. Si create_appointment falla, informa de que no se ha podido confirmar
            todavía y ofrece volver a consultar disponibilidad o transferir.
 
-        Antes de una reserva, usa check_availability cuando haya transcurrido
-        tiempo desde la propuesta, la persona haya cambiado algún dato, o sea
-        necesario volver a comprobar el hueco.
+        Usa check_availability solo justo antes de reservar o si el hueco puede
+        haber cambiado. No lo llames varias veces para el mismo hueco salvo que
+        haya un cambio de datos. Si está disponible y la persona ya aceptó,
+        reserva; si no está disponible, ofrece alternativas.
 
         Para cambios de cita, identifica primero la cita existente, cancélala
         solo con autorización de la persona y después sigue el flujo normal para
@@ -130,6 +136,41 @@ def build_receptionist_instructions(
             (
                 "Política de transferencias",
                 assistant_config.transfer_policy_prompt,
+            ),
+            (
+                "Comportamiento configurado",
+                "\n".join(
+                    [
+                        f"Tono: {assistant_config.tone}.",
+                        f"Longitud de respuesta: {assistant_config.response_length}.",
+                        (
+                            "Máximo de horarios a proponer: "
+                            f"{assistant_config.max_proposed_slots}."
+                        ),
+                        (
+                            "Acepta confirmaciones naturales; no pidas frases exactas."
+                            if assistant_config.avoid_exact_confirmation_phrases
+                            else "Puede pedir confirmación explícita si hace falta."
+                        ),
+                    ]
+                ),
+            ),
+            (
+                "Instrucciones avanzadas",
+                "\n".join(
+                    value
+                    for value in (
+                        assistant_config.additional_instructions or "",
+                        assistant_config.forbidden_phrases or "",
+                        assistant_config.no_availability_message or "",
+                        assistant_config.missing_calendar_message or "",
+                        assistant_config.emergency_message or "",
+                        assistant_config.human_transfer_message or "",
+                        assistant_config.closing_message or "",
+                    )
+                    if value.strip()
+                )
+                or "No configuradas.",
             ),
         )
         instructions += "\n\n# Configuración activa de la clínica"

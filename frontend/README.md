@@ -133,7 +133,12 @@ npm run preview    previsualiza dist/
 La consola `/clinics/:clinicId/test` usa por defecto el simulador local y un
 calendario fake. Puede cambiarse al motor OpenAI y activar Google Calendar real
 de forma explícita. El modelo textual se configura con `TEST_CONSOLE_MODEL` en
-el backend.
+el backend. La opción “Escuchar voz del bot” genera un MP3 por respuesta con
+`OPENAI_TTS_MODEL` y la voz del `AssistantConfig`; si falla el TTS, el chat
+continúa.
+
+La pantalla de conocimiento permite añadir texto manual o importar PDF/URL. En
+PDF y URL siempre se previsualiza el contenido extraído antes de guardarlo.
 
 Desde la raíz del repositorio también puede arrancarse todo con:
 

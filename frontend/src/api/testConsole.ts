@@ -1,4 +1,4 @@
-import { apiRequest } from "@/api/client";
+import { apiBlobRequest, apiRequest } from "@/api/client";
 import type { TestSession } from "@/schemas/domain";
 
 export interface StartTestSessionPayload {
@@ -29,6 +29,24 @@ export function sendTestMessage(
 
 export function getTestSession(sessionId: string): Promise<TestSession> {
   return apiRequest(`/api/admin/test-sessions/${sessionId}`);
+}
+
+export function closeTestSession(sessionId: string): Promise<TestSession> {
+  return apiRequest(`/api/admin/test-sessions/${sessionId}/close`, {
+    method: "POST",
+  });
+}
+
+export function synthesizeTestSessionAudio(
+  sessionId: string,
+  text: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  return apiBlobRequest(`/api/admin/test-sessions/${sessionId}/tts`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+    signal,
+  });
 }
 
 export function deleteTestSession(

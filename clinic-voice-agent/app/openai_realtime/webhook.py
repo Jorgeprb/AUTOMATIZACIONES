@@ -116,6 +116,12 @@ def _mark_call_failed(
     session.commit()
 
 
+def _incoming_event_data(raw_event: dict[str, Any]) -> dict[str, Any]:
+    """Return incoming webhook data as a safe dictionary."""
+    data = raw_event.get("data")
+    return data if isinstance(data, dict) else {}
+
+
 @router.post("/realtime", status_code=status.HTTP_200_OK)
 async def receive_realtime_webhook(
     request: Request,
@@ -138,6 +144,22 @@ async def receive_realtime_webhook(
             extra={"event_type": raw_event.get("type")},
         )
         return {"status": "ignored"}
+
+    event_data = _incoming_event_data(raw_event)
+    call_id_present = bool(event_data.get("call_id"))
+    data_id_present = bool(event_data.get("id"))
+    test_event = not call_id_present
+    logger.info(
+        "openai_realtime_incoming_received",
+        extra={
+            "event_type": raw_event.get("type"),
+            "data_call_id_present": call_id_present,
+            "data_id_present": data_id_present,
+            "test_event": test_event,
+        },
+    )
+    if test_event:
+        return {"ok": True, "test_event": True}
 
     try:
         incoming = RealtimeIncomingCallEvent.model_validate(raw_event)

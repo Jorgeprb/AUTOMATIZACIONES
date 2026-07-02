@@ -171,8 +171,8 @@ def _load_clinic_context(
             opening_hours=dict(clinic.opening_hours_json),
         ),
         booking_rules=BookingRules(
-            max_proposed_slots=3,
-            verbal_confirmation_required=True,
+            max_proposed_slots=assistant_config.max_proposed_slots,
+            verbal_confirmation_required=assistant_config.natural_confirmation_required,
             availability_recheck_required=True,
             bookable_services=bookable_services,
             booking_policy=assistant_config.booking_policy_prompt,
@@ -333,6 +333,9 @@ def build_realtime_instructions(context: ClinicContext) -> str:
     clinic = context.clinic
     config = context.active_assistant_config
     workers_by_id = {str(worker.id): worker for worker in context.workers}
+    tone = _clean(config.tone) or "profesional"
+    response_length = _clean(config.response_length) or "normal"
+    max_slots = max(1, min(int(config.max_proposed_slots), 10))
 
     service_lines = []
     for service in context.services:
@@ -342,10 +345,16 @@ def build_realtime_instructions(context: ClinicContext) -> str:
             else "solo información; no reservar con el asistente"
         )
         description = _clean(service.description) or "Sin descripción pública."
+        price = (
+            render_service_price(service)
+            if config.use_prices
+            else "Uso de precios desactivado; no menciones precios."
+        )
         service_lines.append(
-            f"- {service.public_name}: {description} "
+            f"- {service.public_name}: service_id real={service.id}. "
+            f"{description} "
             f"Duración: {service.duration_minutes} minutos. "
-            f"Precio: {render_service_price(service)}. "
+            f"Precio: {price}. "
             f"Trabajadores: {_service_worker_names(service, workers_by_id)}. "
             f"Estado: {booking_state}."
         )
@@ -357,9 +366,9 @@ def build_realtime_instructions(context: ClinicContext) -> str:
         description = _clean(worker.public_description)
         detail = f" ({description})" if description else ""
         calendar_state = (
-            "calendario disponible"
+            f"calendario disponible; worker_id real={worker.id}"
             if worker.calendar_id
-            else "sin calendario; no ofrecer huecos"
+            else "sin calendar_id; no ofrecer huecos ni reservar automáticamente"
         )
         worker_lines.append(
             f"- {worker.name}, {worker.role}{detail}. "
@@ -369,10 +378,14 @@ def build_realtime_instructions(context: ClinicContext) -> str:
     if not worker_lines:
         worker_lines.append("- No hay trabajadores activos configurados.")
 
-    knowledge_lines = [
-        f"- [{item.category.value}] {item.title}: {_clean(item.content)}"
-        for item in context.knowledge_items
-    ]
+    knowledge_lines = (
+        [
+            f"- [{item.category.value}] {item.title}: {_clean(item.content)}"
+            for item in context.knowledge_items
+        ]
+        if config.use_knowledge_base
+        else ["- Base de conocimiento desactivada para este asistente."]
+    )
     if not knowledge_lines:
         knowledge_lines.append("- No hay elementos activos.")
 
@@ -398,7 +411,51 @@ def build_realtime_instructions(context: ClinicContext) -> str:
     linked_workers = (
         ", ".join(context.calendar_settings.workers_with_calendar) or "ninguno"
     )
-    emergency_message = _clean(clinic.emergency_message) or "No configurado."
+    emergency_message = (
+        _clean(config.emergency_message)
+        or _clean(clinic.emergency_message)
+        or "No configurado."
+    )
+    no_availability_message = (
+        _clean(config.no_availability_message)
+        or "No tengo huecos disponibles en esa franja; te propongo alternativas."
+    )
+    missing_calendar_message = (
+        _clean(config.missing_calendar_message)
+        or "Falta enlazar el calendario del trabajador; recepción debe revisarlo."
+    )
+    human_transfer_message = (
+        _clean(config.human_transfer_message)
+        or (
+            "Ahora mismo no tengo la transferencia configurada, "
+            "pero dejo anotada la petición."
+        )
+    )
+    closing_message = (
+        _clean(config.closing_message) or "Gracias por llamar. Hasta luego."
+    )
+    additional_instructions = _clean(config.additional_instructions)
+    forbidden_phrases = _clean(config.forbidden_phrases)
+    ask_phone_rule = (
+        "sí"
+        if config.ask_patient_phone
+        else "solo confirmar si caller ID ya sirve"
+    )
+    allow_worker_rule = (
+        "sí" if config.allow_booking_without_worker else "no"
+    )
+    natural_confirmation_rule = (
+        "sí" if config.natural_confirmation_required else "no"
+    )
+    price_usage = (
+        "activado" if config.use_prices else "desactivado; no menciones precios"
+    )
+    knowledge_usage = (
+        "activado" if config.use_knowledge_base else "desactivado"
+    )
+    strict_calendar_usage = (
+        "activado" if config.strict_calendar_mode else "desactivado"
+    )
     flow_guidance = (
         render_flow_prompt(context.active_conversation_flow)
         if context.active_conversation_flow is not None
@@ -409,7 +466,8 @@ def build_realtime_instructions(context: ClinicContext) -> str:
 
 Eres el asistente virtual telefónico de {clinic.name}.
 Idioma principal: {config.language}.
-Tono: profesional, cálido, breve, natural y adecuado para una llamada.
+Tono configurado: {tone}. Longitud de respuesta: {response_length}.
+Habla de forma natural, breve y comercial cuando encaje, adecuada para una llamada.
 Debes avisar al inicio de que eres un asistente virtual.
 Primer mensaje configurado: "{_clean(config.first_message)}"
 
@@ -443,19 +501,33 @@ sin vincular nunca equivale a disponibilidad.
 # Política de reservas
 
 {_clean(context.booking_rules.booking_policy)}
-Propón como máximo {context.booking_rules.max_proposed_slots} horarios.
-Recoge nombre, teléfono, servicio o motivo general, preferencia y trabajador
-si aplica. Repite los datos y exige confirmación verbal inequívoca.
-Antes de reservar, vuelve a comprobar el hueco.
+Propón como máximo {max_slots} horarios.
+Pedir nombre: {"sí" if config.ask_patient_name else "no, salvo que sea necesario"}.
+Pedir teléfono: {ask_phone_rule}.
+Pedir motivo general: {"sí" if config.ask_general_reason else "no obligatorio"}.
+Permitir reserva sin trabajador concreto: {allow_worker_rule}.
+Permitir cambios de cita: {"sí" if config.allow_reschedules else "no"}.
+Si no hay disponibilidad, usa este mensaje base: {no_availability_message}
+Si falta calendario, usa este mensaje base: {missing_calendar_message}
+Si el paciente acepta un hueco de forma natural ("sí", "vale", "perfecto",
+"a las 9", "me va bien", "resérvala", "confirmo", "sí, quiero esa"), eso cuenta
+como aceptación.
+Confirmación natural requerida antes de reservar: {natural_confirmation_rule}.
+No pedir frases exactas: {"sí" if config.avoid_exact_confirmation_phrases else "no"}.
+No pidas frases exactas ni confirmaciones repetidas.
+No pidas confirmaciones repetidas. Si faltan nombre o teléfono, pídelos de forma
+breve. Antes de reservar, comprueba el hueco una vez.
 
 # Política de cancelación
 
 {_clean(context.booking_rules.cancellation_policy)}
+Cancelaciones permitidas: {"sí" if config.allow_cancellations else "no"}.
 Identifica la cita correcta y confirma la cancelación antes de ejecutarla.
 
 # Política de transferencia
 
 {_clean(context.booking_rules.transfer_policy)}
+Mensaje de transferencia configurado: {human_transfer_message}
 
 {flow_guidance}
 
@@ -469,6 +541,16 @@ grave, dolor torácico, riesgo inmediato o una situación similar, indica:
 "Llame al 112 ahora o acuda a urgencias". No continúes una reserva rutinaria.
 Mensaje de emergencia de la clínica: {emergency_message}
 
+# Configuración avanzada
+
+Uso de precios: {price_usage}.
+Uso de base de conocimiento: {knowledge_usage}.
+Modo estricto de calendario: {strict_calendar_usage}.
+Transcripción: {"activada" if config.transcript_enabled else "desactivada"}.
+Mensaje de cierre: {closing_message}
+Instrucciones adicionales: {additional_instructions or "No configuradas."}
+Palabras o frases prohibidas: {forbidden_phrases or "No configuradas."}
+
 # Reglas obligatorias para herramientas
 
 - Solo ofrece para cita los servicios marcados como reservables por el
@@ -478,8 +560,17 @@ Mensaje de emergencia de la clínica: {emergency_message}
   consultar con recepción. Nunca deduzcas ni inventes un importe.
 - Usa get_clinic_info cuando necesites validar información administrativa.
 - Usa propose_slots para obtener hasta tres huecos reales.
-- Usa check_availability antes de reservar si el hueco puede haber cambiado.
-- Solo usa create_appointment tras confirmación verbal explícita.
+- Al usar propose_slots, si conoces el servicio envía service_id y no envíes
+  duration_minutes; usa duration_minutes solo cuando no tengas service_id.
+- Nunca inventes worker_id ni service_id. Usa solo IDs reales listados arriba o
+  envía worker_name/service_name para que el servidor los resuelva.
+- No uses trabajadores sin calendar_id para reservas automáticas. Si no hay
+  trabajadores con calendar_id, explica que falta asignar calendario.
+- Usa check_availability solo justo antes de reservar o si el hueco puede haber
+  cambiado; no lo repitas varias veces para el mismo hueco.
+- Usa create_appointment cuando haya servicio, hueco/trabajador, nombre,
+  teléfono y aceptación natural del paciente. Pon confirmed_by_caller=true si
+  aceptó semánticamente el hueco, aunque no use una frase exacta.
 - No afirmes que una cita está reservada hasta que create_appointment responda
   con éxito.
 - Usa cancel_appointment solo después de identificar y confirmar la cita.

@@ -48,6 +48,27 @@ export interface AssistantConfig {
   booking_policy_prompt: string;
   cancellation_policy_prompt: string;
   transfer_policy_prompt: string;
+  tone: "profesional" | "cercano" | "comercial" | "breve" | "formal";
+  response_length: "corta" | "normal" | "detallada";
+  ask_patient_name: boolean;
+  ask_patient_phone: boolean;
+  ask_general_reason: boolean;
+  allow_booking_without_worker: boolean;
+  max_proposed_slots: number;
+  allow_cancellations: boolean;
+  allow_reschedules: boolean;
+  natural_confirmation_required: boolean;
+  avoid_exact_confirmation_phrases: boolean;
+  additional_instructions: string | null;
+  forbidden_phrases: string | null;
+  no_availability_message: string | null;
+  missing_calendar_message: string | null;
+  emergency_message: string | null;
+  human_transfer_message: string | null;
+  closing_message: string | null;
+  use_prices: boolean;
+  use_knowledge_base: boolean;
+  strict_calendar_mode: boolean;
   transcript_enabled: boolean;
   recording_enabled: boolean;
   conversation_retention_days: number;
@@ -160,10 +181,25 @@ export interface KnowledgeItem {
   title: string;
   category: KnowledgeCategory;
   content: string;
+  source_type: "manual" | "pdf" | "url";
+  source: string | null;
+  imported_at: string | null;
+  import_status: string;
   is_active: boolean;
   priority: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface KnowledgeImportPreview {
+  title: string;
+  category: KnowledgeCategory;
+  content: string;
+  source_type: "pdf" | "url";
+  source: string;
+  imported_at: string;
+  import_status: string;
+  character_count: number;
 }
 
 export type CallStatus =
@@ -395,6 +431,7 @@ export interface TestSession {
   state: TestExtractedState;
   tool_calls: TestToolTrace[];
   warnings: string[];
+  is_closed: boolean;
   created_at: string;
   updated_at: string;
 }

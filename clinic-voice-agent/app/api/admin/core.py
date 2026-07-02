@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
 from sqlalchemy import cast, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -16,6 +16,8 @@ from app.admin_schemas import (
     AssistantConfigUpdate,
     AssistantOptionRead,
     AssistantOptionsResponse,
+    AssistantRecommendedTemplateResponse,
+    AssistantVoicePreviewRequest,
     ClinicCreate,
     ClinicRead,
     ClinicUpdate,
@@ -43,6 +45,7 @@ from app.api.admin.common import (
 )
 from app.api.calendar import calendar_status, list_calendars
 from app.api.workers import create_worker_calendar, link_worker_calendar
+from app.audio import TTSGenerationError, synthesize_openai_speech
 from app.calendar.auth import (
     GoogleOAuthConfigurationError,
     create_google_authorization_request,
@@ -827,6 +830,98 @@ def get_assistant_options(
             ),
         ],
     )
+
+
+@router.get(
+    "/assistant-templates/recommended",
+    response_model=AssistantRecommendedTemplateResponse,
+    tags=["Admin · Assistant configs"],
+)
+def get_recommended_assistant_template() -> AssistantRecommendedTemplateResponse:
+    """Return safe recommended assistant behavior defaults for MVP clinics."""
+    return AssistantRecommendedTemplateResponse(
+        first_message=(
+            "Hola, soy el asistente virtual de la clínica. "
+            "Puedo ayudarle con información y citas."
+        ),
+        system_prompt=(
+            "Gestiona información administrativa, servicios y citas con respuestas "
+            "breves, naturales y profesionales. No inventes precios, servicios, "
+            "trabajadores ni huecos."
+        ),
+        safety_prompt=(
+            "No diagnostiques ni recomiendes medicación. Ante una urgencia, dolor "
+            "fuerte, dificultad respiratoria, pérdida de consciencia o sangrado "
+            "grave, indica llamar al 112 o acudir a urgencias."
+        ),
+        booking_policy_prompt=(
+            "Recoge datos mínimos, propone hasta tres huecos reales y reserva cuando "
+            "la persona acepte un hueco de forma natural."
+        ),
+        cancellation_policy_prompt=(
+            "Identifica la cita correcta y confirma con la persona antes de cancelarla."
+        ),
+        transfer_policy_prompt=(
+            "Transfiere peticiones fuera de alcance, dudas clínicas "
+            "o solicitud expresa."
+        ),
+        tone="profesional",
+        response_length="normal",
+        ask_patient_name=True,
+        ask_patient_phone=True,
+        ask_general_reason=True,
+        allow_booking_without_worker=True,
+        max_proposed_slots=3,
+        allow_cancellations=True,
+        allow_reschedules=True,
+        natural_confirmation_required=True,
+        avoid_exact_confirmation_phrases=True,
+        additional_instructions=(
+            "Prioriza frases cortas y no pidas confirmaciones exactas."
+        ),
+        forbidden_phrases="Le diagnostico\nTome esta medicación",
+        no_availability_message=(
+            "No tengo huecos en esa franja. Le propongo otras opciones."
+        ),
+        missing_calendar_message=(
+            "Falta enlazar el calendario del trabajador. Recepción debe revisarlo."
+        ),
+        emergency_message=(
+            "Si es una urgencia médica, llame al 112 ahora o acuda a urgencias."
+        ),
+        human_transfer_message="Le paso con una persona si está disponible.",
+        closing_message="Gracias por llamar. Hasta luego.",
+        use_prices=True,
+        use_knowledge_base=True,
+        strict_calendar_mode=True,
+    )
+
+
+@router.post(
+    "/clinics/{clinic_id}/assistant-configs/voice-preview",
+    tags=["Admin · Assistant configs"],
+)
+def preview_assistant_voice(
+    clinic_id: uuid.UUID,
+    payload: AssistantVoicePreviewRequest,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Response:
+    """Generate a finite voice preview without creating a conversation."""
+    clinic_or_404(session, clinic_id)
+    try:
+        audio = synthesize_openai_speech(
+            settings,
+            text=payload.text,
+            voice=payload.realtime_voice,
+            model=payload.realtime_model,
+        )
+    except TTSGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return Response(content=audio, media_type="audio/mpeg")
 
 
 @router.get(

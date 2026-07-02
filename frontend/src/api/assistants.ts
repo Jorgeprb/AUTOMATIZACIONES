@@ -1,4 +1,4 @@
-import { apiRequest, toQuery } from "@/api/client";
+import { apiBlobRequest, apiRequest, toQuery } from "@/api/client";
 import type { Page } from "@/schemas/api";
 import type {
   AssistantConfig,
@@ -77,5 +77,24 @@ export function previewPrompt(
   return apiRequest(
     `/api/admin/clinics/${clinicId}/assistant-configs/${configId}/preview-prompt`,
     { method: "POST" },
+  );
+}
+
+export function previewAssistantVoice(
+  clinicId: string,
+  payload: {
+    text: string;
+    realtime_voice: string;
+    realtime_model?: string | null;
+  },
+  signal?: AbortSignal,
+): Promise<Blob> {
+  return apiBlobRequest(
+    `/api/admin/clinics/${clinicId}/assistant-configs/voice-preview`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+      signal,
+    },
   );
 }

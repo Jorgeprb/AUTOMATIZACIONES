@@ -123,6 +123,45 @@ async def test_webhook_with_invalid_signature_returns_400(
 
 
 @pytest.mark.anyio
+async def test_openai_send_test_event_returns_200_without_accepting(
+    database_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenAI's dashboard test event has data.id but no data.call_id."""
+    factory = _session_factory(database_engine)
+    app = create_app()
+    app.dependency_overrides[get_db] = _db_override(factory)
+    accept_mock = AsyncMock()
+    control_mock = MagicMock()
+    monkeypatch.setattr(webhook, "accept_realtime_call", accept_mock)
+    monkeypatch.setattr(webhook, "start_call_control_task", control_mock)
+    body = json.dumps(
+        {
+            "type": "realtime.call.incoming",
+            "data": {"id": "rsstarted-abc123"},
+        },
+        separators=(",", ":"),
+    ).encode()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.post(
+            "/webhooks/openai/realtime",
+            content=body,
+            headers=_webhook_headers(body, valid=True),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "test_event": True}
+    accept_mock.assert_not_awaited()
+    control_mock.assert_not_called()
+    with factory() as session:
+        assert session.scalar(select(CallSession)) is None
+
+
+@pytest.mark.anyio
 async def test_valid_incoming_webhook_creates_and_accepts_call(
     db_session: Session,
     database_engine: Engine,

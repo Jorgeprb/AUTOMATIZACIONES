@@ -36,5 +36,25 @@ describe("assistant configuration", () => {
     expect(result.transcript_enabled).toBe(true);
     expect(result.recording_enabled).toBe(true);
     expect(result.conversation_retention_days).toBe(90);
+    expect(result.tone).toBe("cercano");
+    expect(result.response_length).toBe("normal");
+    expect(result.no_availability_message).toContain("huecos");
+  });
+
+  it("validates behavior fields and prompt length", () => {
+    const valid = assistantConfigFormSchema.safeParse({
+      ...assistantConfigDefaults,
+      tone: "comercial",
+      response_length: "corta",
+      max_proposed_slots: 3,
+    });
+    const invalid = assistantConfigFormSchema.safeParse({
+      ...assistantConfigDefaults,
+      max_proposed_slots: 0,
+      system_prompt: "x".repeat(12001),
+    });
+
+    expect(valid.success).toBe(true);
+    expect(invalid.success).toBe(false);
   });
 });

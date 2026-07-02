@@ -4,9 +4,19 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import replace
-from typing import Annotated
+from datetime import UTC, datetime
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -16,9 +26,11 @@ from app.admin_schemas import (
     ConversationFlowTemplateRead,
     ConversationFlowUpdate,
     DeleteResponse,
+    KnowledgeImportPreviewResponse,
     KnowledgeItemCreate,
     KnowledgeItemRead,
     KnowledgeItemUpdate,
+    KnowledgeUrlImportRequest,
     Page,
     PromptContextKnowledgeRead,
     PromptContextPreviewResponse,
@@ -35,6 +47,11 @@ from app.api.admin.common import (
 )
 from app.conversation_flows import list_flow_templates
 from app.db import get_db
+from app.knowledge.importers import (
+    KnowledgeImportError,
+    extract_pdf_knowledge,
+    fetch_url_knowledge,
+)
 from app.models import (
     AssistantConfig,
     ConversationFlow,
@@ -52,6 +69,28 @@ from app.openai_realtime.prompt_builder import (
 )
 
 router = APIRouter(prefix="/admin")
+
+
+def _knowledge_preview(
+    *,
+    title: str,
+    category: KnowledgeCategory,
+    content: str,
+    source_type: Literal["pdf", "url"],
+    source: str,
+    imported_at: datetime,
+) -> KnowledgeImportPreviewResponse:
+    """Build a preview response with bounded title and extracted text."""
+    return KnowledgeImportPreviewResponse(
+        title=title[:240],
+        category=category,
+        content=content,
+        source_type=source_type,
+        source=source,
+        imported_at=imported_at,
+        import_status="preview",
+        character_count=len(content),
+    )
 
 
 @router.get(
@@ -109,6 +148,161 @@ def create_knowledge(
     """Create one clinic knowledge item."""
     clinic_or_404(session, clinic_id)
     item = KnowledgeItem(clinic_id=clinic_id, **payload.model_dump())
+    session.add(item)
+    commit_or_conflict(session)
+    session.refresh(item)
+    return item
+
+
+@router.post(
+    "/clinics/{clinic_id}/knowledge/import/pdf/preview",
+    response_model=KnowledgeImportPreviewResponse,
+    tags=["Admin · Knowledge"],
+)
+async def preview_pdf_knowledge(
+    clinic_id: uuid.UUID,
+    session: Annotated[Session, Depends(get_db)],
+    file: Annotated[UploadFile, File()],
+    category: Annotated[KnowledgeCategory, Form()] = KnowledgeCategory.FAQ,
+) -> KnowledgeImportPreviewResponse:
+    """Extract text from an uploaded PDF without persisting it yet."""
+    clinic_or_404(session, clinic_id)
+    if file.content_type not in {None, "", "application/pdf"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El archivo debe ser un PDF.",
+        )
+    try:
+        extracted = extract_pdf_knowledge(
+            await file.read(),
+            filename=file.filename or "documento.pdf",
+        )
+    except KnowledgeImportError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return _knowledge_preview(
+        title=extracted.title,
+        category=category,
+        content=extracted.content,
+        source_type="pdf",
+        source=extracted.source,
+        imported_at=datetime.now(UTC),
+    )
+
+
+@router.post(
+    "/clinics/{clinic_id}/knowledge/import/pdf",
+    response_model=KnowledgeItemRead,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Admin · Knowledge"],
+)
+async def import_pdf_knowledge(
+    clinic_id: uuid.UUID,
+    session: Annotated[Session, Depends(get_db)],
+    file: Annotated[UploadFile, File()],
+    category: Annotated[KnowledgeCategory, Form()] = KnowledgeCategory.FAQ,
+    title: Annotated[str | None, Form(max_length=240)] = None,
+    priority: Annotated[int, Form()] = 0,
+    is_active: Annotated[bool, Form()] = True,
+) -> KnowledgeItem:
+    """Extract text from a PDF and create one KnowledgeItem."""
+    clinic_or_404(session, clinic_id)
+    if file.content_type not in {None, "", "application/pdf"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El archivo debe ser un PDF.",
+        )
+    try:
+        extracted = extract_pdf_knowledge(
+            await file.read(),
+            filename=file.filename or "documento.pdf",
+        )
+    except KnowledgeImportError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    item = KnowledgeItem(
+        clinic_id=clinic_id,
+        title=(title.strip() if title else extracted.title)[:240],
+        category=category,
+        content=extracted.content,
+        source_type="pdf",
+        source=extracted.source,
+        imported_at=datetime.now(UTC),
+        import_status="imported",
+        priority=priority,
+        is_active=is_active,
+    )
+    session.add(item)
+    commit_or_conflict(session)
+    session.refresh(item)
+    return item
+
+
+@router.post(
+    "/clinics/{clinic_id}/knowledge/import/url/preview",
+    response_model=KnowledgeImportPreviewResponse,
+    tags=["Admin · Knowledge"],
+)
+def preview_url_knowledge(
+    clinic_id: uuid.UUID,
+    payload: KnowledgeUrlImportRequest,
+    session: Annotated[Session, Depends(get_db)],
+) -> KnowledgeImportPreviewResponse:
+    """Download and clean a URL without persisting it yet."""
+    clinic_or_404(session, clinic_id)
+    try:
+        extracted = fetch_url_knowledge(payload.url)
+    except KnowledgeImportError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return _knowledge_preview(
+        title=(payload.title or extracted.title),
+        category=payload.category,
+        content=extracted.content,
+        source_type="url",
+        source=extracted.source,
+        imported_at=datetime.now(UTC),
+    )
+
+
+@router.post(
+    "/clinics/{clinic_id}/knowledge/import/url",
+    response_model=KnowledgeItemRead,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Admin · Knowledge"],
+)
+def import_url_knowledge(
+    clinic_id: uuid.UUID,
+    payload: KnowledgeUrlImportRequest,
+    session: Annotated[Session, Depends(get_db)],
+) -> KnowledgeItem:
+    """Download a URL, clean its text, and create one KnowledgeItem."""
+    clinic_or_404(session, clinic_id)
+    try:
+        extracted = fetch_url_knowledge(payload.url)
+    except KnowledgeImportError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    item = KnowledgeItem(
+        clinic_id=clinic_id,
+        title=((payload.title or extracted.title).strip())[:240],
+        category=payload.category,
+        content=extracted.content,
+        source_type="url",
+        source=extracted.source,
+        imported_at=datetime.now(UTC),
+        import_status="imported",
+        priority=payload.priority,
+        is_active=payload.is_active,
+    )
     session.add(item)
     commit_or_conflict(session)
     session.refresh(item)

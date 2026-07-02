@@ -19,11 +19,13 @@ from app.admin_schemas import (
     TestSessionRead,
     TestToolTrace,
 )
+from app.audio import TTSGenerationError, synthesize_openai_speech
 from app.config import Settings
 from app.models import (
     AssistantConfig,
     CallEvent,
     CallSession,
+    CallStatus,
     Clinic,
     TestSession,
 )
@@ -99,6 +101,26 @@ def _calendar_mode(test_session: TestSession) -> SimulationMode:
     return "google-real" if test_session.use_real_calendar else "no-google"
 
 
+def _is_closed(test_session: TestSession) -> bool:
+    """Return whether this browser test session has been closed."""
+    return bool(test_session.state_json.get("closed"))
+
+
+def _test_prompt(base_prompt: str, test_session: TestSession) -> str:
+    """Append technical context that the real call dispatcher already knows."""
+    return (
+        f"{base_prompt}\n\n"
+        "Contexto técnico de esta consola de prueba:\n"
+        f"- clinic_id real: {test_session.clinic_id}\n"
+        f"- call_session_id real: {_call_id(test_session)}\n"
+        "Reglas técnicas: no inventes clinic_id ni call_session_id. Si una "
+        "tool los necesita, puedes omitirlos; el servidor los inyecta desde "
+        "esta sesión. Si ves IDs en una tool, no los corrijas ni los cambies. "
+        "No inventes worker_id ni service_id: usa solo IDs reales del prompt o "
+        "envía worker_name/service_name. No uses trabajadores sin calendar_id."
+    )
+
+
 def _tool_traces(messages: list[dict[str, Any]]) -> list[TestToolTrace]:
     """Collect tool traces from all assistant messages."""
     traces: list[TestToolTrace] = []
@@ -156,6 +178,21 @@ def _audit_warnings(
         trace.name == "propose_slots" and trace.result.get("ok")
         for trace in traces
     )
+    if context.calendar_settings.workers_without_calendar:
+        warnings.extend(
+            f"El trabajador {worker_name} no tiene calendar_id y no se "
+            "ofrecerá para reservas automáticas."
+            for worker_name in context.calendar_settings.workers_without_calendar
+        )
+    if not context.workers:
+        warnings.append(
+            "No hay trabajadores activos; crea al menos uno antes de probar reservas."
+        )
+    elif not any(worker.calendar_id for worker in context.workers):
+        warnings.append(
+            "No hay trabajadores activos con calendar_id; asigna un calendario "
+            "antes de probar reservas automáticas."
+        )
     for message in messages:
         if message.role != "assistant":
             continue
@@ -201,11 +238,12 @@ def render_test_session(
         assistant_config_name=context.active_assistant_config.name,
         use_real_calendar=test_session.use_real_calendar,
         engine=_test_engine(test_session),
-        prompt=build_realtime_instructions(context),
+        prompt=_test_prompt(build_realtime_instructions(context), test_session),
         messages=messages,
         state=_extracted_state(call, traces),
         tool_calls=traces,
         warnings=_audit_warnings(context, messages, traces),
+        is_closed=_is_closed(test_session),
         created_at=test_session.created_at,
         updated_at=test_session.updated_at,
     )
@@ -264,18 +302,60 @@ def create_test_session(
     return test_session
 
 
-def _confirmation_allowed(messages: list[dict[str, Any]]) -> bool:
-    """Require a clear user confirmation after an assistant confirmation request."""
-    if len(messages) < 2:
-        return False
-    latest = messages[-1]
-    previous = messages[-2]
-    return (
-        latest.get("role") == "user"
-        and _is_affirmative(str(latest.get("content", "")))
-        and previous.get("role") == "assistant"
-        and "confirm" in str(previous.get("content", "")).casefold()
+def _is_natural_booking_acceptance(content: str) -> bool:
+    """Detect natural user acceptance of a proposed booking slot."""
+    normalized = content.casefold()
+    if _is_affirmative(content):
+        return True
+    if re.search(r"\b(?:a las\s*)?(?:[01]?\d|2[0-3])(?::[0-5]\d)?\b", normalized):
+        return True
+    natural_terms = (
+        "me va bien",
+        "resérvala",
+        "reservala",
+        "reserva",
+        "quiero esa",
+        "esa me va",
+        "la primera",
+        "la segunda",
+        "la tercera",
+        "opción 1",
+        "opcion 1",
+        "opción 2",
+        "opcion 2",
+        "opción 3",
+        "opcion 3",
     )
+    return any(term in normalized for term in natural_terms)
+
+
+def _assistant_offered_slots(message: dict[str, Any]) -> bool:
+    """Return whether an assistant message offered real scheduling options."""
+    if message.get("role") != "assistant":
+        return False
+    for trace in message.get("tool_calls", []):
+        if trace.get("name") == "propose_slots" and trace.get("result", {}).get("ok"):
+            return True
+    content = str(message.get("content", "")).casefold()
+    return "opciones" in content or "hueco" in content
+
+
+def _confirmation_allowed(messages: list[dict[str, Any]]) -> bool:
+    """Allow create_appointment after natural acceptance of an offered slot."""
+    slots_offered = False
+    accepted_after_offer = False
+    for message in messages:
+        if _assistant_offered_slots(message):
+            slots_offered = True
+            accepted_after_offer = False
+            continue
+        if (
+            slots_offered
+            and message.get("role") == "user"
+            and _is_natural_booking_acceptance(str(message.get("content", "")))
+        ):
+            accepted_after_offer = True
+    return accepted_after_offer
 
 
 def _run_openai_turn(
@@ -357,7 +437,10 @@ def _run_openai_turn(
             ):
                 result = {
                     "ok": False,
-                    "error": "Falta confirmación explícita previa del paciente.",
+                    "error": (
+                        "Falta aceptación natural previa del paciente para "
+                        "ese hueco."
+                    ),
                 }
             else:
                 result = execute_realtime_tool(item.name, arguments, context)
@@ -387,6 +470,8 @@ def send_test_message(
     message: str,
 ) -> TestSession:
     """Run one text turn through the configured engine and persist the trace."""
+    if _is_closed(test_session):
+        raise TestConsoleError("El chat de prueba ya está finalizado.")
     messages = list(test_session.messages_json)
     messages.append(_message("user", message))
     test_session.messages_json = messages
@@ -402,7 +487,7 @@ def send_test_message(
             test_session,
             session_factory,
             settings,
-            build_realtime_instructions(context),
+            _test_prompt(build_realtime_instructions(context), test_session),
         )
     else:
         simulator = SimulationEngine(
@@ -448,3 +533,67 @@ def send_test_message(
     session.commit()
     session.refresh(test_session)
     return test_session
+
+
+def close_test_session(
+    session: Session,
+    test_session: TestSession,
+) -> TestSession:
+    """Close one browser test session and its simulated call."""
+    if _is_closed(test_session):
+        return test_session
+    call_id = _call_id(test_session)
+    call = session.get(CallSession, call_id)
+    if call is None:
+        raise TestConsoleError("La llamada simulada ya no existe.")
+    now = datetime.now(UTC)
+    call.status = CallStatus.COMPLETED
+    call.ended_at = now
+    call.conversation_state_json = {
+        **call.conversation_state_json,
+        "test_console_closed": True,
+    }
+    test_session.state_json = {
+        **test_session.state_json,
+        "closed": True,
+        "closed_at": now.isoformat(),
+        "last_action": "closed",
+    }
+    session.add(
+        CallEvent(
+            call_session_id=call_id,
+            event_type="test_console.closed",
+            payload_json={
+                "test_session_id": str(test_session.id),
+                "engine": _test_engine(test_session),
+            },
+        )
+    )
+    session.commit()
+    session.refresh(test_session)
+    return test_session
+
+
+def synthesize_test_session_audio(
+    session: Session,
+    settings: Settings,
+    test_session: TestSession,
+    text: str,
+) -> bytes:
+    """Generate one finite TTS audio blob using the selected AssistantConfig."""
+    if _is_closed(test_session):
+        raise TestConsoleError("El chat de prueba ya está finalizado.")
+    cleaned = text.strip()
+    if not cleaned:
+        raise TestConsoleError("No hay texto para generar audio.")
+    config = session.get(AssistantConfig, test_session.assistant_config_id)
+    if config is None or config.clinic_id != test_session.clinic_id:
+        raise TestConsoleError("Configuración del asistente no encontrada.")
+    try:
+        return synthesize_openai_speech(
+            settings,
+            text=cleaned,
+            voice=config.realtime_voice,
+        )
+    except TTSGenerationError as exc:
+        raise TestConsoleError(str(exc)) from exc

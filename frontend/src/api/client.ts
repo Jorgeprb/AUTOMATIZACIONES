@@ -29,7 +29,9 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
-  if (init.body) headers.set("Content-Type", "application/json");
+  if (init.body && !(init.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
   if (path.startsWith("/api/admin")) {
     headers.set("X-Admin-API-Key", adminApiKey);
   }
@@ -59,6 +61,43 @@ export async function apiRequest<T>(
 
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+export async function apiBlobRequest(
+  path: string,
+  init: RequestInit = {},
+): Promise<Blob> {
+  const headers = new Headers(init.headers);
+  if (init.body && !(init.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (path.startsWith("/api/admin")) {
+    headers.set("X-Admin-API-Key", adminApiKey);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      ...init,
+      headers,
+    });
+  } catch {
+    throw new ApiError(
+      "No se pudo conectar con el backend. Comprueba VITE_API_BASE_URL.",
+      0,
+    );
+  }
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as
+      | ApiErrorPayload
+      | null;
+    throw new ApiError(
+      errorMessage(payload, `La API respondió con ${response.status}.`),
+      response.status,
+    );
+  }
+  return response.blob();
 }
 
 export function toQuery(

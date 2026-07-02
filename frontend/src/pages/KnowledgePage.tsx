@@ -1,12 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Eye, Pencil, Plus, Power, Trash2 } from "lucide-react";
+import {
+  BookOpen,
+  Eye,
+  FileText,
+  Link as LinkIcon,
+  Pencil,
+  Plus,
+  Power,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import {
   createKnowledge,
   deleteKnowledge,
+  importPdfKnowledge,
+  importUrlKnowledge,
   listKnowledge,
+  previewPdfKnowledge,
+  previewUrlKnowledge,
   updateKnowledge,
 } from "@/api/knowledge";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
@@ -27,9 +41,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { useClinicRoute } from "@/hooks/useClinicRoute";
-import type { KnowledgeCategory, KnowledgeItem } from "@/schemas/domain";
+import type {
+  KnowledgeCategory,
+  KnowledgeImportPreview,
+  KnowledgeItem,
+} from "@/schemas/domain";
 import {
   knowledgeCategoryLabels,
   knowledgeDefaults,
@@ -37,6 +57,7 @@ import {
 } from "@/schemas/knowledge";
 
 type CategoryFilter = "all" | KnowledgeCategory;
+type ImportMode = "pdf" | "url";
 
 function formValues(item: KnowledgeItem): KnowledgeFormValues {
   return {
@@ -54,6 +75,16 @@ export function KnowledgePage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<CategoryFilter>("all");
   const [formOpen, setFormOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importMode, setImportMode] = useState<ImportMode>("pdf");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importUrl, setImportUrl] = useState("");
+  const [importTitle, setImportTitle] = useState("");
+  const [importCategory, setImportCategory] = useState<KnowledgeCategory>("faq");
+  const [importPriority, setImportPriority] = useState(0);
+  const [importActive, setImportActive] = useState(true);
+  const [importPreview, setImportPreview] =
+    useState<KnowledgeImportPreview | null>(null);
   const [editingItem, setEditingItem] = useState<KnowledgeItem | null>(null);
   const [previewItem, setPreviewItem] = useState<KnowledgeItem | null>(null);
   const [deletingItem, setDeletingItem] = useState<KnowledgeItem | null>(null);
@@ -109,6 +140,60 @@ export function KnowledgePage() {
     },
     onError: (error: Error) => toast.error(error.message),
   });
+  const previewImportMutation = useMutation({
+    mutationFn: () => {
+      if (importMode === "pdf") {
+        if (!importFile) throw new Error("Selecciona un PDF.");
+        return previewPdfKnowledge(clinicId as string, {
+          file: importFile,
+          category: importCategory,
+        });
+      }
+      return previewUrlKnowledge(clinicId as string, {
+        url: importUrl,
+        title: importTitle || undefined,
+        category: importCategory,
+        priority: importPriority,
+        is_active: importActive,
+      });
+    },
+    onSuccess: (data) => {
+      setImportPreview(data);
+      if (!importTitle) setImportTitle(data.title);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const saveImportMutation = useMutation({
+    mutationFn: () => {
+      if (importMode === "pdf") {
+        if (!importFile) throw new Error("Selecciona un PDF.");
+        return importPdfKnowledge(clinicId as string, {
+          file: importFile,
+          title: importTitle || importPreview?.title,
+          category: importCategory,
+          priority: importPriority,
+          is_active: importActive,
+        });
+      }
+      return importUrlKnowledge(clinicId as string, {
+        url: importUrl,
+        title: importTitle || importPreview?.title,
+        category: importCategory,
+        priority: importPriority,
+        is_active: importActive,
+      });
+    },
+    onSuccess: async () => {
+      await refresh();
+      setImportOpen(false);
+      setImportPreview(null);
+      setImportFile(null);
+      setImportUrl("");
+      setImportTitle("");
+      toast.success("Contexto importado");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const columns = useMemo<Array<DataTableColumn<KnowledgeItem>>>(
     () => [
@@ -121,6 +206,11 @@ export function KnowledgePage() {
             <p className="mt-1 max-w-xl truncate text-xs text-[#7b8799]">
               {item.content}
             </p>
+            {item.source_type !== "manual" ? (
+              <p className="mt-1 max-w-xl truncate text-xs text-[#315efb]">
+                {item.source_type.toUpperCase()} · {item.source}
+              </p>
+            ) : null}
           </div>
         ),
       },
@@ -208,15 +298,27 @@ export function KnowledgePage() {
         title="Conocimiento"
         description="Precios, normas, FAQs y contexto práctico que puede comunicar el asistente."
         actions={
-          <Button
-            onClick={() => {
-              setEditingItem(null);
-              setFormOpen(true);
-            }}
-          >
-            <Plus className="size-4" />
-            Añadir contexto
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setImportOpen(true);
+                setImportPreview(null);
+              }}
+            >
+              <Upload className="size-4" />
+              Importar PDF/URL
+            </Button>
+            <Button
+              onClick={() => {
+                setEditingItem(null);
+                setFormOpen(true);
+              }}
+            >
+              <Plus className="size-4" />
+              Añadir texto manual
+            </Button>
+          </div>
         }
       />
 
@@ -292,6 +394,160 @@ export function KnowledgePage() {
             onCancel={() => setFormOpen(false)}
             isPending={createMutation.isPending || updateMutation.isPending}
           />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={importOpen}
+        onOpenChange={(open) => {
+          setImportOpen(open);
+          if (!open) setImportPreview(null);
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Importar conocimiento</DialogTitle>
+            <DialogDescription>
+              Previsualiza el texto extraído antes de guardarlo en el prompt.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <Label htmlFor="knowledge-import-mode">Origen</Label>
+              <Select
+                id="knowledge-import-mode"
+                className="mt-1.5"
+                value={importMode}
+                onChange={(event) => {
+                  setImportMode(event.target.value as ImportMode);
+                  setImportPreview(null);
+                }}
+              >
+                <option value="pdf">PDF subido</option>
+                <option value="url">URL de página web</option>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="knowledge-import-category">Categoría</Label>
+              <Select
+                id="knowledge-import-category"
+                className="mt-1.5"
+                value={importCategory}
+                onChange={(event) =>
+                  setImportCategory(event.target.value as KnowledgeCategory)
+                }
+              >
+                {Object.entries(knowledgeCategoryLabels).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            {importMode === "pdf" ? (
+              <div className="md:col-span-2">
+                <Label htmlFor="knowledge-import-file">PDF máximo 5 MB</Label>
+                <Input
+                  id="knowledge-import-file"
+                  type="file"
+                  accept="application/pdf"
+                  className="mt-1.5"
+                  onChange={(event) => {
+                    setImportFile(event.target.files?.[0] ?? null);
+                    setImportPreview(null);
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="md:col-span-2">
+                <Label htmlFor="knowledge-import-url">URL pública</Label>
+                <Input
+                  id="knowledge-import-url"
+                  className="mt-1.5"
+                  placeholder="https://ejemplo.com/pagina"
+                  value={importUrl}
+                  onChange={(event) => {
+                    setImportUrl(event.target.value);
+                    setImportPreview(null);
+                  }}
+                />
+              </div>
+            )}
+            <div>
+              <Label htmlFor="knowledge-import-title">Título opcional</Label>
+              <Input
+                id="knowledge-import-title"
+                className="mt-1.5"
+                value={importTitle}
+                onChange={(event) => setImportTitle(event.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="knowledge-import-priority">Prioridad</Label>
+              <Input
+                id="knowledge-import-priority"
+                type="number"
+                className="mt-1.5"
+                value={importPriority}
+                onChange={(event) => setImportPriority(Number(event.target.value))}
+              />
+            </div>
+            <label className="md:col-span-2 flex h-10 items-center gap-3 rounded-lg border px-3 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={importActive}
+                onChange={(event) => setImportActive(event.target.checked)}
+                className="size-4 accent-[#315efb]"
+              />
+              Guardar activo para incluirlo en el prompt
+            </label>
+          </div>
+          {importPreview ? (
+            <div className="rounded-xl border bg-[#f8faff] p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-[#27334a]">
+                {importPreview.source_type === "pdf" ? (
+                  <FileText className="size-4" />
+                ) : (
+                  <LinkIcon className="size-4" />
+                )}
+                Preview · {importPreview.character_count} caracteres
+              </div>
+              <p className="text-sm font-semibold">{importPreview.title}</p>
+              <p className="mt-1 truncate text-xs text-[#7a8699]">
+                Fuente: {importPreview.source}
+              </p>
+              <Textarea
+                readOnly
+                className="mt-3 min-h-64"
+                value={importPreview.content}
+              />
+            </div>
+          ) : null}
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setImportOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={previewImportMutation.isPending}
+              onClick={() => previewImportMutation.mutate()}
+            >
+              <Eye className="size-4" />
+              {previewImportMutation.isPending ? "Extrayendo…" : "Previsualizar"}
+            </Button>
+            <Button
+              type="button"
+              disabled={!importPreview || saveImportMutation.isPending}
+              onClick={() => saveImportMutation.mutate()}
+            >
+              Guardar importación
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 

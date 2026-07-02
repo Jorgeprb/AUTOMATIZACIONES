@@ -4,23 +4,28 @@ import {
   Bot,
   CalendarCheck,
   Download,
+  Pause,
   Play,
   RotateCcw,
   Send,
+  Square,
   TerminalSquare,
   UserRound,
+  Volume2,
   Wrench,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 import { listAssistantConfigs, previewPrompt } from "@/api/assistants";
 import { listClinics } from "@/api/clinics";
 import {
+  closeTestSession,
   deleteTestSession,
   sendTestMessage,
   startTestSession,
+  synthesizeTestSessionAudio,
 } from "@/api/testConsole";
 import { ErrorState } from "@/components/common/ErrorState";
 import { LoadingState } from "@/components/common/LoadingState";
@@ -74,11 +79,92 @@ export function TestConsolePage() {
   const clinicId = useClinicRoute();
   const navigate = useNavigate();
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
+  const ttsAbortRef = useRef<AbortController | null>(null);
   const [configId, setConfigId] = useState("");
   const [engine, setEngine] = useState<"simulator" | "openai">("simulator");
   const [useRealCalendar, setUseRealCalendar] = useState(false);
+  const [listenVoice, setListenVoice] = useState(false);
+  const [audioStatus, setAudioStatus] = useState<
+    "idle" | "generating" | "playing" | "paused" | "error"
+  >("idle");
+  const [audioError, setAudioError] = useState("");
+  const [lastAudioText, setLastAudioText] = useState("");
+  const [lastSpokenKey, setLastSpokenKey] = useState("");
   const [message, setMessage] = useState("");
   const [testSession, setTestSession] = useState<TestSession | null>(null);
+  const chatClosed = Boolean(testSession?.is_closed);
+
+  const stopAudio = useCallback(() => {
+    ttsAbortRef.current?.abort();
+    ttsAbortRef.current = null;
+    audioRef.current?.pause();
+    audioRef.current = null;
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+    audioUrlRef.current = null;
+    setAudioStatus("idle");
+  }, []);
+
+  const lastAssistantMessage = useCallback((session: TestSession | null) => {
+    return [...(session?.messages ?? [])]
+      .reverse()
+      .find((item) => item.role === "assistant");
+  }, []);
+
+  const playAudioElement = useCallback(async (audio: HTMLAudioElement) => {
+    try {
+      await audio.play();
+      setAudioStatus("playing");
+      setAudioError("");
+    } catch {
+      setAudioStatus("paused");
+      setAudioError("El navegador bloqueó la reproducción automática.");
+    }
+  }, []);
+
+  const generateAndPlayAudio = useCallback(
+    async (session: TestSession, text: string, key: string) => {
+      ttsAbortRef.current?.abort();
+      audioRef.current?.pause();
+      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+      audioRef.current = null;
+      audioUrlRef.current = null;
+      const controller = new AbortController();
+      ttsAbortRef.current = controller;
+      setAudioStatus("generating");
+      setAudioError("");
+      setLastSpokenKey(key);
+      try {
+        const blob = await synthesizeTestSessionAudio(
+          session.id,
+          text,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.onended = () => setAudioStatus("idle");
+        audio.onpause = () => {
+          if (!audio.ended) setAudioStatus("paused");
+        };
+        audioUrlRef.current = url;
+        audioRef.current = audio;
+        setLastAudioText(text);
+        await playAudioElement(audio);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        const message =
+          error instanceof Error ? error.message : "No se pudo generar audio.";
+        setAudioStatus("error");
+        setAudioError(message);
+        toast.error(message);
+      } finally {
+        if (ttsAbortRef.current === controller) ttsAbortRef.current = null;
+      }
+    },
+    [playAudioElement],
+  );
 
   const clinicsQuery = useQuery({
     queryKey: ["clinics", "test-console"],
@@ -101,11 +187,37 @@ export function TestConsolePage() {
 
   useEffect(() => {
     setTestSession(null);
-  }, [clinicId, configId, engine, useRealCalendar]);
+    stopAudio();
+    setLastSpokenKey("");
+  }, [clinicId, configId, engine, stopAudio, useRealCalendar]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [testSession?.messages.length]);
+
+  useEffect(() => {
+    return () => stopAudio();
+  }, [stopAudio]);
+
+  useEffect(() => {
+    if (chatClosed) stopAudio();
+  }, [chatClosed, stopAudio]);
+
+  useEffect(() => {
+    if (!listenVoice || !testSession || chatClosed) return;
+    const assistantMessage = lastAssistantMessage(testSession);
+    if (!assistantMessage) return;
+    const key = `${assistantMessage.created_at}:${assistantMessage.content}`;
+    if (key === lastSpokenKey) return;
+    void generateAndPlayAudio(testSession, assistantMessage.content, key);
+  }, [
+    chatClosed,
+    generateAndPlayAudio,
+    lastAssistantMessage,
+    lastSpokenKey,
+    listenVoice,
+    testSession,
+  ]);
 
   const previewQuery = useQuery({
     queryKey: ["prompt-preview", clinicId, configId, "test-console"],
@@ -136,6 +248,7 @@ export function TestConsolePage() {
   });
   const resetMutation = useMutation({
     mutationFn: async () => {
+      stopAudio();
       if (testSession) await deleteTestSession(testSession.id);
       return startTestSession(clinicId as string, {
         assistant_config_id: configId,
@@ -146,14 +259,25 @@ export function TestConsolePage() {
     onSuccess: (data) => {
       setTestSession(data);
       setMessage("");
+      setLastSpokenKey("");
       toast.success("Conversación reiniciada");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const closeMutation = useMutation({
+    mutationFn: () => closeTestSession(testSession?.id as string),
+    onSuccess: (data) => {
+      stopAudio();
+      setTestSession(data);
+      setMessage("");
+      toast.success("Chat finalizado");
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
   const submitMessage = () => {
     const content = message.trim();
-    if (!content || sendMutation.isPending) return;
+    if (!content || sendMutation.isPending || chatClosed) return;
     if (!testSession) {
       toast.error("Inicia primero la conversación");
       return;
@@ -172,6 +296,33 @@ export function TestConsolePage() {
     anchor.download = `test-session-${testSession.id}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
+  };
+
+  const replayLastAudio = () => {
+    const current = audioRef.current;
+    if (current) {
+      current.currentTime = 0;
+      void playAudioElement(current);
+      return;
+    }
+    const assistantMessage = lastAssistantMessage(testSession);
+    if (!testSession || !assistantMessage || chatClosed) return;
+    const key = `${assistantMessage.created_at}:${assistantMessage.content}:replay`;
+    void generateAndPlayAudio(testSession, assistantMessage.content, key);
+  };
+
+  const togglePlayPause = () => {
+    const current = audioRef.current;
+    if (!current) {
+      replayLastAudio();
+      return;
+    }
+    if (audioStatus === "playing") {
+      current.pause();
+      setAudioStatus("paused");
+    } else {
+      void playAudioElement(current);
+    }
   };
 
   if (configsQuery.isLoading) return <LoadingState rows={6} />;
@@ -194,6 +345,17 @@ export function TestConsolePage() {
             </Button>
             <Button
               variant="outline"
+              disabled={!testSession || chatClosed || closeMutation.isPending}
+              onClick={() => {
+                stopAudio();
+                closeMutation.mutate();
+              }}
+            >
+              <Square className="size-4" />
+              Finalizar chat
+            </Button>
+            <Button
+              variant="outline"
               disabled={!testSession}
               onClick={exportConversation}
             >
@@ -205,7 +367,7 @@ export function TestConsolePage() {
       />
 
       <Card>
-        <CardContent className="grid gap-4 pt-5 md:grid-cols-2 xl:grid-cols-4">
+        <CardContent className="grid gap-4 pt-5 md:grid-cols-2 xl:grid-cols-5">
           <div>
             <Label htmlFor="test-clinic">Clínica</Label>
             <Select
@@ -271,6 +433,67 @@ export function TestConsolePage() {
               {testSession ? "Nueva conversación" : "Iniciar conversación"}
             </Button>
           </div>
+          <div className="rounded-xl border border-[#e4e8ef] bg-[#fbfcfe] p-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-[#37445b]">
+              <input
+                type="checkbox"
+                checked={listenVoice}
+                disabled={chatClosed}
+                onChange={(event) => {
+                  setListenVoice(event.target.checked);
+                  if (!event.target.checked) stopAudio();
+                }}
+                className="size-4 rounded border-[#cfd6e2]"
+              />
+              Escuchar voz del bot
+            </label>
+            <div className="mt-3 flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                disabled={!testSession || chatClosed || audioStatus === "generating"}
+                onClick={togglePlayPause}
+                aria-label={audioStatus === "playing" ? "Pausar audio" : "Reproducir audio"}
+              >
+                {audioStatus === "playing" ? (
+                  <Pause className="size-4" />
+                ) : (
+                  <Play className="size-4" />
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                disabled={
+                  !testSession ||
+                  chatClosed ||
+                  audioStatus === "generating" ||
+                  (!lastAudioText && !lastAssistantMessage(testSession))
+                }
+                onClick={replayLastAudio}
+                aria-label="Repetir último audio"
+              >
+                <RotateCcw className="size-4" />
+              </Button>
+              <div className="flex items-center gap-1 text-xs text-[#6f7c92]">
+                <Volume2 className="size-3.5" />
+                {audioStatus === "generating"
+                  ? "generando audio"
+                  : audioStatus === "playing"
+                    ? "reproduciendo"
+                    : audioStatus === "paused"
+                      ? "pausado"
+                      : "listo"}
+              </div>
+            </div>
+            {audioError ? (
+              <p className="mt-2 text-xs leading-5 text-[#bd3341]">
+                {audioError}
+              </p>
+            ) : null}
+          </div>
         </CardContent>
       </Card>
 
@@ -278,7 +501,7 @@ export function TestConsolePage() {
         <div className="flex gap-3 rounded-xl border border-[#f2d4a3] bg-[#fff8e9] p-4 text-sm text-[#8a5b12]">
           <AlertTriangle className="mt-0.5 size-5 shrink-0" />
           Las confirmaciones crearán o cancelarán eventos reales en Google
-          Calendar. El bot seguirá exigiendo confirmación explícita.
+          Calendar. El bot aceptará confirmaciones naturales del paciente.
         </div>
       ) : (
         <div className="flex gap-3 rounded-xl border border-[#cfe7d8] bg-[#f1faf4] p-4 text-sm text-[#2f6e49]">
@@ -295,6 +518,9 @@ export function TestConsolePage() {
               <CardTitle className="flex items-center gap-2">
                 <Bot className="size-5 text-[#315efb]" />
                 Conversación
+                {chatClosed ? (
+                  <StatusBadge status="success">Chat finalizado</StatusBadge>
+                ) : null}
               </CardTitle>
               <CardDescription>
                 Escribe como paciente. La sesión conserva contexto entre turnos.
@@ -357,6 +583,7 @@ export function TestConsolePage() {
                     key={scenario}
                     type="button"
                     className="rounded-full border border-[#dfe4ec] bg-white px-3 py-1.5 text-xs font-medium text-[#536078] hover:bg-[#f4f6f9]"
+                    disabled={chatClosed}
                     onClick={() => setMessage(scenario)}
                   >
                     {scenario}
@@ -367,8 +594,12 @@ export function TestConsolePage() {
               <div className="mt-4 flex gap-3">
                 <Textarea
                   value={message}
-                  disabled={!testSession || sendMutation.isPending}
-                  placeholder="Escribe como si fueras el paciente…"
+                  disabled={!testSession || sendMutation.isPending || chatClosed}
+                  placeholder={
+                    chatClosed
+                      ? "Chat finalizado. Pulsa Reset para crear uno nuevo."
+                      : "Escribe como si fueras el paciente…"
+                  }
                   className="min-h-20"
                   onChange={(event) => setMessage(event.target.value)}
                   onKeyDown={(event) => {
@@ -381,7 +612,12 @@ export function TestConsolePage() {
                 <Button
                   size="icon"
                   className="mt-auto shrink-0"
-                  disabled={!testSession || !message.trim() || sendMutation.isPending}
+                  disabled={
+                    !testSession ||
+                    !message.trim() ||
+                    sendMutation.isPending ||
+                    chatClosed
+                  }
                   onClick={submitMessage}
                   aria-label="Enviar mensaje"
                 >

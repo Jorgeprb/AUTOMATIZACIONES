@@ -39,6 +39,7 @@ Copia [.env.example](./.env.example). Las variables principales son:
 
 - `ADMIN_API_KEY` y `VITE_ADMIN_API_KEY`: deben coincidir.
 - `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET`, `OPENAI_PROJECT_ID`.
+- `OPENAI_TTS_MODEL`: modelo usado para escuchar la voz del bot en consola.
 - `PUBLIC_BASE_URL`: dominio HTTPS público de la API.
 - `FRONTEND_BASE_URL`: URL del panel para volver tras OAuth.
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`.
@@ -54,13 +55,15 @@ No guardes `.env` ni secretos reales en Git.
 3. Conecta Google Calendar mediante OAuth.
 4. Crea trabajadores y enlaza un calendario secundario a cada uno.
 5. Crea servicios, precios y contexto.
-6. Activa una configuración del asistente y revisa el prompt.
-7. Completa una conversación en la consola de prueba.
-8. Configura el webhook OpenAI:
+6. Puedes cargar contexto manual, PDF o URL; siempre previsualiza antes de guardar.
+7. Activa una configuración del asistente y revisa el prompt.
+8. Completa una conversación en la consola de prueba y, si quieres, activa
+   “Escuchar voz del bot”.
+9. Configura el webhook OpenAI:
    `https://TU_DOMINIO/webhooks/openai/realtime`.
-9. Configura VoIP Studio para reenviar a:
+10. Configura VoIP Studio para reenviar a:
    `sip:${OPENAI_PROJECT_ID}@sip.api.openai.com;transport=tls`.
-10. Haz una llamada real y comprueba el dashboard.
+11. Haz una llamada real y comprueba el dashboard.
 
 El dashboard muestra estadísticas y una checklist automática con enlaces a
 cada pantalla pendiente.

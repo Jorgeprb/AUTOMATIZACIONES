@@ -66,6 +66,27 @@ function formValues(config: AssistantConfig): AssistantConfigFormValues {
     booking_policy_prompt: config.booking_policy_prompt,
     cancellation_policy_prompt: config.cancellation_policy_prompt,
     transfer_policy_prompt: config.transfer_policy_prompt,
+    tone: config.tone,
+    response_length: config.response_length,
+    ask_patient_name: config.ask_patient_name,
+    ask_patient_phone: config.ask_patient_phone,
+    ask_general_reason: config.ask_general_reason,
+    allow_booking_without_worker: config.allow_booking_without_worker,
+    max_proposed_slots: config.max_proposed_slots,
+    allow_cancellations: config.allow_cancellations,
+    allow_reschedules: config.allow_reschedules,
+    natural_confirmation_required: config.natural_confirmation_required,
+    avoid_exact_confirmation_phrases: config.avoid_exact_confirmation_phrases,
+    additional_instructions: config.additional_instructions ?? "",
+    forbidden_phrases: config.forbidden_phrases ?? "",
+    no_availability_message: config.no_availability_message ?? "",
+    missing_calendar_message: config.missing_calendar_message ?? "",
+    emergency_message: config.emergency_message ?? "",
+    human_transfer_message: config.human_transfer_message ?? "",
+    closing_message: config.closing_message ?? "",
+    use_prices: config.use_prices,
+    use_knowledge_base: config.use_knowledge_base,
+    strict_calendar_mode: config.strict_calendar_mode,
     transcript_enabled: config.transcript_enabled,
     recording_enabled: config.recording_enabled,
     conversation_retention_days: config.conversation_retention_days,
@@ -222,7 +243,7 @@ export function AssistantConfigPage() {
                 <div>
                   <CardTitle>{config.name}</CardTitle>
                   <CardDescription>
-                    {config.language} · retención {config.conversation_retention_days} días
+                    {config.language} · {config.tone} · {config.response_length} · retención {config.conversation_retention_days} días
                   </CardDescription>
                 </div>
                 <StatusBadge status={config.is_active ? "success" : "neutral"}>
@@ -289,7 +310,7 @@ export function AssistantConfigPage() {
                     onClick={() => previewMutation.mutate(config.id)}
                   >
                     <Eye className="size-4" />
-                    Preview
+                    Previsualizar prompt final
                   </Button>
                   <Button
                     variant={config.is_active ? "secondary" : "default"}
@@ -325,7 +346,7 @@ export function AssistantConfigPage() {
           if (!open) setEditingConfig(null);
         }}
       >
-        <DialogContent className="max-w-5xl">
+        <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingConfig ? "Editar configuración" : "Nueva configuración"}
@@ -336,10 +357,12 @@ export function AssistantConfigPage() {
           </DialogHeader>
           {options ? (
             <AssistantConfigForm
+              clinicId={clinicId as string}
               options={options}
               defaultValues={
                 editingConfig ? formValues(editingConfig) : newDefaults
               }
+              contextWarnings={contextQuery.data?.warnings ?? []}
               onSubmit={(values) => saveMutation.mutateAsync(values)}
               onCancel={() => setFormOpen(false)}
               isPending={saveMutation.isPending}

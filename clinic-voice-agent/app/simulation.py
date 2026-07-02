@@ -61,10 +61,19 @@ EMERGENCY_TERMS = (
 )
 AFFIRMATIVE_TERMS = (
     "si",
+    "vale",
+    "perfecto",
     "confirmo",
     "de acuerdo",
     "correcto",
     "adelante",
+    "me va bien",
+    "reservala",
+    "resérvala",
+    "reserva",
+    "si quiero esa",
+    "sí quiero esa",
+    "esa",
 )
 NEGATIVE_TERMS = ("no", "cancela eso", "mejor no")
 APPOINTMENT_TERMS = ("cita", "reserv", "consulta", "hueco")
@@ -181,7 +190,7 @@ def _is_emergency(message: str) -> bool:
 
 
 def _is_affirmative(message: str) -> bool:
-    """Return true for a clear booking confirmation."""
+    """Return true for a natural booking acceptance."""
     normalized = _normalize(message).strip(" .,!¿?¡")
     return any(
         normalized == term
@@ -210,6 +219,27 @@ def _selected_slot_index(message: str) -> int | None:
         return int(stripped) - 1
     for index, terms in choices.items():
         if any(term in normalized for term in terms):
+            return index
+    return None
+
+
+def _selected_slot_by_time(
+    message: str,
+    slots: list[dict[str, Any]],
+) -> int | None:
+    """Match natural choices like 'a las 9' against proposed slots."""
+    normalized = _normalize(message)
+    match = re.search(r"\b(?:a las\s*)?([01]?\d|2[0-3])(?::([0-5]\d))?\b", normalized)
+    if match is None:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2) or "0")
+    for index, slot in enumerate(slots):
+        try:
+            start_at = datetime.fromisoformat(str(slot["start_at"]))
+        except (KeyError, ValueError):
+            continue
+        if start_at.hour == hour and start_at.minute == minute:
             return index
     return None
 
@@ -300,17 +330,8 @@ class SimulationEngine:
         return clinic
 
     def _prepare_fake_calendars(self, session: Session, clinic: Clinic) -> None:
-        """Give unlinked demo workers deterministic local-only calendars."""
-        if self.mode != "no-google":
-            return
-        changed = False
-        workers = session.scalars(select(Worker).where(Worker.clinic_id == clinic.id))
-        for worker in workers:
-            if worker.calendar_id is None:
-                worker.calendar_id = f"sim-{worker.id}@calendar.local"
-                changed = True
-        if changed:
-            session.commit()
+        """Keep calendar setup realistic even when the backend is fake."""
+        del session, clinic
 
     def create_call(
         self,
@@ -624,16 +645,125 @@ class SimulationEngine:
         return "Tengo estas opciones. " + ". ".join(parts) + ". ¿Cuál eliges?"
 
     def _missing_data_reply(self, draft: dict[str, Any]) -> str | None:
-        """Ask for the next critical field."""
-        if not draft.get("patient_name"):
-            return "Dime tu nombre, por favor."
-        if not draft.get("patient_phone"):
-            return "Dime un teléfono de contacto, por favor."
+        """Ask for the next critical scheduling field before proposing slots."""
         if not draft.get("service_id"):
             return "¿Qué servicio necesitas?"
         if not draft.get("preferred_date"):
             return "¿Qué día prefieres?"
         return None
+
+    def _missing_patient_reply(self, draft: dict[str, Any]) -> str | None:
+        """Ask only for patient data needed to finish an accepted booking."""
+        missing: list[str] = []
+        if not draft.get("patient_name"):
+            missing.append("tu nombre")
+        if not draft.get("patient_phone"):
+            missing.append("un teléfono de contacto")
+        if not missing:
+            return None
+        return f"Perfecto. Dime {' y '.join(missing)}, por favor."
+
+    def _create_selected_appointment(
+        self,
+        session: Session,
+        call: CallSession,
+        clinic: Clinic,
+        state: dict[str, Any],
+        draft: dict[str, Any],
+    ) -> SimulationTurnResponse:
+        """Book the accepted selected slot after one final availability check."""
+        selected = state.get("selected_slot")
+        if not isinstance(selected, dict):
+            state["phase"] = "idle"
+            return self._finish_turn(
+                session,
+                call,
+                state,
+                reply="Ese horario ya no está disponible. Buscamos otro.",
+                action="selection_missing",
+            )
+        availability_arguments = {
+            "clinic_id": str(clinic.id),
+            "worker_id": selected["worker_id"],
+            "service_id": draft.get("service_id"),
+            "start_at": selected["start_at"],
+            "end_at": selected["end_at"],
+        }
+        availability = self._execute_tool(
+            call,
+            clinic,
+            "check_availability",
+            availability_arguments,
+        )
+        traces = [
+            {
+                "name": "check_availability",
+                "arguments": availability_arguments,
+                "result": availability,
+            }
+        ]
+        if not availability.get("ok") or not availability.get("available"):
+            state.update(
+                {
+                    "phase": "idle",
+                    "selected_slot": None,
+                    "proposed_slots": [],
+                }
+            )
+            return self._finish_turn(
+                session,
+                call,
+                state,
+                reply="Ese hueco ya no está disponible. Te ofrezco otras opciones.",
+                action="slot_unavailable",
+                tool_calls=traces,
+            )
+        arguments = {
+            "clinic_id": str(clinic.id),
+            "worker_id": selected["worker_id"],
+            "service_id": draft.get("service_id"),
+            "patient_name": draft["patient_name"],
+            "patient_phone": draft["patient_phone"],
+            "reason": draft.get("reason"),
+            "start_at": selected["start_at"],
+            "end_at": selected["end_at"],
+            "confirmed_by_caller": True,
+        }
+        result = self._execute_tool(
+            call,
+            clinic,
+            "create_appointment",
+            arguments,
+        )
+        traces.append(
+            {
+                "name": "create_appointment",
+                "arguments": arguments,
+                "result": result,
+            }
+        )
+        if result.get("ok"):
+            confirmed_start = datetime.fromisoformat(str(result["start_at"]))
+            service_name = draft.get("service_name") or "la cita"
+            reply = (
+                f"Perfecto, te reservo {confirmed_start.strftime('%d/%m a las %H:%M')} "
+                f"para {service_name}. Muchas gracias."
+            )
+            state["phase"] = "booked"
+            state["appointment_id"] = result["appointment_id"]
+            action = "appointment_created"
+        else:
+            reply = "No pude reservar ese hueco. Buscamos otro horario."
+            state["phase"] = "idle"
+            action = "booking_failed"
+        return self._finish_turn(
+            session,
+            call,
+            state,
+            reply=reply,
+            action=action,
+            tool_calls=traces,
+        )
 
     def _turn_response(
         self,
@@ -653,7 +783,8 @@ class SimulationEngine:
             call_session_id=call.id,
             reply=reply,
             action=action,
-            awaiting_confirmation=state.get("phase") == "awaiting_confirmation",
+            awaiting_confirmation=state.get("phase")
+            in {"awaiting_confirmation", "pending_confirmation"},
             proposed_slots=slots,
             tool_calls=tool_calls or [],
         )
@@ -757,7 +888,7 @@ class SimulationEngine:
                     tool_calls=[trace],
                 )
 
-            if state.get("phase") == "awaiting_confirmation":
+            if state.get("phase") in {"awaiting_confirmation", "pending_confirmation"}:
                 if _is_negative(message):
                     state.update(
                         {
@@ -773,70 +904,42 @@ class SimulationEngine:
                         reply="No reservo nada. Podemos buscar otro horario.",
                         action="booking_rejected",
                     )
-                if not _is_affirmative(message):
+                draft = self._update_draft(session, clinic, draft, message)
+                state["draft"] = draft
+                missing_patient = self._missing_patient_reply(draft)
+                if missing_patient:
+                    state["phase"] = "pending_confirmation"
                     return self._finish_turn(
                         session,
                         call,
                         state,
-                        reply="Necesito un sí claro antes de reservar.",
+                        reply=missing_patient,
+                        action="request_patient_data",
+                    )
+                if (
+                    state.get("phase") == "awaiting_confirmation"
+                    and not _is_affirmative(message)
+                    and _selected_slot_index(message) is None
+                ):
+                    return self._finish_turn(
+                        session,
+                        call,
+                        state,
+                        reply="¿Te reservo ese hueco?",
                         action="confirmation_required",
                     )
-                selected = state.get("selected_slot")
-                if not isinstance(selected, dict):
-                    state["phase"] = "idle"
-                    return self._finish_turn(
-                        session,
-                        call,
-                        state,
-                        reply="El horario elegido ya no está disponible.",
-                        action="selection_missing",
-                    )
-                arguments = {
-                    "clinic_id": str(clinic.id),
-                    "worker_id": selected["worker_id"],
-                    "service_id": draft.get("service_id"),
-                    "patient_name": draft["patient_name"],
-                    "patient_phone": draft["patient_phone"],
-                    "reason": draft.get("reason"),
-                    "start_at": selected["start_at"],
-                    "end_at": selected["end_at"],
-                    "confirmed_by_caller": True,
-                }
-                result = self._execute_tool(
-                    call,
-                    clinic,
-                    "create_appointment",
-                    arguments,
-                )
-                trace = {
-                    "name": "create_appointment",
-                    "arguments": arguments,
-                    "result": result,
-                }
-                if result.get("ok"):
-                    confirmed_start = datetime.fromisoformat(str(result["start_at"]))
-                    reply = (
-                        f"Cita confirmada con {result['worker_name']} "
-                        f"el {confirmed_start.strftime('%d/%m a las %H:%M')}."
-                    )
-                    state["phase"] = "booked"
-                    state["appointment_id"] = result["appointment_id"]
-                    action = "appointment_created"
-                else:
-                    reply = "No pude reservar. Hay que buscar otro horario."
-                    state["phase"] = "idle"
-                    action = "booking_failed"
-                return self._finish_turn(
+                return self._create_selected_appointment(
                     session,
                     call,
+                    clinic,
                     state,
-                    reply=reply,
-                    action=action,
-                    tool_calls=[trace],
+                    draft,
                 )
 
             proposed_slots = state.get("proposed_slots", [])
             selected_index = _selected_slot_index(message)
+            if selected_index is None:
+                selected_index = _selected_slot_by_time(message, proposed_slots)
             if selected_index is not None and proposed_slots:
                 if selected_index >= len(proposed_slots):
                     return self._finish_turn(
@@ -848,26 +951,35 @@ class SimulationEngine:
                     )
                 selected = proposed_slots[selected_index]
                 state["selected_slot"] = selected
-                state["phase"] = "awaiting_confirmation"
-                start_at = datetime.fromisoformat(str(selected["start_at"]))
-                reply = (
-                    f"Has elegido {selected['worker_name']} el "
-                    f"{start_at.strftime('%d/%m a las %H:%M')}. "
-                    "¿Confirmas la reserva?"
-                )
-                if _is_affirmative(message):
-                    call.conversation_state_json = state
-                    session.commit()
-                    return self.turn(
-                        "Sí, confirmo",
-                        call_session_id=call.id,
+                draft = self._update_draft(session, clinic, draft, message)
+                state["draft"] = draft
+                missing_patient = self._missing_patient_reply(draft)
+                if missing_patient:
+                    state["phase"] = "pending_confirmation"
+                    return self._finish_turn(
+                        session,
+                        call,
+                        state,
+                        reply=missing_patient,
+                        action="request_patient_data",
                     )
+                state["phase"] = "pending_confirmation"
+                return self._create_selected_appointment(
+                    session,
+                    call,
+                    clinic,
+                    state,
+                    draft,
+                )
+            if state.get("phase") == "choosing_slot" and proposed_slots:
+                draft = self._update_draft(session, clinic, draft, message)
+                state["draft"] = draft
                 return self._finish_turn(
                     session,
                     call,
                     state,
-                    reply=reply,
-                    action="confirmation_requested",
+                    reply="Perfecto. ¿Cuál de los huecos prefieres?",
+                    action="request_slot_selection",
                 )
 
             draft = self._update_draft(
@@ -966,7 +1078,8 @@ class SimulationEngine:
                 "reply": reply,
                 "action": action,
                 "awaiting_confirmation": (
-                    state.get("phase") == "awaiting_confirmation"
+                    state.get("phase")
+                    in {"awaiting_confirmation", "pending_confirmation"}
                 ),
             },
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import unicodedata
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -117,7 +118,6 @@ def get_realtime_tools() -> tuple[dict[str, Any], ...]:
                         "description": "UUID de la clínica de esta llamada.",
                     }
                 },
-                required=("clinic_id",),
             ),
         ),
         _function_tool(
@@ -125,80 +125,107 @@ def get_realtime_tools() -> tuple[dict[str, Any], ...]:
             (
                 "Busca huecos reales en Google Calendar y devuelve opciones "
                 "ordenadas. Úsala después de conocer el servicio o duración y "
-                "la preferencia del paciente. Comunica como máximo tres."
+                "la preferencia del paciente. Si conoces el servicio, envía "
+                "service_id y no duration_minutes. Comunica como máximo tres."
             ),
-            _object_schema(
-                {
-                    "clinic_id": {
-                        **UUID_SCHEMA,
-                        "description": "UUID de la clínica de esta llamada.",
+            {
+                **_object_schema(
+                    {
+                        "clinic_id": {
+                            **UUID_SCHEMA,
+                            "description": "UUID de la clínica de esta llamada.",
+                        },
+                        "service_id": {
+                            **UUID_SCHEMA,
+                            "description": (
+                                "UUID del servicio. Usa este campo cuando el "
+                                "servicio esté identificado. Si lo envías, no "
+                                "envíes duration_minutes."
+                            ),
+                        },
+                        "service_name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": (
+                                "Nombre público o interno del servicio cuando no "
+                                "tengas service_id. El servidor lo resuelve a un "
+                                "servicio real de la clínica."
+                            ),
+                        },
+                        "duration_minutes": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": (
+                                "Duración solo cuando no exista service_id. No "
+                                "envíes ambos campos."
+                            ),
+                        },
+                        "worker_id": {
+                            **UUID_SCHEMA,
+                            "description": (
+                                "UUID del trabajador preferido; omítelo si no hay "
+                                "preferencia."
+                            ),
+                        },
+                        "worker_name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": (
+                                "Nombre del trabajador preferido cuando no tengas "
+                                "worker_id. No lo uses si no hay preferencia."
+                            ),
+                        },
+                        "preferred_date": {
+                            **DATE_SCHEMA,
+                            "description": "Fecha local preferida, YYYY-MM-DD.",
+                        },
+                        "preferred_time_window": {
+                            "type": "string",
+                            "description": (
+                                "Franja preferida: morning, afternoon, evening o "
+                                "un rango HH:MM-HH:MM."
+                            ),
+                            "anyOf": [
+                                {
+                                    "enum": [
+                                        "morning",
+                                        "afternoon",
+                                        "evening",
+                                    ]
+                                },
+                                {
+                                    "pattern": (
+                                        "^([01][0-9]|2[0-3]):[0-5][0-9]-"
+                                        "([01][0-9]|2[0-3]):[0-5][0-9]$"
+                                    )
+                                },
+                            ],
+                        },
+                        "days_ahead": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 90,
+                            "default": 14,
+                            "description": "Horizonte de búsqueda en días.",
+                        },
+                        "max_slots": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3,
+                            "default": 3,
+                            "description": "Número máximo de opciones a devolver.",
+                        },
                     },
-                    "service_id": {
-                        **UUID_SCHEMA,
-                        "description": (
-                            "UUID del servicio. Usa este campo cuando el "
-                            "servicio esté identificado."
-                        ),
-                    },
-                    "duration_minutes": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": (
-                            "Duración solo cuando no exista service_id. No "
-                            "envíes ambos campos."
-                        ),
-                    },
-                    "worker_id": {
-                        **UUID_SCHEMA,
-                        "description": (
-                            "UUID del trabajador preferido; omítelo si no hay "
-                            "preferencia."
-                        ),
-                    },
-                    "preferred_date": {
-                        **DATE_SCHEMA,
-                        "description": "Fecha local preferida, YYYY-MM-DD.",
-                    },
-                    "preferred_time_window": {
-                        "type": "string",
-                        "description": (
-                            "Franja preferida: morning, afternoon, evening o "
-                            "un rango HH:MM-HH:MM."
-                        ),
-                        "anyOf": [
-                            {
-                                "enum": [
-                                    "morning",
-                                    "afternoon",
-                                    "evening",
-                                ]
-                            },
-                            {
-                                "pattern": (
-                                    "^([01][0-9]|2[0-3]):[0-5][0-9]-"
-                                    "([01][0-9]|2[0-3]):[0-5][0-9]$"
-                                )
-                            },
-                        ],
-                    },
-                    "days_ahead": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 90,
-                        "default": 14,
-                        "description": "Horizonte de búsqueda en días.",
-                    },
-                    "max_slots": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 3,
-                        "default": 3,
-                        "description": "Número máximo de opciones a devolver.",
-                    },
-                },
-                required=("clinic_id",),
-                description=("Debe incluir exactamente service_id o duration_minutes."),
-            ),
+                    description=(
+                        "Debe incluir service_id o duration_minutes, nunca ambos."
+                    ),
+                ),
+                "oneOf": [
+                    {"required": ["service_id"]},
+                    {"required": ["service_name"]},
+                    {"required": ["duration_minutes"]},
+                ],
+            },
         ),
         _function_tool(
             "check_availability",
@@ -217,9 +244,21 @@ def get_realtime_tools() -> tuple[dict[str, Any], ...]:
                         **UUID_SCHEMA,
                         "description": "UUID del trabajador elegido.",
                     },
+                    "worker_name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": (
+                            "Nombre del trabajador elegido si no tienes worker_id."
+                        ),
+                    },
                     "service_id": {
                         **UUID_SCHEMA,
                         "description": "UUID del servicio, si aplica.",
+                    },
+                    "service_name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Nombre del servicio si no tienes service_id.",
                     },
                     "start_at": {
                         **DATETIME_SCHEMA,
@@ -230,15 +269,15 @@ def get_realtime_tools() -> tuple[dict[str, Any], ...]:
                         "description": ("Fin exacto elegido, en ISO 8601 con zona."),
                     },
                 },
-                required=("clinic_id", "worker_id", "start_at", "end_at"),
+                required=("start_at", "end_at"),
             ),
         ),
         _function_tool(
             "create_appointment",
             (
-                "Crea la cita definitiva. Llámala únicamente después de repetir "
-                "los datos esenciales y recibir una confirmación verbal clara "
-                "del paciente. Nunca la uses para comprobar disponibilidad. "
+                "Crea la cita definitiva. Llámala cuando el paciente haya "
+                "aceptado de forma natural un hueco concreto y ya tengas nombre "
+                "y teléfono. Nunca la uses para comprobar disponibilidad. "
                 "Solo anuncia que la cita está confirmada si devuelve éxito."
             ),
             _object_schema(
@@ -251,9 +290,25 @@ def get_realtime_tools() -> tuple[dict[str, Any], ...]:
                         **UUID_SCHEMA,
                         "description": "UUID del trabajador confirmado.",
                     },
+                    "worker_name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": (
+                            "Nombre del trabajador confirmado si no tienes "
+                            "worker_id."
+                        ),
+                    },
                     "service_id": {
                         **UUID_SCHEMA,
                         "description": "UUID del servicio, si aplica.",
+                    },
+                    "service_name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": (
+                            "Nombre del servicio confirmado si no tienes "
+                            "service_id."
+                        ),
                     },
                     "patient_name": {
                         "type": "string",
@@ -289,14 +344,13 @@ def get_realtime_tools() -> tuple[dict[str, Any], ...]:
                         "type": "boolean",
                         "const": True,
                         "description": (
-                            "Debe ser true y solo puede enviarse tras una "
-                            "confirmación verbal explícita del paciente."
+                            "Debe ser true cuando el paciente haya aceptado "
+                            "semánticamente el hueco: sí, vale, perfecto, "
+                            "a las 9, me va bien, resérvala, confirmo, etc."
                         ),
                     },
                 },
                 required=(
-                    "clinic_id",
-                    "worker_id",
                     "patient_name",
                     "patient_phone",
                     "start_at",
@@ -333,7 +387,6 @@ def get_realtime_tools() -> tuple[dict[str, Any], ...]:
                             "description": ("Fecha local aproximada de la cita."),
                         },
                     },
-                    required=("clinic_id",),
                 ),
                 "oneOf": [
                     {"required": ["appointment_id"]},
@@ -430,18 +483,309 @@ def _trusted_arguments(
     arguments: dict[str, Any],
     context: ToolExecutionContext,
 ) -> dict[str, Any]:
-    """Inject and verify identifiers that must belong to this call."""
+    """Inject server-trusted identifiers for this call."""
     trusted = dict(arguments)
     supplied_clinic_id = trusted.get("clinic_id")
     if supplied_clinic_id is not None:
         try:
             parsed_clinic_id = uuid.UUID(str(supplied_clinic_id))
-        except ValueError as exc:
-            raise RealtimeToolError("clinic_id no es un UUID válido.") from exc
-        if parsed_clinic_id != context.clinic_id:
-            raise RealtimeToolError("clinic_id no pertenece a esta llamada.")
+        except ValueError:
+            logger.info(
+                "realtime_tool_overrode_invalid_clinic_id",
+                extra={
+                    "call_id": context.openai_call_id,
+                    "expected_clinic_id": str(context.clinic_id),
+                },
+            )
+        else:
+            if parsed_clinic_id != context.clinic_id:
+                logger.info(
+                    "realtime_tool_overrode_wrong_clinic_id",
+                    extra={
+                        "call_id": context.openai_call_id,
+                        "expected_clinic_id": str(context.clinic_id),
+                        "supplied_clinic_id": str(parsed_clinic_id),
+                    },
+                )
     trusted["clinic_id"] = str(context.clinic_id)
+    trusted["call_session_id"] = str(context.call_session_id)
     return trusted
+
+
+def _sanitize_propose_slots_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Prefer the service duration over a model-supplied raw duration."""
+    sanitized = dict(arguments)
+    if sanitized.get("service_id"):
+        sanitized.pop("duration_minutes", None)
+    return sanitized
+
+
+def _normalize_label(value: object) -> str:
+    """Normalize public names for forgiving tool argument matching."""
+    stripped = unicodedata.normalize("NFKD", str(value))
+    without_accents = "".join(
+        char for char in stripped if not unicodedata.combining(char)
+    )
+    return " ".join(without_accents.casefold().split())
+
+
+def _safe_uuid(value: object, *, field_name: str) -> uuid.UUID:
+    """Parse UUIDs received from model tools with a stable error."""
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError) as exc:
+        raise RealtimeToolError(
+            f"{field_name} no es un UUID real válido de esta clínica. "
+            "Usa un ID real del contexto o envía el nombre correspondiente."
+        ) from exc
+
+
+def _service_names(service: Service) -> set[str]:
+    """Return all user-facing names that can identify a service."""
+    return {
+        value
+        for value in (service.name, service.public_name)
+        if isinstance(value, str) and value.strip()
+    }
+
+
+def _format_services(services: list[Service]) -> str:
+    """Render real service choices for a safe tool error."""
+    if not services:
+        return "ningún servicio reservable configurado"
+    return "; ".join(
+        f"{service.public_name or service.name} (service_id={service.id})"
+        for service in services
+    )
+
+
+def _format_workers(workers: list[Worker]) -> str:
+    """Render real worker choices for a safe tool error."""
+    if not workers:
+        return "ningún trabajador activo con calendar_id"
+    return "; ".join(
+        f"{worker.name} (worker_id={worker.id})" for worker in workers
+    )
+
+
+def _bookable_services(session: Session, clinic_id: uuid.UUID) -> list[Service]:
+    """Return active services that the bot may use for booking tools."""
+    return list(
+        session.scalars(
+            select(Service)
+            .where(
+                Service.clinic_id == clinic_id,
+                Service.is_active.is_(True),
+                Service.is_bookable_by_bot.is_(True),
+            )
+            .order_by(Service.name)
+        )
+    )
+
+
+def _active_workers(session: Session, clinic_id: uuid.UUID) -> list[Worker]:
+    """Return active clinic workers."""
+    return list(
+        session.scalars(
+            select(Worker)
+            .where(
+                Worker.clinic_id == clinic_id,
+                Worker.is_active.is_(True),
+            )
+            .order_by(Worker.name)
+        )
+    )
+
+
+def _resolve_service_reference(
+    session: Session,
+    arguments: dict[str, Any],
+    *,
+    clinic_id: uuid.UUID,
+) -> Service | None:
+    """Resolve service_name or validate service_id against this clinic."""
+    service_id = arguments.get("service_id")
+    services = _bookable_services(session, clinic_id)
+    if service_id:
+        parsed_service_id = _safe_uuid(service_id, field_name="service_id")
+        service = session.get(Service, parsed_service_id)
+        if (
+            service is None
+            or service.clinic_id != clinic_id
+            or not service.is_active
+            or not service.is_bookable_by_bot
+        ):
+            raise RealtimeToolError(
+                "service_id no pertenece a esta clínica o no es reservable. "
+                f"Usa uno válido: {_format_services(services)}."
+            )
+        arguments["service_id"] = str(service.id)
+        return service
+
+    service_name = str(arguments.get("service_name") or "").strip()
+    if not service_name:
+        return None
+    wanted = _normalize_label(service_name)
+    matches = [
+        service
+        for service in services
+        if wanted in {_normalize_label(name) for name in _service_names(service)}
+    ]
+    if len(matches) == 1:
+        service = matches[0]
+        arguments["service_id"] = str(service.id)
+        return service
+    if len(matches) > 1:
+        raise RealtimeToolError(
+            "service_name es ambiguo. Usa service_id de una opción real: "
+            f"{_format_services(matches)}."
+        )
+    all_active_services = list(
+        session.scalars(
+            select(Service)
+            .where(
+                Service.clinic_id == clinic_id,
+                Service.is_active.is_(True),
+            )
+            .order_by(Service.name)
+        )
+    )
+    non_bookable_match = next(
+        (
+            service
+            for service in all_active_services
+            if wanted in {_normalize_label(name) for name in _service_names(service)}
+        ),
+        None,
+    )
+    if non_bookable_match is not None and not non_bookable_match.is_bookable_by_bot:
+        service_label = non_bookable_match.public_name or non_bookable_match.name
+        raise RealtimeToolError(
+            f"El servicio '{service_label}' no es reservable por el asistente. "
+            "No lo uses para crear citas."
+        )
+    raise RealtimeToolError(
+        "service_name no coincide con ningún servicio reservable de esta clínica. "
+        f"Usa una opción válida: {_format_services(services)}."
+    )
+
+
+def _resolve_worker_reference(
+    session: Session,
+    arguments: dict[str, Any],
+    *,
+    clinic_id: uuid.UUID,
+    required: bool,
+) -> Worker | None:
+    """Resolve worker_name or validate worker_id against linked clinic workers."""
+    workers = _active_workers(session, clinic_id)
+    calendar_workers = [worker for worker in workers if worker.calendar_id]
+    worker_id = arguments.get("worker_id")
+    if worker_id:
+        parsed_worker_id = _safe_uuid(worker_id, field_name="worker_id")
+        worker = session.get(Worker, parsed_worker_id)
+        if worker is None or worker.clinic_id != clinic_id or not worker.is_active:
+            raise RealtimeToolError(
+                "worker_id no pertenece a esta clínica o está inactivo. "
+                f"Usa uno válido: {_format_workers(calendar_workers)}."
+            )
+        if not worker.calendar_id:
+            raise RealtimeToolError(
+                f"El trabajador '{worker.name}' no tiene calendar_id. "
+                "Asigna un calendario antes de usarlo para reservas automáticas."
+            )
+        arguments["worker_id"] = str(worker.id)
+        return worker
+
+    worker_name = str(arguments.get("worker_name") or "").strip()
+    if worker_name:
+        wanted = _normalize_label(worker_name)
+        matches = [
+            worker
+            for worker in calendar_workers
+            if _normalize_label(worker.name) == wanted
+        ]
+        if len(matches) == 1:
+            worker = matches[0]
+            arguments["worker_id"] = str(worker.id)
+            return worker
+        if len(matches) > 1:
+            raise RealtimeToolError(
+                "worker_name es ambiguo. Usa worker_id de una opción real: "
+                f"{_format_workers(matches)}."
+            )
+        inactive_calendarless_match = next(
+            (
+                worker
+                for worker in workers
+                if _normalize_label(worker.name) == wanted and not worker.calendar_id
+            ),
+            None,
+        )
+        if inactive_calendarless_match is not None:
+            raise RealtimeToolError(
+                f"El trabajador '{inactive_calendarless_match.name}' no tiene "
+                "calendar_id. Asigna un calendario antes de reservar con él."
+            )
+        raise RealtimeToolError(
+            "worker_name no coincide con ningún trabajador activo con calendario. "
+            f"Usa una opción válida: {_format_workers(calendar_workers)}."
+        )
+
+    if not calendar_workers:
+        raise RealtimeToolError(
+            "No hay trabajadores activos con calendar_id. Asigna un calendario "
+            "al trabajador antes de consultar o crear citas."
+        )
+    if len(calendar_workers) == 1:
+        worker = calendar_workers[0]
+        arguments["worker_id"] = str(worker.id)
+        return worker
+    if required:
+        raise RealtimeToolError(
+            "Falta trabajador. Usa worker_name o worker_id de una opción válida: "
+            f"{_format_workers(calendar_workers)}."
+        )
+    return None
+
+
+def _validate_worker_service_pair(
+    worker: Worker | None,
+    service: Service | None,
+) -> None:
+    """Ensure an explicit worker is allowed for the selected service."""
+    if worker is None or service is None or service.allowed_worker_ids is None:
+        return
+    allowed_worker_ids = {str(value) for value in service.allowed_worker_ids}
+    if str(worker.id) not in allowed_worker_ids:
+        raise RealtimeToolError(
+            f"El trabajador '{worker.name}' no está permitido para el servicio "
+            f"'{service.public_name or service.name}'. Elige otra opción válida."
+        )
+
+
+def _normalize_booking_tool_arguments(
+    session: Session,
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    clinic_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Resolve model-facing names and reject fake cross-clinic IDs."""
+    if name not in {"propose_slots", "check_availability", "create_appointment"}:
+        return arguments
+    normalized = dict(arguments)
+    service = _resolve_service_reference(session, normalized, clinic_id=clinic_id)
+    worker = _resolve_worker_reference(
+        session,
+        normalized,
+        clinic_id=clinic_id,
+        required=name in {"check_availability", "create_appointment"},
+    )
+    _validate_worker_service_pair(worker, service)
+    if name == "propose_slots":
+        normalized = _sanitize_propose_slots_arguments(normalized)
+    return normalized
 
 
 def _clinic_info(session: Session, clinic_id: uuid.UUID) -> AgentClinicInfoResponse:
@@ -545,7 +889,15 @@ def _execute_tool(
             return {"ok": True, **info.model_dump(mode="json")}
 
         if name == "propose_slots":
-            propose_payload = AgentProposeSlotsRequest.model_validate(trusted)
+            trusted = _normalize_booking_tool_arguments(
+                session,
+                name,
+                trusted,
+                clinic_id=context.clinic_id,
+            )
+            propose_payload = AgentProposeSlotsRequest.model_validate(
+                trusted
+            )
             client = calendar_provider(
                 session,
                 context.settings,
@@ -581,6 +933,12 @@ def _execute_tool(
             return {"ok": True, **propose_response.model_dump(mode="json")}
 
         if name == "check_availability":
+            trusted = _normalize_booking_tool_arguments(
+                session,
+                name,
+                trusted,
+                clinic_id=context.clinic_id,
+            )
             availability_payload = AgentAvailabilityRequest.model_validate(trusted)
             client = calendar_provider(
                 session,
@@ -612,10 +970,16 @@ def _execute_tool(
         if name == "create_appointment":
             if trusted.get("confirmed_by_caller") is not True:
                 raise RealtimeToolError(
-                    "Falta confirmación verbal explícita del paciente."
+                    "Falta aceptación natural del paciente para ese hueco."
                 )
             trusted.pop("confirmed_by_caller", None)
             trusted["call_session_id"] = str(context.call_session_id)
+            trusted = _normalize_booking_tool_arguments(
+                session,
+                name,
+                trusted,
+                clinic_id=context.clinic_id,
+            )
             create_payload = AgentCreateAppointmentRequest.model_validate(trusted)
             client = calendar_provider(
                 session,

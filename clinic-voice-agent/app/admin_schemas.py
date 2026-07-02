@@ -270,11 +270,34 @@ class AssistantConfigBase(BaseModel):
     language: str = Field(default="es", min_length=2, max_length=16)
     temperature: Decimal | None = Field(default=None, ge=0, le=2)
     first_message: str = Field(min_length=1)
-    system_prompt: str = Field(min_length=1)
+    system_prompt: str = Field(min_length=1, max_length=12000)
     safety_prompt: str = Field(min_length=1)
     booking_policy_prompt: str = Field(min_length=1)
     cancellation_policy_prompt: str = Field(min_length=1)
     transfer_policy_prompt: str = Field(min_length=1)
+    tone: Literal["profesional", "cercano", "comercial", "breve", "formal"] = (
+        "profesional"
+    )
+    response_length: Literal["corta", "normal", "detallada"] = "normal"
+    ask_patient_name: bool = True
+    ask_patient_phone: bool = True
+    ask_general_reason: bool = True
+    allow_booking_without_worker: bool = True
+    max_proposed_slots: int = Field(default=3, ge=1, le=10)
+    allow_cancellations: bool = True
+    allow_reschedules: bool = True
+    natural_confirmation_required: bool = True
+    avoid_exact_confirmation_phrases: bool = True
+    additional_instructions: str | None = None
+    forbidden_phrases: str | None = None
+    no_availability_message: str | None = None
+    missing_calendar_message: str | None = None
+    emergency_message: str | None = None
+    human_transfer_message: str | None = None
+    closing_message: str | None = None
+    use_prices: bool = True
+    use_knowledge_base: bool = True
+    strict_calendar_mode: bool = True
     transcript_enabled: bool = False
     recording_enabled: bool = False
     conversation_retention_days: int = Field(default=30, ge=1, le=3650)
@@ -295,11 +318,34 @@ class AssistantConfigUpdate(BaseModel):
     language: str | None = Field(default=None, min_length=2, max_length=16)
     temperature: Decimal | None = Field(default=None, ge=0, le=2)
     first_message: str | None = Field(default=None, min_length=1)
-    system_prompt: str | None = Field(default=None, min_length=1)
+    system_prompt: str | None = Field(default=None, min_length=1, max_length=12000)
     safety_prompt: str | None = Field(default=None, min_length=1)
     booking_policy_prompt: str | None = Field(default=None, min_length=1)
     cancellation_policy_prompt: str | None = Field(default=None, min_length=1)
     transfer_policy_prompt: str | None = Field(default=None, min_length=1)
+    tone: (
+        Literal["profesional", "cercano", "comercial", "breve", "formal"] | None
+    ) = None
+    response_length: Literal["corta", "normal", "detallada"] | None = None
+    ask_patient_name: bool | None = None
+    ask_patient_phone: bool | None = None
+    ask_general_reason: bool | None = None
+    allow_booking_without_worker: bool | None = None
+    max_proposed_slots: int | None = Field(default=None, ge=1, le=10)
+    allow_cancellations: bool | None = None
+    allow_reschedules: bool | None = None
+    natural_confirmation_required: bool | None = None
+    avoid_exact_confirmation_phrases: bool | None = None
+    additional_instructions: str | None = None
+    forbidden_phrases: str | None = None
+    no_availability_message: str | None = None
+    missing_calendar_message: str | None = None
+    emergency_message: str | None = None
+    human_transfer_message: str | None = None
+    closing_message: str | None = None
+    use_prices: bool | None = None
+    use_knowledge_base: bool | None = None
+    strict_calendar_mode: bool | None = None
     transcript_enabled: bool | None = None
     recording_enabled: bool | None = None
     conversation_retention_days: int | None = Field(
@@ -318,6 +364,14 @@ class AssistantConfigRead(AssistantConfigBase, ORMReadModel):
     clinic_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
+
+
+class AssistantVoicePreviewRequest(BaseModel):
+    """One-off voice preview request for the assistant editor."""
+
+    text: str = Field(min_length=1, max_length=2000)
+    realtime_voice: str = Field(min_length=1, max_length=80)
+    realtime_model: str | None = Field(default=None, max_length=120)
 
 
 class PromptPreviewResponse(BaseModel):
@@ -348,6 +402,38 @@ class AssistantOptionsResponse(BaseModel):
     models: list[AssistantOptionRead]
     voices: list[AssistantOptionRead]
     languages: list[AssistantOptionRead]
+
+
+class AssistantRecommendedTemplateResponse(BaseModel):
+    """Recommended editable assistant prompt defaults for new clinics."""
+
+    first_message: str
+    system_prompt: str
+    safety_prompt: str
+    booking_policy_prompt: str
+    cancellation_policy_prompt: str
+    transfer_policy_prompt: str
+    tone: Literal["profesional", "cercano", "comercial", "breve", "formal"]
+    response_length: Literal["corta", "normal", "detallada"]
+    ask_patient_name: bool
+    ask_patient_phone: bool
+    ask_general_reason: bool
+    allow_booking_without_worker: bool
+    max_proposed_slots: int = Field(ge=1, le=10)
+    allow_cancellations: bool
+    allow_reschedules: bool
+    natural_confirmation_required: bool
+    avoid_exact_confirmation_phrases: bool
+    additional_instructions: str
+    forbidden_phrases: str
+    no_availability_message: str
+    missing_calendar_message: str
+    emergency_message: str
+    human_transfer_message: str
+    closing_message: str
+    use_prices: bool
+    use_knowledge_base: bool
+    strict_calendar_mode: bool
 
 
 class PromptContextServiceRead(BaseModel):
@@ -400,6 +486,10 @@ class KnowledgeItemBase(BaseModel):
     title: str = Field(min_length=1, max_length=240)
     category: KnowledgeCategory
     content: str = Field(min_length=1)
+    source_type: Literal["manual", "pdf", "url"] = "manual"
+    source: str | None = Field(default=None, max_length=1000)
+    imported_at: datetime | None = None
+    import_status: str = Field(default="manual", max_length=32)
     is_active: bool = True
     priority: int = 0
 
@@ -414,6 +504,10 @@ class KnowledgeItemUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=240)
     category: KnowledgeCategory | None = None
     content: str | None = Field(default=None, min_length=1)
+    source_type: Literal["manual", "pdf", "url"] | None = None
+    source: str | None = Field(default=None, max_length=1000)
+    imported_at: datetime | None = None
+    import_status: str | None = Field(default=None, max_length=32)
     is_active: bool | None = None
     priority: int | None = None
 
@@ -425,6 +519,29 @@ class KnowledgeItemRead(KnowledgeItemBase, ORMReadModel):
     clinic_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
+
+
+class KnowledgeImportPreviewResponse(BaseModel):
+    """Extracted knowledge ready to preview before saving."""
+
+    title: str
+    category: KnowledgeCategory
+    content: str
+    source_type: Literal["pdf", "url"]
+    source: str
+    imported_at: datetime
+    import_status: str
+    character_count: int
+
+
+class KnowledgeUrlImportRequest(BaseModel):
+    """URL import request with editable metadata."""
+
+    url: str = Field(min_length=8, max_length=1000)
+    title: str | None = Field(default=None, max_length=240)
+    category: KnowledgeCategory = KnowledgeCategory.FAQ
+    priority: int = 0
+    is_active: bool = True
 
 
 class ConversationFlowBase(BaseModel):
@@ -695,6 +812,12 @@ class TestSessionMessageCreate(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
 
 
+class TestSessionTTSRequest(BaseModel):
+    """Text to synthesize for the browser test console."""
+
+    text: str = Field(min_length=1, max_length=4000)
+
+
 class TestToolTrace(BaseModel):
     """One tool execution exposed in the testing console."""
 
@@ -742,6 +865,7 @@ class TestSessionRead(BaseModel):
     state: TestExtractedState
     tool_calls: list[TestToolTrace]
     warnings: list[str]
+    is_closed: bool = False
     created_at: datetime
     updated_at: datetime
 

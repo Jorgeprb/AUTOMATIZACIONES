@@ -222,11 +222,86 @@ def test_dynamic_prompt_has_prices_knowledge_and_tenant_isolation(
     assert "Seguro" in prompt
     assert "Consulta en recepción la cobertura" in prompt
     assert "Luis" in prompt
+    assert f"service_id real={service.id}" in prompt
+    assert f"worker_id real={worker.id}" in prompt
+    assert "envía service_id y no envíes" in prompt
+    assert "duration_minutes solo cuando no tengas service_id" in prompt
+    assert "Nunca inventes worker_id ni service_id" in prompt
+    assert "No pidas frases exactas" in prompt
+    assert "aceptación natural" in prompt
     assert "Nunca inventes precios, servicios, trabajadores" in prompt
     assert "Llame al 112 ahora o acuda a urgencias" in prompt
+    assert "f1b2d3c4-5678-4abc-9def-1234567890ab" not in prompt
+    assert "c0ffeec0-0000-4000-8000-000000000001" not in prompt
     assert "Clínica Ajena Secreta" not in prompt
     assert "Servicio Ajeno Confidencial" not in prompt
     assert "CONTENIDO_AJENO_NO_DEBE_APARECER" not in prompt
     assert "secret-internal" not in prompt
     assert "SECRETO_INTERNO_NO_PROMPT" not in prompt
     assert "TOKEN_CIFRADO_NO_PROMPT" not in prompt
+
+
+def test_dynamic_prompt_respects_assistant_behavior_fields(
+    db_session: Session,
+) -> None:
+    """Configured behavior fields must change the rendered prompt."""
+    clinic = Clinic(
+        name="Clínica Configurable",
+        timezone="Europe/Madrid",
+        phone_number="+34910001003",
+    )
+    PhoneNumber(
+        clinic=clinic,
+        provider=PhoneProvider.VOIPSTUDIO,
+        phone_number="+34910001003",
+        label="Principal",
+    )
+    config = _assistant_config(clinic, name="Config avanzada")
+    config.tone = "comercial"
+    config.response_length = "corta"
+    config.max_proposed_slots = 1
+    config.allow_cancellations = False
+    config.use_prices = False
+    config.use_knowledge_base = False
+    config.strict_calendar_mode = True
+    config.no_availability_message = "No hay huecos en esa franja."
+    config.missing_calendar_message = "Falta calendario del profesional."
+    config.emergency_message = "Mensaje urgente personalizado."
+    config.human_transfer_message = "Le paso con recepción."
+    config.closing_message = "Gracias y hasta luego."
+    config.additional_instructions = "Sé comercial, pero breve."
+    config.forbidden_phrases = "garantizado al 100%"
+    Service(
+        clinic=clinic,
+        name="Servicio",
+        public_name="Servicio con precio",
+        price_amount=Decimal("25.00"),
+        duration_minutes=30,
+    )
+    KnowledgeItem(
+        clinic=clinic,
+        title="Dato ocultable",
+        category=KnowledgeCategory.CUSTOM,
+        content="Esto no debe entrar si knowledge está apagado.",
+    )
+    db_session.add(clinic)
+    db_session.commit()
+
+    context = resolve_clinic_by_called_number("+34910001003", session=db_session)
+    prompt = build_realtime_instructions(context)
+
+    assert "Tono configurado: comercial" in prompt
+    assert "Longitud de respuesta: corta" in prompt
+    assert "Propón como máximo 1 horarios" in prompt
+    assert "Cancelaciones permitidas: no" in prompt
+    assert "Uso de precios desactivado" in prompt
+    assert "25.00 EUR" not in prompt
+    assert "Base de conocimiento desactivada" in prompt
+    assert "Esto no debe entrar" not in prompt
+    assert "No hay huecos en esa franja" in prompt
+    assert "Falta calendario del profesional" in prompt
+    assert "Mensaje urgente personalizado" in prompt
+    assert "Le paso con recepción" in prompt
+    assert "Gracias y hasta luego" in prompt
+    assert "Sé comercial" in prompt
+    assert "garantizado al 100%" in prompt

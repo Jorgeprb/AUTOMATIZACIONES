@@ -399,6 +399,10 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "conversation_retention_days BETWEEN 1 AND 3650",
             name="valid_retention_days",
         ),
+        CheckConstraint(
+            "max_proposed_slots BETWEEN 1 AND 10",
+            name="valid_assistant_max_proposed_slots",
+        ),
     )
 
     clinic_id: Mapped[uuid.UUID] = mapped_column(
@@ -425,6 +429,97 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     booking_policy_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     cancellation_policy_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     transfer_policy_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    tone: Mapped[str] = mapped_column(
+        String(32),
+        server_default=text("'profesional'"),
+        default="profesional",
+        nullable=False,
+    )
+    response_length: Mapped[str] = mapped_column(
+        String(32),
+        server_default=text("'normal'"),
+        default="normal",
+        nullable=False,
+    )
+    ask_patient_name: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    ask_patient_phone: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    ask_general_reason: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    allow_booking_without_worker: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    max_proposed_slots: Mapped[int] = mapped_column(
+        Integer,
+        server_default=text("3"),
+        default=3,
+        nullable=False,
+    )
+    allow_cancellations: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    allow_reschedules: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    natural_confirmation_required: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    avoid_exact_confirmation_phrases: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    additional_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    forbidden_phrases: Mapped[str | None] = mapped_column(Text, nullable=True)
+    no_availability_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    missing_calendar_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    emergency_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    human_transfer_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    closing_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    use_prices: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    use_knowledge_base: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    strict_calendar_mode: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
     transcript_enabled: Mapped[bool] = mapped_column(
         Boolean,
         server_default=text("false"),
@@ -485,6 +580,23 @@ class KnowledgeItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_type: Mapped[str] = mapped_column(
+        String(32),
+        server_default=text("'manual'"),
+        default="manual",
+        nullable=False,
+    )
+    source: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    imported_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    import_status: Mapped[str] = mapped_column(
+        String(32),
+        server_default=text("'manual'"),
+        default="manual",
+        nullable=False,
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         server_default=text("true"),

@@ -450,6 +450,7 @@ y se configuran localmente con:
 ```dotenv
 OPENAI_REALTIME_MODELS=gpt-realtime-2
 OPENAI_REALTIME_VOICES=marin,cedar,alloy,ash,ballad,coral,echo,sage,shimmer,verse
+OPENAI_TTS_MODEL=gpt-4o-mini-tts
 ```
 
 OpenAI recomienda `marin` y `cedar` para mejor calidad. No existe una voz
@@ -459,6 +460,18 @@ se dirigen mediante `language` y las instrucciones.
 La transcripción se aplica a nuevas llamadas según la configuración activa.
 La preferencia de grabación se persiste en `CallSession`, pero este MVP aún no
 captura ni almacena audio.
+
+La consola de prueba puede generar audio TTS por cada respuesta del asistente
+usando la voz configurada en `AssistantConfig`. El audio se descarga como blob
+finito, se reproduce en el navegador y se detiene al finalizar el chat.
+
+### Knowledge importado
+
+Los elementos de conocimiento pueden crearse manualmente o importarse desde PDF
+y URL. Los imports guardan `source_type`, `source`, `imported_at` e
+`import_status`. El backend limita PDF a 5 MB, URL a 1 MB y recorta el texto
+extraído a un tamaño seguro para el prompt. Solo los elementos activos entran en
+`prompt_builder`.
 
 Referencias oficiales:
 

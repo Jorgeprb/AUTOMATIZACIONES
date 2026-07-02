@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     )
     test_console_engine: Literal["simulator", "openai"] = "simulator"
     test_console_model: str = "gpt-5.4-mini"
+    openai_tts_model: str = "gpt-4o-mini-tts"
 
     public_base_url: str
     frontend_base_url: str = "http://localhost:5173"

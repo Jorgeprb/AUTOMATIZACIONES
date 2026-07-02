@@ -120,21 +120,16 @@ def _book_first_slot(
     simulator: SimulationEngine,
     clinic: Clinic,
 ) -> tuple[uuid.UUID, uuid.UUID]:
-    """Run request, selection, and explicit confirmation."""
+    """Run request and natural slot selection."""
     first = simulator.turn(_appointment_request(), clinic_id=clinic.id)
     assert first.action == "slots_proposed"
-    chosen = simulator.turn(
-        "Elijo la primera opción",
-        call_session_id=first.call_session_id,
-    )
-    assert chosen.action == "confirmation_requested"
     confirmed = simulator.turn(
-        "Sí, confirmo",
+        "Elijo la primera opción",
         call_session_id=first.call_session_id,
     )
     assert confirmed.action == "appointment_created"
     return first.call_session_id, uuid.UUID(
-        str(confirmed.tool_calls[0]["result"]["appointment_id"])
+        str(confirmed.tool_calls[-1]["result"]["appointment_id"])
     )
 
 
@@ -157,16 +152,8 @@ def test_create_appointment_with_ana_tomorrow_morning(
         "Elijo la primera",
         call_session_id=first.call_session_id,
     )
-    assert selected.awaiting_confirmation
-    with _factory(database_engine)() as session:
-        assert session.scalar(select(func.count()).select_from(Appointment)) == 0
 
-    confirmed = simulator.turn(
-        "Sí, confirmo",
-        call_session_id=first.call_session_id,
-    )
-
-    assert confirmed.action == "appointment_created"
+    assert selected.action == "appointment_created"
     with _factory(database_engine)() as session:
         appointment = session.scalar(select(Appointment))
         assert appointment is not None
@@ -176,7 +163,7 @@ def test_create_appointment_with_ana_tomorrow_morning(
         assert appointment.call_session_id == first.call_session_id
         event_count = session.scalar(select(func.count()).select_from(CallEvent))
         assert event_count is not None
-        assert event_count >= 6
+        assert event_count >= 5
     assert ana.calendar_id is not None
     assert len(backend.list_events(ana.calendar_id)) == 1
 
@@ -223,21 +210,58 @@ def test_when_both_are_busy_simulator_proposes_another_day(
     assert result.proposed_slots[0].start_at.date() > TOMORROW
 
 
-def test_simulator_never_books_without_confirmation(
+def test_simulator_books_after_natural_time_choice_and_patient_data(
     db_session: Session,
     database_engine: Engine,
 ) -> None:
-    """Selecting a slot is not enough to create an appointment."""
+    """A natural time acceptance plus missing data should create the booking."""
     clinic, _, _, _ = _domain(db_session)
     simulator, _ = _simulator(database_engine)
-    first = simulator.turn(_appointment_request(), clinic_id=clinic.id)
+    first = simulator.turn(
+        "Quiero cita mañana por la mañana",
+        clinic_id=clinic.id,
+    )
+    assert first.action == "slots_proposed"
 
-    result = simulator.turn(
-        "Elijo la primera",
+    selected = simulator.turn(
+        "A las 9",
+        call_session_id=first.call_session_id,
+    )
+    assert selected.action == "request_patient_data"
+    assert selected.awaiting_confirmation
+
+    confirmed = simulator.turn(
+        "Soy Jorge y mi teléfono es 666123123",
         call_session_id=first.call_session_id,
     )
 
-    assert result.action == "confirmation_requested"
+    assert confirmed.action == "appointment_created"
+    assert "te reservo" in confirmed.reply
+    with _factory(database_engine)() as session:
+        appointment = session.scalar(select(Appointment))
+        assert appointment is not None
+        assert appointment.patient_name == "Jorge"
+        assert appointment.patient_phone == "666123123"
+
+
+def test_simulator_does_not_book_patient_data_without_slot_acceptance(
+    db_session: Session,
+    database_engine: Engine,
+) -> None:
+    """Patient data alone is not a slot acceptance."""
+    clinic, _, _, _ = _domain(db_session)
+    simulator, _ = _simulator(database_engine)
+    first = simulator.turn(
+        "Quiero cita mañana por la mañana",
+        clinic_id=clinic.id,
+    )
+
+    result = simulator.turn(
+        "Soy Jorge y mi teléfono es 666123123",
+        call_session_id=first.call_session_id,
+    )
+
+    assert result.action == "request_slot_selection"
     with _factory(database_engine)() as session:
         assert session.scalar(select(func.count()).select_from(Appointment)) == 0
 
