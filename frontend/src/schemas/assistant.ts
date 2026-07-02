@@ -5,6 +5,30 @@ export const assistantConfigFormSchema = z.object({
   is_active: z.boolean(),
   realtime_model: z.string().trim().min(1, "El modelo es obligatorio"),
   realtime_voice: z.string().trim().min(1, "La voz es obligatoria"),
+  voice_instructions: z.string(),
+  voice_preset: z.string(),
+  tts_preview_voice: z.string(),
+  fallback_voice: z.string(),
+  speech_speed: z.enum(["slow", "normal", "fast"]),
+  pause_style: z.enum(["short", "natural", "slow"]),
+  phone_reading_style: z.enum(["digits", "groups", "natural"]),
+  date_reading_style: z.enum(["natural", "numeric"]),
+  price_reading_style: z.enum(["brief", "clear", "detailed"]),
+  allow_interruptions: z.boolean(),
+  idle_timeout_ms: z
+    .string()
+    .trim()
+    .refine(
+      (value) =>
+        value === "" ||
+        (Number.isInteger(Number(value)) &&
+          Number(value) >= 1000 &&
+          Number(value) <= 60000),
+      "El timeout debe estar entre 1000 y 60000 ms",
+    ),
+  ai_disclosure_enabled: z.boolean(),
+  ai_disclosure_message: z.string(),
+  preview_audio_format: z.enum(["mp3", "wav", "opus"]),
   language: z.string().trim().min(2, "El idioma es obligatorio").max(16),
   temperature: z
     .string()
@@ -81,8 +105,9 @@ export type AssistantConfigFormValues = z.infer<
 >;
 
 export interface AssistantConfigPayload
-  extends Omit<AssistantConfigFormValues, "temperature"> {
+  extends Omit<AssistantConfigFormValues, "temperature" | "idle_timeout_ms"> {
   temperature: string | null;
+  idle_timeout_ms: number | null;
 }
 
 export const assistantConfigDefaults: AssistantConfigFormValues = {
@@ -90,6 +115,21 @@ export const assistantConfigDefaults: AssistantConfigFormValues = {
   is_active: false,
   realtime_model: "gpt-realtime-2",
   realtime_voice: "marin",
+  voice_instructions:
+    "Habla con voz clara, amable y tranquila. Sonríe al hablar, evita sonar robótico y marca bien nombres, horas y teléfonos.",
+  voice_preset: "Recepcionista clínica formal",
+  tts_preview_voice: "",
+  fallback_voice: "",
+  speech_speed: "normal",
+  pause_style: "natural",
+  phone_reading_style: "groups",
+  date_reading_style: "natural",
+  price_reading_style: "clear",
+  allow_interruptions: true,
+  idle_timeout_ms: "",
+  ai_disclosure_enabled: true,
+  ai_disclosure_message: "Soy un asistente virtual de la clínica.",
+  preview_audio_format: "mp3",
   language: "es-ES",
   temperature: "",
   first_message:
@@ -157,6 +197,141 @@ export const assistantTemplateNames = [
 ] as const;
 
 export type AssistantTemplateName = (typeof assistantTemplateNames)[number];
+
+export const voicePresetNames = [
+  "Recepcionista clínica formal",
+  "Recepcionista cercana",
+  "Peluquería/estética",
+  "Clínica dental",
+  "Fisioterapia",
+  "Psicología",
+  "Centralita breve",
+  "Comercial suave",
+] as const;
+
+export type VoicePresetName = (typeof voicePresetNames)[number];
+
+const voicePresets: Record<
+  VoicePresetName,
+  Pick<
+    AssistantConfigFormValues,
+    | "voice_instructions"
+    | "voice_preset"
+    | "speech_speed"
+    | "pause_style"
+    | "phone_reading_style"
+    | "date_reading_style"
+    | "price_reading_style"
+    | "allow_interruptions"
+    | "ai_disclosure_enabled"
+    | "ai_disclosure_message"
+  >
+> = {
+  "Recepcionista clínica formal": {
+    voice_preset: "Recepcionista clínica formal",
+    voice_instructions:
+      "Tono profesional, claro y calmado. Vocaliza bien por teléfono y confirma datos sensibles con naturalidad.",
+    speech_speed: "normal",
+    pause_style: "natural",
+    phone_reading_style: "groups",
+    date_reading_style: "natural",
+    price_reading_style: "clear",
+    allow_interruptions: true,
+    ai_disclosure_enabled: true,
+    ai_disclosure_message: "Soy un asistente virtual de la clínica.",
+  },
+  "Recepcionista cercana": {
+    voice_preset: "Recepcionista cercana",
+    voice_instructions:
+      "Tono cálido, humano y cercano. Frases cortas, sonrisa en la voz y cero rigidez.",
+    speech_speed: "normal",
+    pause_style: "natural",
+    phone_reading_style: "natural",
+    date_reading_style: "natural",
+    price_reading_style: "clear",
+    allow_interruptions: true,
+    ai_disclosure_enabled: true,
+    ai_disclosure_message: "Soy un asistente virtual, te ayudo con información y citas.",
+  },
+  "Peluquería/estética": {
+    voice_preset: "Peluquería/estética",
+    voice_instructions:
+      "Tono ágil, amable y comercial suave. Suena como recepción de salón, cercana y resolutiva.",
+    speech_speed: "fast",
+    pause_style: "short",
+    phone_reading_style: "groups",
+    date_reading_style: "natural",
+    price_reading_style: "brief",
+    allow_interruptions: true,
+    ai_disclosure_enabled: true,
+    ai_disclosure_message: "Soy el asistente virtual del centro.",
+  },
+  "Clínica dental": {
+    voice_preset: "Clínica dental",
+    voice_instructions:
+      "Tono sereno, profesional y tranquilizador. Evita dramatizar molestias y ofrece ayuda con citas.",
+    speech_speed: "normal",
+    pause_style: "natural",
+    phone_reading_style: "groups",
+    date_reading_style: "natural",
+    price_reading_style: "clear",
+    allow_interruptions: true,
+    ai_disclosure_enabled: true,
+    ai_disclosure_message: "Soy un asistente virtual de la clínica dental.",
+  },
+  Fisioterapia: {
+    voice_preset: "Fisioterapia",
+    voice_instructions:
+      "Tono cercano y seguro. Recoge motivo general sin sonar clínico ni dar indicaciones médicas.",
+    speech_speed: "normal",
+    pause_style: "natural",
+    phone_reading_style: "groups",
+    date_reading_style: "natural",
+    price_reading_style: "clear",
+    allow_interruptions: true,
+    ai_disclosure_enabled: true,
+    ai_disclosure_message: "Soy un asistente virtual del centro.",
+  },
+  Psicología: {
+    voice_preset: "Psicología",
+    voice_instructions:
+      "Tono pausado, respetuoso y discreto. Evita presión comercial y cuida la privacidad.",
+    speech_speed: "slow",
+    pause_style: "slow",
+    phone_reading_style: "groups",
+    date_reading_style: "natural",
+    price_reading_style: "clear",
+    allow_interruptions: true,
+    ai_disclosure_enabled: true,
+    ai_disclosure_message: "Soy un asistente virtual del centro.",
+  },
+  "Centralita breve": {
+    voice_preset: "Centralita breve",
+    voice_instructions:
+      "Tono muy breve y operativo. Responde rápido, resume y deriva cuando toque.",
+    speech_speed: "fast",
+    pause_style: "short",
+    phone_reading_style: "digits",
+    date_reading_style: "numeric",
+    price_reading_style: "brief",
+    allow_interruptions: true,
+    ai_disclosure_enabled: true,
+    ai_disclosure_message: "Soy un asistente virtual.",
+  },
+  "Comercial suave": {
+    voice_preset: "Comercial suave",
+    voice_instructions:
+      "Tono amable y proactivo, sin presión. Ayuda a cerrar una cita cuando el usuario muestra interés.",
+    speech_speed: "normal",
+    pause_style: "natural",
+    phone_reading_style: "natural",
+    date_reading_style: "natural",
+    price_reading_style: "detailed",
+    allow_interruptions: true,
+    ai_disclosure_enabled: true,
+    ai_disclosure_message: "Soy un asistente virtual del centro.",
+  },
+};
 
 const templatePrompts: Record<
   AssistantTemplateName,
@@ -338,5 +513,15 @@ export function applyAssistantTemplate(
   return {
     ...current,
     ...templatePrompts[template],
+  };
+}
+
+export function applyVoicePreset(
+  current: AssistantConfigFormValues,
+  preset: VoicePresetName,
+): AssistantConfigFormValues {
+  return {
+    ...current,
+    ...voicePresets[preset],
   };
 }

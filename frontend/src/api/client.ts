@@ -119,5 +119,6 @@ export function getHealth(): Promise<HealthResponse> {
 
 export const apiConfig = {
   baseUrl: apiBaseUrl,
+  adminApiKey,
   hasAdminKey: Boolean(adminApiKey),
 };

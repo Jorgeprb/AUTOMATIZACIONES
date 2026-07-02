@@ -24,6 +24,7 @@ from app.models import (
     Service,
     Worker,
 )
+from app.voice_profile import build_voice_instruction_block
 
 
 class ClinicContextError(LookupError):
@@ -338,6 +339,7 @@ def build_realtime_instructions(context: ClinicContext) -> str:
     response_length = _clean(config.response_length) or "normal"
     max_slots = max(1, min(int(config.max_proposed_slots), 10))
     conversation_policy = conversation_policy_from_config(config)
+    voice_instruction_block = build_voice_instruction_block(config)
 
     service_lines = []
     for service in context.services:
@@ -486,6 +488,8 @@ Tono configurado: {tone}. Longitud de respuesta: {response_length}.
 Habla de forma natural, breve y comercial cuando encaje, adecuada para una llamada.
 Debes avisar al inicio de que eres un asistente virtual.
 Primer mensaje configurado: "{_clean(config.first_message)}"
+
+{voice_instruction_block}
 
 # Instrucciones de la clínica
 

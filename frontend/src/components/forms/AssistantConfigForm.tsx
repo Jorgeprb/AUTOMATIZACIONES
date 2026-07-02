@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Bot,
   CheckCircle2,
+  Mic2,
   Pause,
   Play,
   RefreshCcw,
@@ -14,7 +15,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
-import { previewAssistantVoice } from "@/api/assistants";
+import {
+  closeRealtimePreviewSession,
+  closeRealtimePreviewSessionKeepalive,
+  createRealtimePreviewSession,
+  heartbeatRealtimePreviewSession,
+  previewAssistantVoice,
+  sendRealtimePreviewToolCall,
+} from "@/api/assistants";
 import { FormSection } from "@/components/common/FormSection";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,11 +31,15 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   applyAssistantTemplate,
+  applyVoicePreset,
   assistantConfigDefaults,
   assistantConfigFormSchema,
   assistantTemplateNames,
+  voicePresetNames,
   type AssistantConfigFormValues,
+  type AssistantConfigPayload,
   type AssistantTemplateName,
+  type VoicePresetName,
 } from "@/schemas/assistant";
 import type { AssistantOptions } from "@/schemas/domain";
 
@@ -38,8 +50,7 @@ function FieldError({ message }: { message?: string }) {
 }
 
 type AssistantConfigTab =
-  | "basic"
-  | "voice"
+  | "settings"
   | "conversation"
   | "prompt"
   | "booking"
@@ -52,8 +63,7 @@ const assistantConfigTabs: Array<{
   label: string;
   help: string;
 }> = [
-  { id: "basic", label: "Básico", help: "Identidad y saludo" },
-  { id: "voice", label: "Voz y modelo", help: "Modelo, voz y prueba" },
+  { id: "settings", label: "Ajustes", help: "Básico, modelo y voz" },
   { id: "conversation", label: "Comportamiento", help: "Naturalidad y control" },
   { id: "prompt", label: "Prompt", help: "Prompt general" },
   { id: "booking", label: "Reservas", help: "Datos y agenda" },
@@ -62,8 +72,49 @@ const assistantConfigTabs: Array<{
   { id: "preview", label: "Preview", help: "Vista final" },
 ];
 
+type RealtimePreviewStatus =
+  | "idle"
+  | "connecting"
+  | "listening"
+  | "speaking"
+  | "error"
+  | "closed";
+
+function speechSpeedToNumber(value: AssistantConfigFormValues["speech_speed"]) {
+  if (value === "slow") return "0.85";
+  if (value === "fast") return "1.15";
+  return "1";
+}
+
+function speechSpeedFromNumber(value: number): AssistantConfigFormValues["speech_speed"] {
+  if (value <= 0.9) return "slow";
+  if (value >= 1.1) return "fast";
+  return "normal";
+}
+
+function pauseStyleToNumber(value: AssistantConfigFormValues["pause_style"]) {
+  if (value === "short") return "0.7";
+  if (value === "slow") return "1.4";
+  return "1";
+}
+
+function pauseStyleFromNumber(value: number): AssistantConfigFormValues["pause_style"] {
+  if (value <= 0.85) return "short";
+  if (value >= 1.2) return "slow";
+  return "natural";
+}
+
+function buildConfigPayload(values: AssistantConfigFormValues): AssistantConfigPayload {
+  return {
+    ...values,
+    temperature: values.temperature || null,
+    idle_timeout_ms: values.idle_timeout_ms ? Number(values.idle_timeout_ms) : null,
+  };
+}
+
 export function AssistantConfigForm({
   clinicId,
+  assistantConfigId,
   options,
   defaultValues = assistantConfigDefaults,
   contextWarnings = [],
@@ -72,6 +123,7 @@ export function AssistantConfigForm({
   isPending,
 }: {
   clinicId: string;
+  assistantConfigId?: string | null;
   options: AssistantOptions;
   defaultValues?: AssistantConfigFormValues;
   contextWarnings?: string[];
@@ -84,6 +136,7 @@ export function AssistantConfigForm({
     handleSubmit,
     reset,
     getValues,
+    setValue,
     watch,
     formState: { errors },
   } = useForm<AssistantConfigFormValues>({
@@ -94,8 +147,22 @@ export function AssistantConfigForm({
   const systemPrompt = watch("system_prompt");
   const realtimeVoice = watch("realtime_voice");
   const realtimeModel = watch("realtime_model");
+  const ttsPreviewVoice = watch("tts_preview_voice");
+  const fallbackVoice = watch("fallback_voice");
+  const voicePreset = watch("voice_preset");
+  const voiceInstructions = watch("voice_instructions");
+  const speechSpeed = watch("speech_speed");
+  const pauseStyle = watch("pause_style");
+  const phoneReadingStyle = watch("phone_reading_style");
+  const dateReadingStyle = watch("date_reading_style");
+  const priceReadingStyle = watch("price_reading_style");
+  const allowInterruptions = watch("allow_interruptions");
+  const idleTimeoutMs = watch("idle_timeout_ms");
+  const aiDisclosureEnabled = watch("ai_disclosure_enabled");
+  const aiDisclosureMessage = watch("ai_disclosure_message");
+  const previewAudioFormat = watch("preview_audio_format");
   const maxPromptLength = 12000;
-  const [activeTab, setActiveTab] = useState<AssistantConfigTab>("basic");
+  const [activeTab, setActiveTab] = useState<AssistantConfigTab>("settings");
   const [voicePreviewText, setVoicePreviewText] = useState(
     "Hola, soy el asistente virtual. ¿En qué puedo ayudarle?",
   );
@@ -103,9 +170,24 @@ export function AssistantConfigForm({
     "idle" | "generating" | "playing" | "paused"
   >("idle");
   const [voicePreviewError, setVoicePreviewError] = useState("");
+  const [comparisonVoices, setComparisonVoices] = useState<string[]>([]);
+  const [voiceSamples, setVoiceSamples] = useState<
+    Array<{ voice: string; url: string }>
+  >([]);
+  const [realtimeStatus, setRealtimeStatus] =
+    useState<RealtimePreviewStatus>("idle");
+  const [realtimeError, setRealtimeError] = useState("");
+  const [realtimeSessionId, setRealtimeSessionId] = useState<string | null>(null);
   const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
   const voiceAudioUrlRef = useRef<string | null>(null);
+  const voiceSampleUrlsRef = useRef<string[]>([]);
   const voiceAbortRef = useRef<AbortController | null>(null);
+  const realtimePeerRef = useRef<RTCPeerConnection | null>(null);
+  const realtimeDataChannelRef = useRef<RTCDataChannel | null>(null);
+  const realtimeStreamRef = useRef<MediaStream | null>(null);
+  const realtimeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const realtimeSessionIdRef = useRef<string | null>(null);
+  const realtimeHeartbeatRef = useRef<number | null>(null);
   const checklist = [
     {
       label: "Trabajadores activos",
@@ -138,6 +220,53 @@ export function AssistantConfigForm({
 
   useEffect(() => reset(defaultValues), [defaultValues, reset]);
 
+  const clearVoiceSamples = useCallback(() => {
+    for (const url of voiceSampleUrlsRef.current) URL.revokeObjectURL(url);
+    voiceSampleUrlsRef.current = [];
+    setVoiceSamples([]);
+  }, []);
+
+  const buildVoicePreviewPayload = useCallback(
+    (voiceOverride?: string) => ({
+      text: voicePreviewText.trim(),
+      realtime_voice: realtimeVoice,
+      realtime_model: realtimeModel,
+      tts_preview_voice: (voiceOverride ?? ttsPreviewVoice) || null,
+      fallback_voice: fallbackVoice || null,
+      voice_preset: voicePreset || null,
+      voice_instructions: voiceInstructions || null,
+      speech_speed: speechSpeed,
+      pause_style: pauseStyle,
+      phone_reading_style: phoneReadingStyle,
+      date_reading_style: dateReadingStyle,
+      price_reading_style: priceReadingStyle,
+      allow_interruptions: allowInterruptions,
+      idle_timeout_ms: idleTimeoutMs ? Number(idleTimeoutMs) : null,
+      ai_disclosure_enabled: aiDisclosureEnabled,
+      ai_disclosure_message: aiDisclosureMessage || null,
+      preview_audio_format: previewAudioFormat,
+    }),
+    [
+      aiDisclosureEnabled,
+      aiDisclosureMessage,
+      allowInterruptions,
+      dateReadingStyle,
+      fallbackVoice,
+      idleTimeoutMs,
+      pauseStyle,
+      phoneReadingStyle,
+      previewAudioFormat,
+      priceReadingStyle,
+      realtimeModel,
+      realtimeVoice,
+      speechSpeed,
+      ttsPreviewVoice,
+      voiceInstructions,
+      voicePreset,
+      voicePreviewText,
+    ],
+  );
+
   const stopVoicePreview = useCallback(() => {
     voiceAbortRef.current?.abort();
     voiceAbortRef.current = null;
@@ -145,10 +274,119 @@ export function AssistantConfigForm({
     voiceAudioRef.current = null;
     if (voiceAudioUrlRef.current) URL.revokeObjectURL(voiceAudioUrlRef.current);
     voiceAudioUrlRef.current = null;
+    clearVoiceSamples();
     setVoicePreviewStatus("idle");
-  }, []);
+  }, [clearVoiceSamples]);
 
   useEffect(() => stopVoicePreview, [stopVoicePreview]);
+
+  const stopRealtimePreview = useCallback(
+    (reason = "closed_by_browser") => {
+      const sessionId = realtimeSessionIdRef.current;
+      if (realtimeHeartbeatRef.current !== null) {
+        window.clearInterval(realtimeHeartbeatRef.current);
+        realtimeHeartbeatRef.current = null;
+      }
+      realtimeDataChannelRef.current?.close();
+      realtimeDataChannelRef.current = null;
+      realtimePeerRef.current?.getSenders().forEach((sender) => {
+        sender.track?.stop();
+      });
+      realtimePeerRef.current?.close();
+      realtimePeerRef.current = null;
+      realtimeStreamRef.current?.getTracks().forEach((track) => track.stop());
+      realtimeStreamRef.current = null;
+      realtimeAudioRef.current?.pause();
+      realtimeAudioRef.current = null;
+      realtimeSessionIdRef.current = null;
+      setRealtimeSessionId(null);
+      if (sessionId) {
+        if (reason === "page_unload") {
+          closeRealtimePreviewSessionKeepalive(sessionId);
+        } else {
+          void closeRealtimePreviewSession(sessionId).catch(() => undefined);
+        }
+      }
+      setRealtimeStatus("closed");
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const handleUnload = () => stopRealtimePreview("page_unload");
+    window.addEventListener("beforeunload", handleUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleUnload);
+      stopRealtimePreview("component_unmount");
+    };
+  }, [stopRealtimePreview]);
+
+  const sendRealtimeToolOutput = useCallback(
+    async (
+      sessionId: string,
+      dataChannel: RTCDataChannel,
+      payload: { name: string; call_id: string; arguments: Record<string, unknown> },
+    ) => {
+      const result = await sendRealtimePreviewToolCall(sessionId, payload);
+      dataChannel.send(
+        JSON.stringify({
+          type: "conversation.item.create",
+          item: {
+            type: "function_call_output",
+            call_id: result.call_id,
+            output: JSON.stringify(result.output),
+          },
+        }),
+      );
+      dataChannel.send(JSON.stringify({ type: "response.create" }));
+    },
+    [],
+  );
+
+  const handleRealtimeEvent = useCallback(
+    (event: MessageEvent<string>) => {
+      let payload: Record<string, unknown>;
+      try {
+        payload = JSON.parse(event.data) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      const type = String(payload.type ?? "");
+      if (type.includes("speech_started")) setRealtimeStatus("listening");
+      if (type.startsWith("response.audio") || type.includes("output_audio")) {
+        setRealtimeStatus("speaking");
+      }
+      if (type === "response.done") setRealtimeStatus("listening");
+      if (type === "error") {
+        setRealtimeError("OpenAI Realtime devolvió un error.");
+        setRealtimeStatus("error");
+      }
+      if (type !== "response.function_call_arguments.done") return;
+      const sessionId = realtimeSessionIdRef.current;
+      const dataChannel = realtimeDataChannelRef.current;
+      const name = String(payload.name ?? "");
+      const callId = String(payload.call_id ?? "");
+      const rawArguments = String(payload.arguments ?? "{}");
+      if (!sessionId || !dataChannel || !name || !callId) return;
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(rawArguments) as Record<string, unknown>;
+      } catch {
+        args = {};
+      }
+      void sendRealtimeToolOutput(sessionId, dataChannel, {
+        name,
+        call_id: callId,
+        arguments: args,
+      }).catch((error: unknown) => {
+        const message =
+          error instanceof Error ? error.message : "La tool de prueba falló.";
+        setRealtimeError(message);
+        setRealtimeStatus("error");
+      });
+    },
+    [sendRealtimeToolOutput],
+  );
 
   const playVoiceAudio = useCallback(async (audio: HTMLAudioElement) => {
     try {
@@ -170,6 +408,7 @@ export function AssistantConfigForm({
     }
     voiceAbortRef.current?.abort();
     voiceAudioRef.current?.pause();
+    clearVoiceSamples();
     if (voiceAudioUrlRef.current) URL.revokeObjectURL(voiceAudioUrlRef.current);
     voiceAudioRef.current = null;
     voiceAudioUrlRef.current = null;
@@ -180,11 +419,7 @@ export function AssistantConfigForm({
     try {
       const blob = await previewAssistantVoice(
         clinicId,
-        {
-          text,
-          realtime_voice: realtimeVoice,
-          realtime_model: realtimeModel,
-        },
+        buildVoicePreviewPayload(),
         controller.signal,
       );
       const url = URL.createObjectURL(blob);
@@ -206,7 +441,13 @@ export function AssistantConfigForm({
     } finally {
       if (voiceAbortRef.current === controller) voiceAbortRef.current = null;
     }
-  }, [clinicId, playVoiceAudio, realtimeModel, realtimeVoice, voicePreviewText]);
+  }, [
+    buildVoicePreviewPayload,
+    clearVoiceSamples,
+    clinicId,
+    playVoiceAudio,
+    voicePreviewText,
+  ]);
 
   const handleToggleVoiceAudio = useCallback(() => {
     const audio = voiceAudioRef.current;
@@ -225,8 +466,183 @@ export function AssistantConfigForm({
     void playVoiceAudio(audio);
   }, [playVoiceAudio]);
 
+  const handleToggleRealtimePreview = useCallback(async () => {
+    if (
+      realtimeStatus === "connecting" ||
+      realtimeStatus === "listening" ||
+      realtimeStatus === "speaking"
+    ) {
+      stopRealtimePreview("button_stop");
+      return;
+    }
+    stopVoicePreview();
+    setRealtimeError("");
+    setRealtimeStatus("connecting");
+    try {
+      const values = getValues();
+      const preview = await createRealtimePreviewSession(clinicId, {
+        assistant_config_id: assistantConfigId ?? null,
+        config: buildConfigPayload(values),
+      });
+      realtimeSessionIdRef.current = preview.id;
+      setRealtimeSessionId(preview.id);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      realtimeStreamRef.current = stream;
+      const peer = new RTCPeerConnection();
+      realtimePeerRef.current = peer;
+      for (const track of stream.getTracks()) peer.addTrack(track, stream);
+      const audio = new Audio();
+      audio.autoplay = true;
+      realtimeAudioRef.current = audio;
+      peer.ontrack = (event) => {
+        const [remoteStream] = event.streams;
+        if (remoteStream) {
+          audio.srcObject = remoteStream;
+          void audio.play().catch(() => undefined);
+        }
+      };
+      const dataChannel = peer.createDataChannel("oai-events");
+      realtimeDataChannelRef.current = dataChannel;
+      dataChannel.onmessage = handleRealtimeEvent;
+      dataChannel.onopen = () => {
+        dataChannel.send(
+          JSON.stringify({
+            type: "response.create",
+            response: { instructions: preview.initial_message },
+          }),
+        );
+        setRealtimeStatus("listening");
+      };
+      dataChannel.onerror = () => {
+        setRealtimeError("Error en el canal Realtime.");
+        setRealtimeStatus("error");
+      };
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      const answerResponse = await fetch(
+        `https://api.openai.com/v1/realtime?model=${encodeURIComponent(preview.model)}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${preview.client_secret}`,
+            "Content-Type": "application/sdp",
+          },
+          body: offer.sdp ?? "",
+        },
+      );
+      if (!answerResponse.ok) {
+        throw new Error("OpenAI no aceptó la conexión WebRTC de prueba.");
+      }
+      const answer = await answerResponse.text();
+      await peer.setRemoteDescription({ type: "answer", sdp: answer });
+      realtimeHeartbeatRef.current = window.setInterval(() => {
+        const sessionId = realtimeSessionIdRef.current;
+        if (!sessionId) return;
+        void heartbeatRealtimePreviewSession(sessionId).catch(() => {
+          stopRealtimePreview("heartbeat_failed");
+          setRealtimeError("La sesión de prueba expiró.");
+          setRealtimeStatus("error");
+        });
+      }, 25_000);
+    } catch (error) {
+      stopRealtimePreview("start_failed");
+      const message =
+        error instanceof Error
+          ? error.message
+          : "No se pudo abrir la prueba Realtime.";
+      setRealtimeError(message);
+      setRealtimeStatus("error");
+      toast.error(message);
+    }
+  }, [
+    assistantConfigId,
+    clinicId,
+    getValues,
+    handleRealtimeEvent,
+    realtimeStatus,
+    stopRealtimePreview,
+    stopVoicePreview,
+  ]);
+
+  const handlePlaySample = useCallback(
+    (url: string) => {
+      voiceAudioRef.current?.pause();
+      voiceAudioUrlRef.current = null;
+      const audio = new Audio(url);
+      audio.onended = () => setVoicePreviewStatus("idle");
+      audio.onpause = () => {
+        if (!audio.ended) setVoicePreviewStatus("paused");
+      };
+      voiceAudioRef.current = audio;
+      void playVoiceAudio(audio);
+    },
+    [playVoiceAudio],
+  );
+
+  const handleCompareVoices = useCallback(async () => {
+    const text = voicePreviewText.trim();
+    const voices = comparisonVoices.length
+      ? comparisonVoices
+      : [ttsPreviewVoice || realtimeVoice];
+    const uniqueVoices = Array.from(new Set(voices.filter(Boolean)));
+    if (!text || uniqueVoices.length === 0) {
+      setVoicePreviewError("Escribe una frase y elige al menos una voz.");
+      return;
+    }
+    voiceAbortRef.current?.abort();
+    voiceAudioRef.current?.pause();
+    if (voiceAudioUrlRef.current) URL.revokeObjectURL(voiceAudioUrlRef.current);
+    voiceAudioUrlRef.current = null;
+    clearVoiceSamples();
+    const controller = new AbortController();
+    voiceAbortRef.current = controller;
+    setVoicePreviewStatus("generating");
+    setVoicePreviewError("");
+    const generated: Array<{ voice: string; url: string }> = [];
+    try {
+      for (const voice of uniqueVoices) {
+        const blob = await previewAssistantVoice(
+          clinicId,
+          buildVoicePreviewPayload(voice),
+          controller.signal,
+        );
+        const url = URL.createObjectURL(blob);
+        generated.push({ voice, url });
+      }
+      voiceSampleUrlsRef.current = generated.map((sample) => sample.url);
+      setVoiceSamples(generated);
+      if (generated[0]) handlePlaySample(generated[0].url);
+      else setVoicePreviewStatus("idle");
+    } catch (error) {
+      for (const sample of generated) URL.revokeObjectURL(sample.url);
+      if (error instanceof Error && error.name === "AbortError") return;
+      const message =
+        error instanceof Error ? error.message : "No se pudo comparar voces.";
+      setVoicePreviewError(message);
+      setVoicePreviewStatus("idle");
+      toast.error(message);
+    } finally {
+      if (voiceAbortRef.current === controller) voiceAbortRef.current = null;
+    }
+  }, [
+    buildVoicePreviewPayload,
+    clearVoiceSamples,
+    clinicId,
+    comparisonVoices,
+    handlePlaySample,
+    realtimeVoice,
+    ttsPreviewVoice,
+    voicePreviewText,
+  ]);
+
+  const handleFormSubmit = handleSubmit(async (values) => {
+    stopVoicePreview();
+    stopRealtimePreview("save");
+    await onSubmit(values);
+  });
+
   return (
-    <form className="space-y-7" onSubmit={handleSubmit(onSubmit)}>
+    <form className="space-y-7" onSubmit={handleFormSubmit}>
       <div className="rounded-xl border border-[#dce4ff] bg-[#f8faff] p-4">
         <Label htmlFor="assistant-template">Plantilla rápida</Label>
         <div className="mt-2 flex flex-col gap-2 sm:flex-row">
@@ -320,7 +736,7 @@ export function AssistantConfigForm({
       <div
         role="tablist"
         aria-label="Secciones de configuraciÃ³n del asistente"
-        className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7"
+        className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
       >
         {assistantConfigTabs.map((tab) => {
           const selected = activeTab === tab.id;
@@ -345,9 +761,47 @@ export function AssistantConfigForm({
           );
         })}
       </div>
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
+      <div className="space-y-7">
         <div className="space-y-7">
-          <div className={activeTab === "basic" ? "contents" : "hidden"}>
+          <div className={activeTab === "settings" ? "contents" : "hidden"}>
+          <div className="rounded-2xl border border-[#dce4ff] bg-[#f8faff] p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-base font-semibold text-[#27334a]">
+                  <Mic2 className="size-5 text-[#315efb]" />
+                  Prueba en tiempo real
+                </div>
+                <p className="mt-1 text-sm leading-6 text-[#6f7c92]">
+                  Habla por el micrófono y escucha al bot con el modelo, prompt,
+                  voz, reglas y tools actuales, incluso sin guardar.
+                </p>
+                <p className="mt-1 text-xs text-[#7d8899]">
+                  Estado: {realtimeStatus}
+                  {realtimeSessionId ? ` · sesión ${realtimeSessionId.slice(0, 8)}` : ""}
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="lg"
+                className="min-h-12"
+                onClick={() => void handleToggleRealtimePreview()}
+                disabled={isPending}
+              >
+                <Mic2 className="size-5" />
+                {realtimeStatus === "connecting" ||
+                realtimeStatus === "listening" ||
+                realtimeStatus === "speaking"
+                  ? "Detener prueba"
+                  : "Probar conversación real"}
+              </Button>
+            </div>
+            {realtimeError ? (
+              <p className="mt-3 text-sm font-medium text-[#bd3341]">
+                {realtimeError}
+              </p>
+            ) : null}
+          </div>
+
           <FormSection
             title="1. Identidad del asistente"
             description="Nombre interno, idioma, tono y longitud de respuesta."
@@ -402,7 +856,7 @@ export function AssistantConfigForm({
           </FormSection>
           </div>
 
-          <div className={activeTab === "voice" ? "contents" : "hidden"}>
+          <div className={activeTab === "settings" ? "contents" : "hidden"}>
           <FormSection
             title="2. Voz y modelo"
             description="Opciones permitidas por la configuración del backend."
@@ -469,7 +923,7 @@ export function AssistantConfigForm({
                     Probar voz
                   </div>
                   <p className="mt-1 text-xs leading-5 text-[#6f7c92]">
-                    Genera un MP3 corto con la voz seleccionada. Usa los valores
+                    Genera audio corto con la voz seleccionada. Usa los valores
                     actuales del formulario, aunque todavÃ­a no hayas guardado.
                   </p>
                 </div>
@@ -547,7 +1001,289 @@ export function AssistantConfigForm({
           </FormSection>
           </div>
 
-          <div className={activeTab === "basic" ? "contents" : "hidden"}>
+          <div className={activeTab === "settings" ? "contents" : "hidden"}>
+          <FormSection
+            title="Perfil de voz"
+            description="Define cómo habla el asistente: ritmo, pausas, lectura de datos y disclosure IA."
+          >
+            <div>
+              <Label htmlFor="assistant-voice-preset">Preset de voz</Label>
+              <Select
+                id="assistant-voice-preset"
+                className="mt-1.5"
+                value={voicePreset}
+                onChange={(event) => {
+                  const preset = event.target.value as VoicePresetName;
+                  if (preset) reset(applyVoicePreset(getValues(), preset));
+                  else setValue("voice_preset", "");
+                }}
+              >
+                <option value="">Personalizado</option>
+                {voicePresetNames.map((preset) => (
+                  <option key={preset} value={preset}>
+                    {preset}
+                  </option>
+                ))}
+              </Select>
+              <p className="mt-1 text-xs text-[#7d8899]">
+                Rellena automáticamente tono, pausas y estilos de lectura.
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="assistant-tts-preview-voice">
+                Voz para pruebas TTS
+              </Label>
+              <Select
+                id="assistant-tts-preview-voice"
+                className="mt-1.5"
+                {...register("tts_preview_voice")}
+              >
+                <option value="">Usar voz Realtime ({realtimeVoice})</option>
+                {options.voices.map((voice) => (
+                  <option key={voice.id} value={voice.id}>
+                    {voice.label}
+                  </option>
+                ))}
+              </Select>
+              <p className="mt-1 text-xs text-[#7d8899]">
+                Solo afecta a pruebas de audio. Las llamadas usan la voz Realtime.
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="assistant-fallback-voice">Voz fallback</Label>
+              <Select
+                id="assistant-fallback-voice"
+                className="mt-1.5"
+                {...register("fallback_voice")}
+              >
+                <option value="">Sin fallback</option>
+                {options.voices.map((voice) => (
+                  <option key={voice.id} value={voice.id}>
+                    {voice.label}
+                  </option>
+                ))}
+              </Select>
+              <p className="mt-1 text-xs text-[#7d8899]">
+                Si OpenAI rechaza la voz principal al aceptar llamada, se prueba esta.
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="assistant-preview-format">Formato preview</Label>
+              <Select
+                id="assistant-preview-format"
+                className="mt-1.5"
+                {...register("preview_audio_format")}
+              >
+                <option value="mp3">MP3</option>
+                <option value="wav">WAV</option>
+                <option value="opus">Opus</option>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="assistant-speech-speed">Velocidad</Label>
+              <Input
+                id="assistant-speech-speed"
+                type="number"
+                min="0.8"
+                max="1.2"
+                step="0.05"
+                className="mt-1.5"
+                value={speechSpeedToNumber(speechSpeed)}
+                onChange={(event) =>
+                  setValue(
+                    "speech_speed",
+                    speechSpeedFromNumber(Number(event.target.value)),
+                  )
+                }
+              />
+              <p className="mt-1 text-xs text-[#7d8899]">
+                1 es natural; menos habla más despacio, más habla más ágil.
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="assistant-pause-style">Pausas</Label>
+              <Input
+                id="assistant-pause-style"
+                type="number"
+                min="0.6"
+                max="1.6"
+                step="0.1"
+                className="mt-1.5"
+                value={pauseStyleToNumber(pauseStyle)}
+                onChange={(event) =>
+                  setValue(
+                    "pause_style",
+                    pauseStyleFromNumber(Number(event.target.value)),
+                  )
+                }
+              />
+              <p className="mt-1 text-xs text-[#7d8899]">
+                1 es natural; menos recorta pausas, más deja respirar.
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="assistant-phone-reading">Lectura teléfonos</Label>
+              <Select
+                id="assistant-phone-reading"
+                className="mt-1.5"
+                {...register("phone_reading_style")}
+              >
+                <option value="digits">Dígito a dígito</option>
+                <option value="groups">En grupos</option>
+                <option value="natural">Natural</option>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="assistant-date-reading">Lectura fechas</Label>
+              <Select
+                id="assistant-date-reading"
+                className="mt-1.5"
+                {...register("date_reading_style")}
+              >
+                <option value="natural">Natural</option>
+                <option value="numeric">Numérica</option>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="assistant-price-reading">Lectura precios</Label>
+              <Select
+                id="assistant-price-reading"
+                className="mt-1.5"
+                {...register("price_reading_style")}
+              >
+                <option value="brief">Breve</option>
+                <option value="clear">Clara</option>
+                <option value="detailed">Detallada</option>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="assistant-idle-timeout">
+                Timeout inactividad (ms)
+              </Label>
+              <Input
+                id="assistant-idle-timeout"
+                type="number"
+                min="1000"
+                max="60000"
+                step="500"
+                className="mt-1.5"
+                placeholder="Por defecto"
+                {...register("idle_timeout_ms")}
+              />
+              <FieldError message={errors.idle_timeout_ms?.message} />
+              <p className="mt-1 text-xs text-[#7d8899]">
+                Déjalo vacío para usar el valor por defecto de OpenAI.
+              </p>
+            </div>
+            <div className="sm:col-span-2 grid gap-2 md:grid-cols-2">
+              <label className="flex min-h-10 items-center gap-3 rounded-lg border px-3 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-[#315efb]"
+                  {...register("allow_interruptions")}
+                />
+                Permitir interrupciones naturales
+              </label>
+              <label className="flex min-h-10 items-center gap-3 rounded-lg border px-3 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-[#315efb]"
+                  {...register("ai_disclosure_enabled")}
+                />
+                Avisar que es asistente virtual
+              </label>
+            </div>
+            <div className="sm:col-span-2">
+              <Label htmlFor="assistant-ai-disclosure">
+                Mensaje disclosure IA
+              </Label>
+              <Textarea
+                id="assistant-ai-disclosure"
+                className="mt-1.5 min-h-20"
+                {...register("ai_disclosure_message")}
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <Label htmlFor="assistant-voice-instructions">
+                Instrucciones de voz
+              </Label>
+              <Textarea
+                id="assistant-voice-instructions"
+                className="mt-1.5 min-h-36"
+                {...register("voice_instructions")}
+              />
+              <p className="mt-1 text-xs text-[#7d8899]">
+                No pongas reglas clínicas aquí. Usa este campo solo para estilo,
+                ritmo, acento y lectura de datos.
+              </p>
+            </div>
+            <div className="sm:col-span-2 rounded-xl border border-[#dce4ff] bg-[#f8faff] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-[#27334a]">
+                    <Volume2 className="size-4 text-[#315efb]" />
+                    Comparador de voces
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-[#6f7c92]">
+                    Marca varias voces y genera muestras con los cambios actuales
+                    del formulario, aunque no estén guardados.
+                  </p>
+                </div>
+                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-[#526078]">
+                  {(ttsPreviewVoice || realtimeVoice)} · {previewAudioFormat}
+                </span>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {options.voices.map((voice) => (
+                  <label
+                    key={voice.id}
+                    className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-[#315efb]"
+                      value={voice.id}
+                      checked={comparisonVoices.includes(voice.id)}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setComparisonVoices((current) =>
+                          event.target.checked
+                            ? Array.from(new Set([...current, value]))
+                            : current.filter((item) => item !== value),
+                        );
+                      }}
+                    />
+                    {voice.label}
+                  </label>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleCompareVoices()}
+                  disabled={voicePreviewStatus === "generating"}
+                >
+                  <Mic2 className="size-4" />
+                  Comparar voces
+                </Button>
+                {voiceSamples.map((sample) => (
+                  <Button
+                    key={sample.voice}
+                    type="button"
+                    variant="outline"
+                    onClick={() => handlePlaySample(sample.url)}
+                  >
+                    <Play className="size-4" />
+                    {sample.voice}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </FormSection>
+          </div>
+
+          <div className={activeTab === "settings" ? "contents" : "hidden"}>
           <FormSection
             title="3. Primer mensaje"
             description="Saludo que verá también la consola de prueba."
@@ -995,7 +1731,7 @@ export function AssistantConfigForm({
           </div>
         </div>
 
-        <aside className="h-fit rounded-2xl border bg-white p-4 shadow-sm">
+        {false ? <aside className="h-fit rounded-2xl border bg-white p-4 shadow-sm">
           <div className="flex items-center gap-2 font-semibold text-[#27334a]">
             <CheckCircle2 className="size-4 text-[#315efb]" />
             Estado de configuración
@@ -1028,11 +1764,19 @@ export function AssistantConfigForm({
               ))}
             </div>
           ) : null}
-        </aside>
+        </aside> : null}
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button type="button" variant="outline" onClick={onCancel}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            stopRealtimePreview("cancel");
+            stopVoicePreview();
+            onCancel();
+          }}
+        >
           Cancelar
         </Button>
         <Button type="submit" disabled={isPending}>

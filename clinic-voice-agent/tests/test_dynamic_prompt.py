@@ -269,6 +269,19 @@ def test_dynamic_prompt_respects_assistant_behavior_fields(
     config.commercial_call_message = "No atendemos llamadas comerciales."
     config.human_transfer_rules = "Transfiere quejas y dudas fuera de alcance."
     config.conversation_extra_rules = "No repitas preguntas."
+    config.voice_preset = "Recepcionista cercana"
+    config.voice_instructions = "Habla como recepcionista humana y clara."
+    config.tts_preview_voice = "cedar"
+    config.fallback_voice = "marin"
+    config.speech_speed = "slow"
+    config.pause_style = "slow"
+    config.phone_reading_style = "digits"
+    config.date_reading_style = "numeric"
+    config.price_reading_style = "detailed"
+    config.allow_interruptions = False
+    config.idle_timeout_ms = 5000
+    config.ai_disclosure_enabled = True
+    config.ai_disclosure_message = "Soy el asistente virtual del centro."
     config.max_proposed_slots = 1
     config.allow_cancellations = False
     config.use_prices = False
@@ -309,6 +322,15 @@ def test_dynamic_prompt_respects_assistant_behavior_fields(
     assert "Nivel de iniciativa: alto" in prompt
     assert "No atendemos llamadas comerciales" in prompt
     assert "Transfiere quejas" in prompt
+    assert "# Perfil de voz" in prompt
+    assert "Recepcionista cercana" in prompt
+    assert "cedar" in prompt
+    assert "marin" in prompt
+    assert "slow" in prompt
+    assert "digits" in prompt
+    assert "5000 ms" in prompt
+    assert "Soy el asistente virtual del centro" in prompt
+    assert "Habla como recepcionista humana y clara" in prompt
     assert "pending_slots" in prompt
     assert "No repitas preguntas" in prompt
     assert "25.00 EUR" not in prompt

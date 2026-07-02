@@ -267,6 +267,20 @@ class AssistantConfigBase(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     realtime_model: str = Field(min_length=1, max_length=120)
     realtime_voice: str = Field(min_length=1, max_length=80)
+    voice_instructions: str | None = None
+    voice_preset: str | None = Field(default=None, max_length=80)
+    tts_preview_voice: str | None = Field(default=None, max_length=80)
+    fallback_voice: str | None = Field(default=None, max_length=80)
+    speech_speed: Literal["slow", "normal", "fast"] = "normal"
+    pause_style: Literal["short", "natural", "slow"] = "natural"
+    phone_reading_style: Literal["digits", "groups", "natural"] = "groups"
+    date_reading_style: Literal["natural", "numeric"] = "natural"
+    price_reading_style: Literal["brief", "clear", "detailed"] = "clear"
+    allow_interruptions: bool = True
+    idle_timeout_ms: int | None = Field(default=None, ge=1000, le=60000)
+    ai_disclosure_enabled: bool = True
+    ai_disclosure_message: str | None = None
+    preview_audio_format: Literal["mp3", "wav", "opus"] = "mp3"
     language: str = Field(default="es", min_length=2, max_length=16)
     temperature: Decimal | None = Field(default=None, ge=0, le=2)
     first_message: str = Field(min_length=1)
@@ -327,6 +341,20 @@ class AssistantConfigUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     realtime_model: str | None = Field(default=None, min_length=1, max_length=120)
     realtime_voice: str | None = Field(default=None, min_length=1, max_length=80)
+    voice_instructions: str | None = None
+    voice_preset: str | None = Field(default=None, max_length=80)
+    tts_preview_voice: str | None = Field(default=None, max_length=80)
+    fallback_voice: str | None = Field(default=None, max_length=80)
+    speech_speed: Literal["slow", "normal", "fast"] | None = None
+    pause_style: Literal["short", "natural", "slow"] | None = None
+    phone_reading_style: Literal["digits", "groups", "natural"] | None = None
+    date_reading_style: Literal["natural", "numeric"] | None = None
+    price_reading_style: Literal["brief", "clear", "detailed"] | None = None
+    allow_interruptions: bool | None = None
+    idle_timeout_ms: int | None = Field(default=None, ge=1000, le=60000)
+    ai_disclosure_enabled: bool | None = None
+    ai_disclosure_message: str | None = None
+    preview_audio_format: Literal["mp3", "wav", "opus"] | None = None
     language: str | None = Field(default=None, min_length=2, max_length=16)
     temperature: Decimal | None = Field(default=None, ge=0, le=2)
     first_message: str | None = Field(default=None, min_length=1)
@@ -398,6 +426,61 @@ class AssistantVoicePreviewRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
     realtime_voice: str = Field(min_length=1, max_length=80)
     realtime_model: str | None = Field(default=None, max_length=120)
+    tts_preview_voice: str | None = Field(default=None, max_length=80)
+    fallback_voice: str | None = Field(default=None, max_length=80)
+    voice_preset: str | None = Field(default=None, max_length=80)
+    voice_instructions: str | None = None
+    speech_speed: Literal["slow", "normal", "fast"] = "normal"
+    pause_style: Literal["short", "natural", "slow"] = "natural"
+    phone_reading_style: Literal["digits", "groups", "natural"] = "groups"
+    date_reading_style: Literal["natural", "numeric"] = "natural"
+    price_reading_style: Literal["brief", "clear", "detailed"] = "clear"
+    allow_interruptions: bool = True
+    idle_timeout_ms: int | None = Field(default=None, ge=1000, le=60000)
+    ai_disclosure_enabled: bool = True
+    ai_disclosure_message: str | None = None
+    preview_audio_format: Literal["mp3", "wav", "opus"] = "mp3"
+
+
+class RealtimePreviewSessionCreate(BaseModel):
+    """Create one browser WebRTC Realtime preview with unsaved config values."""
+
+    assistant_config_id: uuid.UUID | None = None
+    config: AssistantConfigCreate
+
+
+class RealtimePreviewSessionResponse(BaseModel):
+    """Ephemeral browser credentials for one Realtime preview session."""
+
+    id: uuid.UUID
+    call_session_id: uuid.UUID
+    client_secret: str
+    model: str
+    voice: str
+    initial_message: str
+    expires_at: datetime
+
+
+class RealtimePreviewToolCallRequest(BaseModel):
+    """Tool call emitted by the browser Realtime data channel."""
+
+    name: str = Field(min_length=1, max_length=120)
+    call_id: str = Field(min_length=1, max_length=200)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class RealtimePreviewToolCallResponse(BaseModel):
+    """Tool output ready to send back to the Realtime data channel."""
+
+    call_id: str
+    output: dict[str, Any]
+
+
+class RealtimePreviewHeartbeatResponse(BaseModel):
+    """Heartbeat acknowledgement for a live preview session."""
+
+    ok: bool
+    expires_at: datetime
 
 
 class PromptPreviewResponse(BaseModel):
@@ -439,6 +522,20 @@ class AssistantRecommendedTemplateResponse(BaseModel):
     booking_policy_prompt: str
     cancellation_policy_prompt: str
     transfer_policy_prompt: str
+    voice_instructions: str | None = None
+    voice_preset: str | None = None
+    tts_preview_voice: str | None = None
+    fallback_voice: str | None = None
+    speech_speed: Literal["slow", "normal", "fast"] = "normal"
+    pause_style: Literal["short", "natural", "slow"] = "natural"
+    phone_reading_style: Literal["digits", "groups", "natural"] = "groups"
+    date_reading_style: Literal["natural", "numeric"] = "natural"
+    price_reading_style: Literal["brief", "clear", "detailed"] = "clear"
+    allow_interruptions: bool = True
+    idle_timeout_ms: int | None = Field(default=None, ge=1000, le=60000)
+    ai_disclosure_enabled: bool = True
+    ai_disclosure_message: str | None = None
+    preview_audio_format: Literal["mp3", "wav", "opus"] = "mp3"
     tone: Literal["profesional", "cercano", "comercial", "breve", "formal"]
     response_length: Literal["corta", "normal", "detallada"]
     ask_patient_name: bool

@@ -14,8 +14,10 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app import realtime_preview as realtime_preview_service
 from app.api.admin import content as content_api
 from app.api.admin import core as core_api
+from app.api.admin import realtime_preview as realtime_preview_api
 from app.db import get_db
 from app.knowledge.importers import ExtractedKnowledge
 from app.main import create_app
@@ -606,7 +608,7 @@ async def test_assistant_voice_preview_returns_audio(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The assistant editor should preview voice without creating a conversation."""
-    calls: list[tuple[str, str, str | None]] = []
+    calls: list[tuple[str, str, str | None, str | None, str]] = []
 
     def fake_speech(
         settings: object,
@@ -614,9 +616,11 @@ async def test_assistant_voice_preview_returns_audio(
         text: str,
         voice: str,
         model: str | None = None,
+        instructions: str | None = None,
+        response_format: str = "mp3",
     ) -> bytes:
-        calls.append((text, voice, model))
-        return b"mp3-bytes"
+        calls.append((text, voice, model, instructions, response_format))
+        return b"audio-bytes"
 
     monkeypatch.setattr(core_api, "synthesize_openai_speech", fake_speech)
     async with AsyncClient(
@@ -631,13 +635,107 @@ async def test_assistant_voice_preview_returns_audio(
                 "text": "Hola, soy el asistente.",
                 "realtime_voice": "marin",
                 "realtime_model": "gpt-realtime-2",
+                "tts_preview_voice": "cedar",
+                "voice_instructions": "Habla claro.",
+                "preview_audio_format": "wav",
             },
         )
 
     assert response.status_code == 200
-    assert response.headers["content-type"].startswith("audio/mpeg")
-    assert response.content == b"mp3-bytes"
-    assert calls == [("Hola, soy el asistente.", "marin", "gpt-realtime-2")]
+    assert response.headers["content-type"].startswith("audio/wav")
+    assert response.content == b"audio-bytes"
+    assert len(calls) == 1
+    call_text, call_voice, call_model, call_instructions, call_format = calls[0]
+    assert call_text == "Hola, soy el asistente."
+    assert call_voice == "cedar"
+    assert call_model == "gpt-realtime-2"
+    assert call_format == "wav"
+    assert call_instructions is not None
+    assert "Perfil de voz" in call_instructions
+    assert "Habla claro." in call_instructions
+
+
+@pytest.mark.anyio
+async def test_realtime_preview_session_lifecycle(
+    database_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Assistant config editor should create, heartbeat, tool, and close previews."""
+
+    class FakeOpenAIResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"client_secret": {"value": "ephemeral-test-secret"}}
+
+    monkeypatch.setattr(
+        realtime_preview_service.httpx,
+        "post",
+        lambda *args, **kwargs: FakeOpenAIResponse(),
+    )
+    monkeypatch.setattr(
+        realtime_preview_api,
+        "execute_preview_tool",
+        lambda *args, **kwargs: {"ok": True, "clinic_name": "Demo"},
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(database_engine)),
+        base_url="http://testserver",
+    ) as client:
+        clinic = await _create_clinic(client, "Realtime")
+        clinic_id = clinic["id"]
+        config_payload = {
+            "name": "Principal",
+            "realtime_model": "gpt-realtime-2",
+            "realtime_voice": "marin",
+            "language": "es",
+            "first_message": "Hola, soy el asistente virtual.",
+            "system_prompt": "Gestiona citas.",
+            "safety_prompt": "No diagnostiques.",
+            "booking_policy_prompt": "Propón huecos reales.",
+            "cancellation_policy_prompt": "Confirma antes de cancelar.",
+            "transfer_policy_prompt": "Transfiere si se solicita.",
+        }
+        created_config = await client.post(
+            f"/api/admin/clinics/{clinic_id}/assistant-configs",
+            headers=ADMIN_HEADERS,
+            json={**config_payload, "is_active": True},
+        )
+        assert created_config.status_code == 201, created_config.text
+
+        started = await client.post(
+            f"/api/admin/clinics/{clinic_id}/assistant-configs/realtime-preview-sessions",
+            headers=ADMIN_HEADERS,
+            json={
+                "assistant_config_id": created_config.json()["id"],
+                "config": {**config_payload, "is_active": False},
+            },
+        )
+        assert started.status_code == 201, started.text
+        body = started.json()
+        assert body["client_secret"] == "ephemeral-test-secret"
+        session_id = body["id"]
+
+        heartbeat = await client.post(
+            f"/api/admin/realtime-preview-sessions/{session_id}/heartbeat",
+            headers=ADMIN_HEADERS,
+        )
+        assert heartbeat.status_code == 200
+
+        tool = await client.post(
+            f"/api/admin/realtime-preview-sessions/{session_id}/tool-call",
+            headers=ADMIN_HEADERS,
+            json={"name": "get_clinic_info", "call_id": "call_1", "arguments": {}},
+        )
+        assert tool.status_code == 200
+        assert tool.json()["output"]["ok"] is True
+
+        closed = await client.delete(
+            f"/api/admin/realtime-preview-sessions/{session_id}",
+            headers=ADMIN_HEADERS,
+        )
+        assert closed.status_code == 204
 
 
 @pytest.mark.anyio

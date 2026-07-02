@@ -58,6 +58,20 @@ function formValues(config: AssistantConfig): AssistantConfigFormValues {
     is_active: config.is_active,
     realtime_model: config.realtime_model,
     realtime_voice: config.realtime_voice,
+    voice_instructions: config.voice_instructions ?? "",
+    voice_preset: config.voice_preset ?? "",
+    tts_preview_voice: config.tts_preview_voice ?? "",
+    fallback_voice: config.fallback_voice ?? "",
+    speech_speed: config.speech_speed,
+    pause_style: config.pause_style,
+    phone_reading_style: config.phone_reading_style,
+    date_reading_style: config.date_reading_style,
+    price_reading_style: config.price_reading_style,
+    allow_interruptions: config.allow_interruptions,
+    idle_timeout_ms: config.idle_timeout_ms ? String(config.idle_timeout_ms) : "",
+    ai_disclosure_enabled: config.ai_disclosure_enabled,
+    ai_disclosure_message: config.ai_disclosure_message ?? "",
+    preview_audio_format: config.preview_audio_format,
     language: config.language,
     temperature: config.temperature ?? "",
     first_message: config.first_message,
@@ -111,6 +125,9 @@ function payload(
     ...values,
     is_active: isActive,
     temperature: values.temperature || null,
+    idle_timeout_ms: values.idle_timeout_ms
+      ? Number(values.idle_timeout_ms)
+      : null,
   };
 }
 
@@ -368,6 +385,7 @@ export function AssistantConfigPage() {
           {options ? (
             <AssistantConfigForm
               clinicId={clinicId as string}
+              assistantConfigId={editingConfig?.id ?? null}
               options={options}
               defaultValues={
                 editingConfig ? formValues(editingConfig) : newDefaults

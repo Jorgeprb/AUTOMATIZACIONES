@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.config import Settings
-from app.openai_realtime.session import build_session_config
+from app.openai_realtime.session import RealtimeSessionConfig, build_session_config
 from app.openai_realtime.tools import get_realtime_tools
 from app.prompts import build_receptionist_instructions
 
@@ -122,3 +122,21 @@ def test_realtime_session_payload_exposes_declared_tools() -> None:
 
     assert payload["tool_choice"] == "auto"
     assert {tool["name"] for tool in payload["tools"]} == EXPECTED_TOOL_NAMES
+
+
+def test_realtime_session_payload_includes_voice_runtime_options() -> None:
+    """Voice profile runtime switches should be sent only when configured."""
+    config = RealtimeSessionConfig(
+        model="gpt-realtime-2",
+        voice="marin",
+        instructions="Hola",
+        transcription_enabled=False,
+        allow_interruptions=False,
+        idle_timeout_ms=5000,
+    )
+
+    payload = config.as_accept_payload()
+
+    assert payload["audio"]["output"]["voice"] == "marin"
+    assert payload["audio"]["input"]["turn_detection"]["idle_timeout_ms"] == 5000
+    assert payload["audio"]["input"]["turn_detection"]["interrupt_response"] is False

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyAssistantTemplate,
+  applyVoicePreset,
   assistantConfigDefaults,
   assistantConfigFormSchema,
 } from "@/schemas/assistant";
@@ -56,5 +57,27 @@ describe("assistant configuration", () => {
 
     expect(valid.success).toBe(true);
     expect(invalid.success).toBe(false);
+  });
+
+  it("validates and applies voice profile presets", () => {
+    const current = {
+      ...assistantConfigDefaults,
+      realtime_voice: "marin",
+      tts_preview_voice: "cedar",
+      idle_timeout_ms: "5000",
+    };
+    const result = applyVoicePreset(current, "Centralita breve");
+    const invalidTimeout = assistantConfigFormSchema.safeParse({
+      ...result,
+      idle_timeout_ms: "10",
+    });
+
+    expect(result.voice_preset).toBe("Centralita breve");
+    expect(result.speech_speed).toBe("fast");
+    expect(result.phone_reading_style).toBe("digits");
+    expect(result.realtime_voice).toBe("marin");
+    expect(result.tts_preview_voice).toBe("cedar");
+    expect(assistantConfigFormSchema.safeParse(result).success).toBe(true);
+    expect(invalidTimeout.success).toBe(false);
   });
 });

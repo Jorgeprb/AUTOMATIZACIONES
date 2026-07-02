@@ -1,4 +1,4 @@
-import { apiBlobRequest, apiRequest, toQuery } from "@/api/client";
+import { apiBlobRequest, apiConfig, apiRequest, toQuery } from "@/api/client";
 import type { Page } from "@/schemas/api";
 import type {
   AssistantConfig,
@@ -86,6 +86,20 @@ export function previewAssistantVoice(
     text: string;
     realtime_voice: string;
     realtime_model?: string | null;
+    tts_preview_voice?: string | null;
+    fallback_voice?: string | null;
+    voice_preset?: string | null;
+    voice_instructions?: string | null;
+    speech_speed?: "slow" | "normal" | "fast";
+    pause_style?: "short" | "natural" | "slow";
+    phone_reading_style?: "digits" | "groups" | "natural";
+    date_reading_style?: "natural" | "numeric";
+    price_reading_style?: "brief" | "clear" | "detailed";
+    allow_interruptions?: boolean;
+    idle_timeout_ms?: number | null;
+    ai_disclosure_enabled?: boolean;
+    ai_disclosure_message?: string | null;
+    preview_audio_format?: "mp3" | "wav" | "opus";
   },
   signal?: AbortSignal,
 ): Promise<Blob> {
@@ -97,4 +111,74 @@ export function previewAssistantVoice(
       signal,
     },
   );
+}
+
+export interface RealtimePreviewSession {
+  id: string;
+  call_session_id: string;
+  client_secret: string;
+  model: string;
+  voice: string;
+  initial_message: string;
+  expires_at: string;
+}
+
+export interface RealtimePreviewToolOutput {
+  call_id: string;
+  output: Record<string, unknown>;
+}
+
+export function createRealtimePreviewSession(
+  clinicId: string,
+  payload: {
+    assistant_config_id?: string | null;
+    config: AssistantConfigPayload;
+  },
+): Promise<RealtimePreviewSession> {
+  return apiRequest(
+    `/api/admin/clinics/${clinicId}/assistant-configs/realtime-preview-sessions`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function heartbeatRealtimePreviewSession(
+  sessionId: string,
+): Promise<{ ok: boolean; expires_at: string }> {
+  return apiRequest(`/api/admin/realtime-preview-sessions/${sessionId}/heartbeat`, {
+    method: "POST",
+  });
+}
+
+export function sendRealtimePreviewToolCall(
+  sessionId: string,
+  payload: {
+    name: string;
+    call_id: string;
+    arguments: Record<string, unknown>;
+  },
+): Promise<RealtimePreviewToolOutput> {
+  return apiRequest(`/api/admin/realtime-preview-sessions/${sessionId}/tool-call`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function closeRealtimePreviewSession(sessionId: string): Promise<void> {
+  return apiRequest(`/api/admin/realtime-preview-sessions/${sessionId}`, {
+    method: "DELETE",
+  });
+}
+
+export function closeRealtimePreviewSessionKeepalive(sessionId: string): void {
+  void fetch(
+    `${apiConfig.baseUrl}/api/admin/realtime-preview-sessions/${sessionId}`,
+    {
+      method: "DELETE",
+      headers: { "X-Admin-API-Key": apiConfig.adminApiKey },
+      keepalive: true,
+    },
+  ).catch(() => undefined);
 }

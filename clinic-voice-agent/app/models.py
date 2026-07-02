@@ -425,6 +425,34 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             ),
             name="valid_assistant_commercial_call_handling",
         ),
+        CheckConstraint(
+            "speech_speed IN ('slow', 'normal', 'fast')",
+            name="valid_assistant_speech_speed",
+        ),
+        CheckConstraint(
+            "pause_style IN ('short', 'natural', 'slow')",
+            name="valid_assistant_pause_style",
+        ),
+        CheckConstraint(
+            "phone_reading_style IN ('digits', 'groups', 'natural')",
+            name="valid_assistant_phone_reading_style",
+        ),
+        CheckConstraint(
+            "date_reading_style IN ('natural', 'numeric')",
+            name="valid_assistant_date_reading_style",
+        ),
+        CheckConstraint(
+            "price_reading_style IN ('brief', 'clear', 'detailed')",
+            name="valid_assistant_price_reading_style",
+        ),
+        CheckConstraint(
+            "preview_audio_format IN ('mp3', 'wav', 'opus')",
+            name="valid_assistant_preview_audio_format",
+        ),
+        CheckConstraint(
+            "idle_timeout_ms IS NULL OR idle_timeout_ms BETWEEN 1000 AND 60000",
+            name="valid_assistant_idle_timeout_ms",
+        ),
     )
 
     clinic_id: Mapped[uuid.UUID] = mapped_column(
@@ -440,6 +468,60 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     realtime_model: Mapped[str] = mapped_column(String(120), nullable=False)
     realtime_voice: Mapped[str] = mapped_column(String(80), nullable=False)
+    voice_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    voice_preset: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    tts_preview_voice: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    fallback_voice: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    speech_speed: Mapped[str] = mapped_column(
+        String(16),
+        server_default=text("'normal'"),
+        default="normal",
+        nullable=False,
+    )
+    pause_style: Mapped[str] = mapped_column(
+        String(16),
+        server_default=text("'natural'"),
+        default="natural",
+        nullable=False,
+    )
+    phone_reading_style: Mapped[str] = mapped_column(
+        String(16),
+        server_default=text("'groups'"),
+        default="groups",
+        nullable=False,
+    )
+    date_reading_style: Mapped[str] = mapped_column(
+        String(16),
+        server_default=text("'natural'"),
+        default="natural",
+        nullable=False,
+    )
+    price_reading_style: Mapped[str] = mapped_column(
+        String(16),
+        server_default=text("'clear'"),
+        default="clear",
+        nullable=False,
+    )
+    allow_interruptions: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    idle_timeout_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ai_disclosure_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    ai_disclosure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preview_audio_format: Mapped[str] = mapped_column(
+        String(16),
+        server_default=text("'mp3'"),
+        default="mp3",
+        nullable=False,
+    )
     language: Mapped[str] = mapped_column(String(16), nullable=False)
     temperature: Mapped[Decimal | None] = mapped_column(
         Numeric(3, 2),

@@ -8,7 +8,11 @@ import {
 import { apiBlobRequest, apiRequest, toQuery } from "@/api/client";
 import {
   activateAssistantConfig,
+  closeRealtimePreviewSession,
+  createRealtimePreviewSession,
+  heartbeatRealtimePreviewSession,
   previewAssistantVoice,
+  sendRealtimePreviewToolCall,
 } from "@/api/assistants";
 import { cancelAppointment } from "@/api/appointments";
 import {
@@ -225,6 +229,105 @@ describe("operational API calls", () => {
         }),
         signal,
       },
+    );
+  });
+
+  it("manages realtime assistant preview sessions", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ id: "preview-1" });
+    const config = {
+      name: "Principal",
+      is_active: false,
+      realtime_model: "gpt-realtime-2",
+      realtime_voice: "marin",
+      language: "es",
+      temperature: null,
+      first_message: "Hola",
+      system_prompt: "Gestiona citas.",
+      safety_prompt: "No diagnostiques.",
+      booking_policy_prompt: "Reserva con huecos reales.",
+      cancellation_policy_prompt: "Confirma antes de cancelar.",
+      transfer_policy_prompt: "Transfiere si se solicita.",
+      tone: "profesional",
+      response_length: "normal",
+      ask_patient_name: true,
+      ask_patient_phone: true,
+      ask_general_reason: true,
+      allow_booking_without_worker: true,
+      allow_bookings: true,
+      allow_price_answers: true,
+      ask_service: true,
+      max_proposed_slots: 3,
+      max_consecutive_questions: 2,
+      conversation_style: "natural",
+      initiative_level: "medio",
+      commercial_call_handling: "declinar",
+      allow_cancellations: true,
+      allow_reschedules: true,
+      natural_confirmation_required: true,
+      avoid_exact_confirmation_phrases: true,
+      additional_instructions: "",
+      forbidden_phrases: "",
+      no_availability_message: "",
+      missing_calendar_message: "",
+      emergency_message: "",
+      human_transfer_message: "",
+      human_transfer_rules: "",
+      commercial_call_message: "",
+      conversation_extra_rules: "",
+      closing_message: "",
+      use_prices: true,
+      use_knowledge_base: true,
+      strict_calendar_mode: true,
+      transcript_enabled: false,
+      recording_enabled: false,
+      conversation_retention_days: 30,
+      voice_instructions: "",
+      voice_preset: "",
+      tts_preview_voice: "",
+      fallback_voice: "",
+      speech_speed: "normal",
+      pause_style: "natural",
+      phone_reading_style: "groups",
+      date_reading_style: "natural",
+      price_reading_style: "clear",
+      allow_interruptions: true,
+      idle_timeout_ms: null,
+      ai_disclosure_enabled: true,
+      ai_disclosure_message: "",
+      preview_audio_format: "mp3",
+    } as const;
+
+    await createRealtimePreviewSession("clinic-1", {
+      assistant_config_id: "config-1",
+      config,
+    });
+    await heartbeatRealtimePreviewSession("preview-1");
+    await sendRealtimePreviewToolCall("preview-1", {
+      name: "get_clinic_info",
+      call_id: "call-1",
+      arguments: {},
+    });
+    await closeRealtimePreviewSession("preview-1");
+
+    expect(apiRequest).toHaveBeenNthCalledWith(
+      1,
+      "/api/admin/clinics/clinic-1/assistant-configs/realtime-preview-sessions",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(apiRequest).toHaveBeenNthCalledWith(
+      2,
+      "/api/admin/realtime-preview-sessions/preview-1/heartbeat",
+      { method: "POST" },
+    );
+    expect(apiRequest).toHaveBeenNthCalledWith(
+      3,
+      "/api/admin/realtime-preview-sessions/preview-1/tool-call",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(apiRequest).toHaveBeenNthCalledWith(
+      4,
+      "/api/admin/realtime-preview-sessions/preview-1",
+      { method: "DELETE" },
     );
   });
 

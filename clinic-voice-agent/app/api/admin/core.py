@@ -83,6 +83,11 @@ from app.schemas import (
     WorkerFreeBusyTestRequest,
     WorkerFreeBusyTestResponse,
 )
+from app.voice_profile import (
+    audio_media_type,
+    build_voice_instruction_block,
+    effective_preview_voice,
+)
 
 router = APIRouter(prefix="/admin")
 
@@ -928,19 +933,43 @@ def preview_assistant_voice(
 ) -> Response:
     """Generate a finite voice preview without creating a conversation."""
     clinic_or_404(session, clinic_id)
+    voice = effective_preview_voice(payload)
+    instructions = build_voice_instruction_block(payload)
     try:
         audio = synthesize_openai_speech(
             settings,
             text=payload.text,
-            voice=payload.realtime_voice,
+            voice=voice,
             model=payload.realtime_model,
+            instructions=instructions,
+            response_format=payload.preview_audio_format,
         )
     except TTSGenerationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
-    return Response(content=audio, media_type="audio/mpeg")
+        fallback_voice = (payload.fallback_voice or "").strip()
+        if fallback_voice and fallback_voice != voice:
+            try:
+                audio = synthesize_openai_speech(
+                    settings,
+                    text=payload.text,
+                    voice=fallback_voice,
+                    model=payload.realtime_model,
+                    instructions=instructions,
+                    response_format=payload.preview_audio_format,
+                )
+            except TTSGenerationError:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=str(exc),
+                ) from exc
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=str(exc),
+            ) from exc
+    return Response(
+        content=audio,
+        media_type=audio_media_type(payload.preview_audio_format),
+    )
 
 
 @router.get(

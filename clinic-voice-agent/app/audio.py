@@ -24,11 +24,15 @@ def synthesize_openai_speech(
     text: str,
     voice: str,
     model: str | None = None,
+    instructions: str | None = None,
+    response_format: str = "mp3",
 ) -> bytes:
-    """Generate one finite MP3 blob with OpenAI TTS and close the connection."""
+    """Generate one finite audio blob with OpenAI TTS and close the connection."""
     cleaned = text.strip()
     if not cleaned:
         raise TTSGenerationError("No hay texto para generar audio.")
+    if response_format not in {"mp3", "wav", "opus"}:
+        raise TTSGenerationError("Formato de audio no soportado.")
 
     api_key = settings.openai_api_key.get_secret_value().strip()
     if not api_key:
@@ -38,8 +42,10 @@ def synthesize_openai_speech(
         "model": _select_speech_model(settings, model),
         "voice": voice,
         "input": cleaned,
-        "response_format": "mp3",
+        "response_format": response_format,
     }
+    if instructions and instructions.strip():
+        payload["instructions"] = instructions.strip()
     try:
         with httpx.Client(timeout=30.0) as client:
             response = client.post(

@@ -290,16 +290,58 @@ async def receive_realtime_webhook(
             payload=accept_payload,
         )
     except httpx.HTTPError as exc:
-        reason = "OpenAI could not accept the incoming call."
-        _mark_call_failed(session, call_session, reason=reason)
-        logger.exception(
-            "realtime_accept_failed",
-            extra={"call_id": incoming.data.call_id},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=reason,
-        ) from exc
+        fallback_voice = (config.fallback_voice or "").strip()
+        if fallback_voice and fallback_voice != config.voice:
+            fallback_payload = config.as_accept_payload()
+            fallback_payload["audio"]["output"]["voice"] = fallback_voice
+            try:
+                logger.warning(
+                    "realtime_accept_primary_voice_failed_trying_fallback",
+                    extra={
+                        "call_id": incoming.data.call_id,
+                        "primary_voice": config.voice,
+                        "fallback_voice": fallback_voice,
+                    },
+                )
+                await accept_realtime_call(
+                    settings,
+                    call_id=incoming.data.call_id,
+                    payload=fallback_payload,
+                )
+                accept_payload = fallback_payload
+                config_voice = fallback_voice
+            except httpx.HTTPError as fallback_exc:
+                reason = "OpenAI could not accept the incoming call."
+                _mark_call_failed(session, call_session, reason=reason)
+                logger.exception(
+                    "realtime_accept_failed",
+                    extra={"call_id": incoming.data.call_id},
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=reason,
+                ) from fallback_exc
+        else:
+            config_voice = config.voice
+            reason = "OpenAI could not accept the incoming call."
+            _mark_call_failed(session, call_session, reason=reason)
+            logger.exception(
+                "realtime_accept_failed",
+                extra={"call_id": incoming.data.call_id},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=reason,
+            ) from exc
+    else:
+        config_voice = config.voice
+
+    if accept_payload["audio"]["output"]["voice"] != config.voice:
+        call_session.conversation_state_json = {
+            **call_session.conversation_state_json,
+            "fallback_voice_used": accept_payload["audio"]["output"]["voice"],
+        }
+        session.commit()
 
     try:
         start_call_control_task(
@@ -328,7 +370,7 @@ async def receive_realtime_webhook(
             "call_id": incoming.data.call_id,
             "call_session_id": str(call_session.id),
             "model": config.model,
-            "voice": config.voice,
+            "voice": config_voice,
         },
     )
     return {

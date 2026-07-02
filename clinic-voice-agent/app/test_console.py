@@ -47,6 +47,7 @@ from app.simulation import (
     _is_affirmative,
     _is_emergency,
 )
+from app.voice_profile import build_voice_instruction_block, effective_preview_voice
 
 SessionFactory = Callable[[], Session]
 TestEngine = Literal["simulator", "openai"]
@@ -605,7 +606,10 @@ def synthesize_test_session_audio(
         return synthesize_openai_speech(
             settings,
             text=cleaned,
-            voice=config.realtime_voice,
+            voice=effective_preview_voice(config),
+            model=config.realtime_model,
+            instructions=build_voice_instruction_block(config),
+            response_format=config.preview_audio_format,
         )
     except TTSGenerationError as exc:
         raise TestConsoleError(str(exc)) from exc

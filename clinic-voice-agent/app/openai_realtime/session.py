@@ -44,19 +44,35 @@ class RealtimeSessionConfig:
     transcription_enabled: bool
     language: str = "es"
     initial_message: str | None = None
+    fallback_voice: str | None = None
+    allow_interruptions: bool = True
+    idle_timeout_ms: int | None = None
 
     def as_accept_payload(self) -> dict[str, Any]:
         """Serialize the documented Realtime session payload."""
         audio: dict[str, Any] = {
             "output": {"voice": self.voice},
         }
+        input_audio: dict[str, Any] = {}
+        if self.idle_timeout_ms is not None or not self.allow_interruptions:
+            turn_detection: dict[str, Any] = {
+                "type": "server_vad",
+                "interrupt_response": self.allow_interruptions,
+            }
+            if self.idle_timeout_ms is not None:
+                turn_detection["idle_timeout_ms"] = self.idle_timeout_ms
+            input_audio["turn_detection"] = turn_detection
         if self.transcription_enabled:
-            audio["input"] = {
+            input_audio.update(
+                {
                 "transcription": {
                     "model": "gpt-realtime-whisper",
                     "language": self.language.split("-", maxsplit=1)[0],
                 }
-            }
+                }
+            )
+        if input_audio:
+            audio["input"] = input_audio
         return {
             "type": "realtime",
             "model": self.model,
@@ -123,6 +139,21 @@ def build_session_config(
         ),
         initial_message=(
             context.active_assistant_config.first_message
+            if context is not None
+            else None
+        ),
+        fallback_voice=(
+            context.active_assistant_config.fallback_voice
+            if context is not None
+            else None
+        ),
+        allow_interruptions=(
+            context.active_assistant_config.allow_interruptions
+            if context is not None
+            else True
+        ),
+        idle_timeout_ms=(
+            context.active_assistant_config.idle_timeout_ms
             if context is not None
             else None
         ),
