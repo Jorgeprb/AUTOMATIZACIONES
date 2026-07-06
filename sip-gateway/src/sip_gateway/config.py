@@ -21,6 +21,7 @@ class GatewaySettings(BaseSettings):
     log_level: str = "INFO"
     sip_bind_host: str = "0.0.0.0"
     sip_port: int = 6060
+    sip_public_domain: str = ""
     sip_public_ip: str = ""
     rtp_port_min: int = 10_000
     rtp_port_max: int = 20_000
@@ -80,3 +81,8 @@ class GatewaySettings(BaseSettings):
     def advertised_rtp_ip(self) -> str:
         """Return RTP IP advertised in SDP."""
         return self.rtp_advertise_ip or self.sip_public_ip or self.sip_bind_host
+
+    @property
+    def advertised_sip_host(self) -> str:
+        """Return SIP host advertised in Contact headers."""
+        return self.sip_public_domain or self.sip_public_ip or self.sip_bind_host

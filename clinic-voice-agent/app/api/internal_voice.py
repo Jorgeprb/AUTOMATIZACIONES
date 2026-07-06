@@ -53,6 +53,8 @@ class VoiceContextResponse(BaseModel):
     voice_id: str | None
     voice_locale: str | None
     voice_gender: str | None
+    azure_speech_region: str | None
+    voice_style: str | None
     voice_speed: str
     voice_pitch: str
     voice_stability: str | None
@@ -80,6 +82,8 @@ class InternalTTSRequest(BaseModel):
     voice_id: str | None = None
     voice_locale: str | None = None
     voice_gender: str | None = None
+    azure_speech_region: str | None = None
+    voice_style: str | None = None
     voice_speed: Decimal = Decimal("1.00")
     voice_pitch: Decimal = Decimal("0.00")
     voice_stability: Decimal | None = None
@@ -178,6 +182,8 @@ def create_voice_context(
         voice_id=config.voice_id,
         voice_locale=config.voice_locale,
         voice_gender=config.voice_gender,
+        azure_speech_region=config.azure_speech_region,
+        voice_style=config.voice_style,
         voice_speed=str(config.voice_speed),
         voice_pitch=str(config.voice_pitch),
         voice_stability=_decimal_to_str(config.voice_stability),
@@ -218,6 +224,8 @@ def synthesize_internal_voice(
             telephony_codec=payload.telephony_codec,
             locale=payload.voice_locale,
             gender=payload.voice_gender,
+            provider_region=payload.azure_speech_region,
+            voice_style=payload.voice_style,
             voice_speed=payload.voice_speed,
             voice_pitch=payload.voice_pitch,
             voice_stability=payload.voice_stability,

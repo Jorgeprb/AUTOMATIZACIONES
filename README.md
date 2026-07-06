@@ -116,7 +116,7 @@ El monorepo incluye un servicio independiente en [`sip-gateway/`](./sip-gateway)
 para llamadas directas al VPS:
 
 ```text
-VoIP Studio -> sip:bot@IP_PUBLICA:6060 -> sip-gateway -> FastAPI -> OpenAI Realtime + TTS provider
+VoIP Studio -> sip:bot@sip.autogal.es:6060 -> sip-gateway -> FastAPI -> OpenAI Realtime + TTS provider
 ```
 
 Este flujo convive con OpenAI Hosted SIP. Debe usarse cuando el asistente tiene
@@ -125,7 +125,8 @@ desde tu VPS.
 
 Variables principales:
 
-- `SIP_PUBLIC_IP`: IP pública del VPS.
+- `SIP_PUBLIC_DOMAIN=sip.autogal.es`.
+- `SIP_PUBLIC_IP=51.210.180.115`: IP pública del VPS.
 - `RTP_ADVERTISE_IP`: normalmente la misma IP pública.
 - `SIP_PORT=6060`.
 - `RTP_PORT_MIN=10000` y `RTP_PORT_MAX=20000`.
@@ -137,7 +138,7 @@ En el firewall del VPS abre UDP `6060` y el rango UDP `10000-20000`. En VoIP
 Studio configura el destino como:
 
 ```text
-sip:bot@IP_PUBLICA:6060
+sip:bot@sip.autogal.es:6060
 ```
 
 Arranque con Docker Compose:
@@ -149,6 +150,8 @@ docker compose logs -f sip-gateway
 
 Notas importantes:
 
+- OpenAI Hosted SIP sigue igual para voces OpenAI.
+- Azure `gl-ES-SabelaNeural` requiere VPS Media Bridge.
 - soporta PCMU/8000 y PCMA/8000;
 - no actúa como relay SIP abierto, solo contesta llamadas entrantes;
 - si hay barge-in, cancela la respuesta/TTS en curso y vuelve a escuchar;

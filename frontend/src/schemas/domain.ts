@@ -46,6 +46,8 @@ export interface AssistantConfig {
   voice_id: string | null;
   voice_locale: string | null;
   voice_gender: string | null;
+  azure_speech_region: string | null;
+  voice_style: string | null;
   voice_speed: string;
   voice_pitch: string;
   voice_stability: string | null;

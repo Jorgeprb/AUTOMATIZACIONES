@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Protocol
@@ -68,6 +69,8 @@ class TTSRequest:
     telephony_codec: str = "pcmu"
     locale: str | None = None
     gender: str | None = None
+    provider_region: str | None = None
+    voice_style: str | None = None
     voice_speed: Decimal = Decimal("1.00")
     voice_pitch: Decimal = Decimal("0.00")
     voice_stability: Decimal | None = None
@@ -100,6 +103,16 @@ class TTSProvider(Protocol):
         """Generate one finite audio response and close all resources."""
 
 
+class VoiceRuntimeProvider(TTSProvider, Protocol):
+    """Full runtime interface for providers that expose all voice operations."""
+
+    def preview(self, request: TTSRequest) -> TTSResult:
+        """Generate preview audio using the same provider config."""
+
+    def synthesize_stream(self, request: TTSRequest) -> Iterator[bytes]:
+        """Yield audio chunks for bridges that can stream output."""
+
+
 class StreamingTTSProvider(Protocol):
     """Streaming text-to-speech provider interface for future media bridge use."""
 
@@ -122,6 +135,13 @@ class VoiceCatalogProvider(Protocol):
 
     def catalog(self) -> list[VoiceCatalogItem]:
         """Return known voices, optionally fetched from an official API."""
+
+
+class VoiceCatalogRuntimeProvider(VoiceCatalogProvider, Protocol):
+    """Catalog provider with UI-friendly alias."""
+
+    def get_voice_catalog(self) -> list[VoiceCatalogItem]:
+        """Alias for provider-neutral catalog naming."""
 
 
 class STTProvider(Protocol):

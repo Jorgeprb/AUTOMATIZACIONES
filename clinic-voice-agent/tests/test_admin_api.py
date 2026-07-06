@@ -647,11 +647,20 @@ async def test_assistant_dual_call_audio_policy(database_engine: Engine) -> None
                 "name": "Azure",
                 "voice_provider": "azure",
                 "call_audio_mode": "openai_hosted_sip",
-                "voice_id": "es-ES-ElviraNeural",
+                "voice_id": "gl-ES-SabelaNeural",
+                "voice_locale": "gl-ES",
+                "azure_speech_region": "westeurope",
+                "voice_style": "cheerful",
+                "telephony_codec": "pcma",
             },
         )
         assert azure_config.status_code == 201, azure_config.text
         assert azure_config.json()["voice_provider"] == "azure"
+        assert azure_config.json()["voice_id"] == "gl-ES-SabelaNeural"
+        assert azure_config.json()["voice_locale"] == "gl-ES"
+        assert azure_config.json()["azure_speech_region"] == "westeurope"
+        assert azure_config.json()["voice_style"] == "cheerful"
+        assert azure_config.json()["telephony_codec"] == "pcma"
         assert azure_config.json()["call_audio_mode"] == "vps_media_bridge"
 
         cloned_without_confirmation = await client.post(
@@ -728,7 +737,7 @@ async def test_assistant_voice_preview_returns_audio(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The assistant editor should preview voice without creating a conversation."""
-    calls: list[tuple[str, str, str, str | None, str | None, str]] = []
+    calls: list[dict[str, object]] = []
 
     def fake_speech(
         settings: object,
@@ -741,7 +750,17 @@ async def test_assistant_voice_preview_returns_audio(
         response_format: str = "mp3",
         **kwargs: object,
     ) -> TTSResult:
-        calls.append((provider, text, voice, model, instructions, response_format))
+        calls.append(
+            {
+                "provider": provider,
+                "text": text,
+                "voice": voice,
+                "model": model,
+                "instructions": instructions,
+                "response_format": response_format,
+                **kwargs,
+            }
+        )
         return TTSResult(audio=b"audio-bytes", media_type="audio/wav")
 
     monkeypatch.setattr(core_api, "synthesize_speech", fake_speech)
@@ -759,6 +778,8 @@ async def test_assistant_voice_preview_returns_audio(
                 "realtime_model": "gpt-realtime-2",
                 "tts_preview_voice": "cedar",
                 "voice_instructions": "Habla claro.",
+                "azure_speech_region": "westeurope",
+                "voice_style": "cheerful",
                 "preview_audio_format": "wav",
             },
         )
@@ -767,22 +788,17 @@ async def test_assistant_voice_preview_returns_audio(
     assert response.headers["content-type"].startswith("audio/wav")
     assert response.content == b"audio-bytes"
     assert len(calls) == 1
-    (
-        call_provider,
-        call_text,
-        call_voice,
-        call_model,
-        call_instructions,
-        call_format,
-    ) = calls[0]
-    assert call_provider == "openai"
-    assert call_text == "Hola, soy el asistente."
-    assert call_voice == "cedar"
-    assert call_model == "gpt-realtime-2"
-    assert call_format == "wav"
-    assert call_instructions is not None
-    assert "Perfil de voz" in call_instructions
-    assert "Habla claro." in call_instructions
+    call = calls[0]
+    assert call["provider"] == "openai"
+    assert call["text"] == "Hola, soy el asistente."
+    assert call["voice"] == "cedar"
+    assert call["model"] == "gpt-realtime-2"
+    assert call["response_format"] == "wav"
+    assert call["provider_region"] == "westeurope"
+    assert call["voice_style"] == "cheerful"
+    assert isinstance(call["instructions"], str)
+    assert "Perfil de voz" in call["instructions"]
+    assert "Habla claro." in call["instructions"]
 
 
 @pytest.mark.anyio

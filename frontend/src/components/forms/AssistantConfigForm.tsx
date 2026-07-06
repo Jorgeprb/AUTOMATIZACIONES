@@ -118,6 +118,8 @@ function buildConfigPayload(values: AssistantConfigFormValues): AssistantConfigP
     voice_id: values.voice_id.trim() || null,
     voice_locale: values.voice_locale.trim() || null,
     voice_gender: values.voice_gender.trim() || null,
+    azure_speech_region: values.azure_speech_region.trim() || null,
+    voice_style: values.voice_style.trim() || null,
     voice_stability: values.voice_stability || null,
     voice_similarity: values.voice_similarity || null,
     voice_temperature: values.voice_temperature || null,
@@ -167,6 +169,8 @@ export function AssistantConfigForm({
   const ttsModel = watch("tts_model");
   const voiceId = watch("voice_id");
   const voiceLocale = watch("voice_locale");
+  const azureSpeechRegion = watch("azure_speech_region");
+  const voiceStyle = watch("voice_style");
   const voiceSpeed = watch("voice_speed");
   const voicePitch = watch("voice_pitch");
   const voiceStability = watch("voice_stability");
@@ -319,6 +323,50 @@ export function AssistantConfigForm({
     }
   }, [callAudioMode, setValue, usesExternalVoiceProvider]);
 
+  const applySabelaVoice = useCallback(() => {
+    setValue("voice_provider", "azure", {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("call_audio_mode", "vps_media_bridge", {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("tts_model", "azure-neural", {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("voice_id", "gl-ES-SabelaNeural", {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("tts_preview_voice", "gl-ES-SabelaNeural", {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("voice_locale", "gl-ES", {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("language", "gl-ES", {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("telephony_codec", "pcma", {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("output_audio_format", "wav", {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("voice_style", "", {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    toast.success("Sabela lista: Azure, gallego y VPS Media Bridge.");
+  }, [setValue]);
+
   const clearVoiceSamples = useCallback(() => {
     for (const url of voiceSampleUrlsRef.current) URL.revokeObjectURL(url);
     voiceSampleUrlsRef.current = [];
@@ -338,6 +386,8 @@ export function AssistantConfigForm({
       voice_id: getValues().voice_id.trim() || null,
       voice_locale: getValues().voice_locale.trim() || null,
       voice_gender: getValues().voice_gender.trim() || null,
+      azure_speech_region: getValues().azure_speech_region.trim() || null,
+      voice_style: getValues().voice_style.trim() || null,
       voice_speed: getValues().voice_speed,
       voice_pitch: getValues().voice_pitch,
       voice_stability: getValues().voice_stability || null,
@@ -380,6 +430,8 @@ export function AssistantConfigForm({
       ttsPreviewVoice,
       usesExternalVoiceProvider,
       voiceProvider,
+      azureSpeechRegion,
+      voiceStyle,
       voiceInstructions,
       voicePreset,
       voicePreviewText,
@@ -1117,8 +1169,8 @@ export function AssistantConfigForm({
 
           <div className={activeTab === "settings" ? "contents" : "hidden"}>
           <FormSection
-            title="2. Voz y modelo"
-            description="Opciones permitidas por la configuración del backend."
+            title="2. Voz y llamada"
+            description="Modo de llamada, proveedor, modelo, voz, idioma, códec y pruebas."
           >
             <div>
               <Label htmlFor="assistant-model">Modelo Realtime</Label>
@@ -1202,6 +1254,23 @@ export function AssistantConfigForm({
                   variable que falta.
                 </p>
               ) : null}
+              {voiceProvider === "azure" && !selectedVoiceProvider?.configured ? (
+                <p className="mt-1 text-xs font-medium text-[#bd3341]">
+                  Falta AZURE_SPEECH_KEY o AZURE_SPEECH_REGION en el backend.
+                  Si pones región aquí, solo queda obligatoria la key.
+                </p>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-3"
+                onClick={applySabelaVoice}
+              >
+                Usar Sabela galego
+              </Button>
+              <p className="mt-1 text-xs text-[#7d8899]">
+                Aplica Azure, gl-ES-SabelaNeural, gl-ES, PCMA y VPS Media Bridge.
+              </p>
             </div>
             <div className="sm:col-span-2 rounded-xl border border-[#dce4ff] bg-[#f8faff] p-4 text-sm leading-6 text-[#526078]">
               {usesExternalVoiceProvider ? (
@@ -1211,7 +1280,8 @@ export function AssistantConfigForm({
                   </strong>{" "}
                   VoIP Studio debe llamar a tu SIP/RTP en VPS; el VPS conecta
                   con OpenAI Realtime WebSocket, genera TTS externo y devuelve
-                  RTP. OpenAI Hosted SIP solo soporta voces OpenAI.
+                  RTP. OpenAI Hosted SIP solo puede usar voces OpenAI.
+                  Configura VoIP Studio con sip:bot@sip.autogal.es:6060.
                 </>
               ) : (
                 <>
@@ -1386,7 +1456,36 @@ export function AssistantConfigForm({
                 <Select
                   id="assistant-voice-id"
                   className="mt-1.5"
-                  {...register("voice_id")}
+                  value={voiceId}
+                  onChange={(event) => {
+                    const selectedVoiceId = event.target.value;
+                    if (
+                      voiceProvider === "azure" &&
+                      selectedVoiceId === "gl-ES-SabelaNeural"
+                    ) {
+                      applySabelaVoice();
+                      return;
+                    }
+                    setValue("voice_id", selectedVoiceId, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
+                    const selectedVoice = providerVoiceChoices.find(
+                      (voice) => voice.id === selectedVoiceId,
+                    );
+                    if (selectedVoice?.model) {
+                      setValue("tts_model", selectedVoice.model, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                    }
+                    if (selectedVoice?.locale) {
+                      setValue("voice_locale", selectedVoice.locale, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                    }
+                  }}
                 >
                   <option value="">Selecciona voz del catálogo</option>
                   {providerVoiceChoices.map((voice) => (
@@ -1432,6 +1531,36 @@ export function AssistantConfigForm({
                 {...register("voice_gender")}
               />
             </div>
+            {voiceProvider === "azure" ? (
+              <>
+                <div>
+                  <Label htmlFor="assistant-azure-region">
+                    Región Azure Speech
+                  </Label>
+                  <Input
+                    id="assistant-azure-region"
+                    className="mt-1.5"
+                    placeholder="Ej. westeurope"
+                    {...register("azure_speech_region")}
+                  />
+                  <p className="mt-1 text-xs text-[#7d8899]">
+                    Si se deja vacío, usa AZURE_SPEECH_REGION del backend.
+                  </p>
+                </div>
+                <div>
+                  <Label htmlFor="assistant-voice-style">Estilo Azure</Label>
+                  <Input
+                    id="assistant-voice-style"
+                    className="mt-1.5"
+                    placeholder="Opcional. Ej. cheerful, customer-service"
+                    {...register("voice_style")}
+                  />
+                  <p className="mt-1 text-xs text-[#7d8899]">
+                    No todas las voces aceptan estilos. Vacío es más seguro.
+                  </p>
+                </div>
+              </>
+            ) : null}
             <div>
               <Label htmlFor="assistant-output-audio-format">
                 Formato audio salida

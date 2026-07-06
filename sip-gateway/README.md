@@ -25,10 +25,11 @@ VoIP Studio
 ```env
 SIP_BIND_HOST=0.0.0.0
 SIP_PORT=6060
-SIP_PUBLIC_IP=203.0.113.10
+SIP_PUBLIC_DOMAIN=sip.autogal.es
+SIP_PUBLIC_IP=51.210.180.115
 RTP_PORT_MIN=10000
 RTP_PORT_MAX=20000
-RTP_ADVERTISE_IP=203.0.113.10
+RTP_ADVERTISE_IP=51.210.180.115
 SIP_ALLOWED_IPS=
 BACKEND_INTERNAL_URL=http://app:8000
 OPENAI_API_KEY=...
@@ -51,8 +52,11 @@ Abre en firewall/NAT del VPS:
 En VoIP Studio apunta el forwarding a:
 
 ```text
-sip:bot@IP_PUBLICA:6060
+sip:bot@sip.autogal.es:6060
 ```
+
+OpenAI Hosted SIP no cambia. Úsalo para voces OpenAI. Usa este gateway para
+Azure `gl-ES-SabelaNeural` y otras voces externas.
 
 ## Capacidades implementadas
 

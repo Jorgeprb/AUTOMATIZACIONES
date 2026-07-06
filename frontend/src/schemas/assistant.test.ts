@@ -113,4 +113,19 @@ describe("assistant configuration", () => {
     expect(customWithoutLegal.success).toBe(false);
     expect(customWithLegal.success).toBe(true);
   });
+
+  it("accepts Azure Sabela with VPS media bridge and PCMA", () => {
+    const sabela = assistantConfigFormSchema.safeParse({
+      ...assistantConfigDefaults,
+      call_audio_mode: "vps_media_bridge",
+      voice_provider: "azure",
+      tts_model: "azure-neural",
+      voice_id: "gl-ES-SabelaNeural",
+      voice_locale: "gl-ES",
+      azure_speech_region: "westeurope",
+      telephony_codec: "pcma",
+    });
+
+    expect(sabela.success).toBe(true);
+  });
 });

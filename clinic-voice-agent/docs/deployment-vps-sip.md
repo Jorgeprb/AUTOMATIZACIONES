@@ -115,8 +115,9 @@ GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 GOOGLE_REDIRECT_URI=https://voice.example.com/auth/google/callback
 GOOGLE_TOKEN_ENCRYPTION_KEY=...
-SIP_PUBLIC_IP=IP_PUBLICA_VPS
-RTP_ADVERTISE_IP=IP_PUBLICA_VPS
+SIP_PUBLIC_DOMAIN=sip.autogal.es
+SIP_PUBLIC_IP=51.210.180.115
+RTP_ADVERTISE_IP=51.210.180.115
 SIP_PORT=6060
 RTP_PORT_MIN=10000
 RTP_PORT_MAX=20000
@@ -219,13 +220,16 @@ El test event de OpenAI debe devolver `200`.
 ## VoIP Studio
 
 Para VPS Media Bridge, no uses el endpoint SIP de OpenAI. Apunta VoIP Studio al
-VPS:
+VPS. Para Sabela/Azure:
 
 ```text
-sip:bot@IP_PUBLICA_VPS:6060
+sip:bot@sip.autogal.es:6060
 ```
 
 Mantén el número en VoIP Studio. No hace falta portarlo.
+
+OpenAI Hosted SIP sigue igual para voces OpenAI. Solo cambia a VPS Media Bridge
+cuando el proveedor de voz sea Azure, Google, ElevenLabs u otro externo.
 
 Si tienes IPs conocidas de VoIP Studio, limita:
 

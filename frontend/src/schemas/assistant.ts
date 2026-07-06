@@ -77,6 +77,8 @@ export const assistantConfigFormSchema = z
   voice_id: z.string(),
   voice_locale: z.string(),
   voice_gender: z.string(),
+  azure_speech_region: z.string(),
+  voice_style: z.string(),
   voice_speed: requiredDecimalString("La velocidad de voz", 0.25, 4),
   voice_pitch: requiredDecimalString("El pitch", -24, 24),
   voice_stability: optionalDecimalString("La estabilidad", 0, 1),
@@ -216,6 +218,8 @@ export interface AssistantConfigPayload
     | "voice_id"
     | "voice_locale"
     | "voice_gender"
+    | "azure_speech_region"
+    | "voice_style"
     | "voice_stability"
     | "voice_similarity"
     | "voice_temperature"
@@ -226,6 +230,8 @@ export interface AssistantConfigPayload
   voice_id: string | null;
   voice_locale: string | null;
   voice_gender: string | null;
+  azure_speech_region: string | null;
+  voice_style: string | null;
   voice_stability: string | null;
   voice_similarity: string | null;
   voice_temperature: string | null;
@@ -242,6 +248,8 @@ export const assistantConfigDefaults: AssistantConfigFormValues = {
   voice_id: "",
   voice_locale: "es-ES",
   voice_gender: "",
+  azure_speech_region: "",
+  voice_style: "",
   voice_speed: "1",
   voice_pitch: "0",
   voice_stability: "",

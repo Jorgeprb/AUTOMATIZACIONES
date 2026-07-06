@@ -6,6 +6,8 @@ import audioop
 import io
 import wave
 
+from sip_gateway.codecs import pcma_to_pcm16le, pcmu_to_pcm16le
+
 SAMPLE_RATE = 8000
 SAMPLES_PER_20MS = 160
 BYTES_PER_20MS_PCM16 = SAMPLES_PER_20MS * 2
@@ -25,6 +27,28 @@ def wav_to_pcm16_8k(data: bytes) -> bytes:
     if frame_rate != SAMPLE_RATE:
         frames, _ = audioop.ratecv(frames, 2, 1, frame_rate, SAMPLE_RATE, None)
     return frames
+
+
+def tts_audio_to_pcm16_8k(
+    data: bytes,
+    *,
+    media_type: str,
+    telephony_codec: str,
+) -> bytes:
+    """Convert backend TTS audio to 8 kHz PCM16 for RTP encoding."""
+    normalized = media_type.casefold()
+    codec = telephony_codec.casefold()
+    if normalized in {"audio/pcma", "audio/x-alaw"}:
+        return pcma_to_pcm16le(data)
+    if normalized in {"audio/pcmu", "audio/basic", "audio/x-mulaw"}:
+        return pcmu_to_pcm16le(data)
+    if normalized in {"audio/l16", "audio/pcm", "audio/pcm16"}:
+        return data
+    if codec == "pcma" and normalized == "application/octet-stream":
+        return pcma_to_pcm16le(data)
+    if codec == "pcmu" and normalized == "application/octet-stream":
+        return pcmu_to_pcm16le(data)
+    return wav_to_pcm16_8k(data)
 
 
 def chunk_pcm16_20ms(pcm16le: bytes) -> list[bytes]:

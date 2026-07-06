@@ -622,6 +622,8 @@ def synthesize_test_session_audio(
             telephony_codec=config.telephony_codec,
             locale=config.voice_locale,
             gender=config.voice_gender,
+            provider_region=config.azure_speech_region,
+            voice_style=config.voice_style,
             voice_speed=config.voice_speed,
             voice_pitch=config.voice_pitch,
             voice_stability=config.voice_stability,

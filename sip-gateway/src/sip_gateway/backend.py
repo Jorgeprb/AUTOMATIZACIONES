@@ -25,6 +25,8 @@ class VoiceContext:
     voice_id: str | None
     voice_locale: str | None
     voice_gender: str | None
+    azure_speech_region: str | None
+    voice_style: str | None
     voice_speed: str
     voice_pitch: str
     voice_stability: str | None
@@ -39,6 +41,14 @@ class VoiceContext:
     first_message: str
     instructions: str
     tools: list[dict[str, Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class TTSAudio:
+    """One audio response from backend TTS."""
+
+    audio: bytes
+    media_type: str
 
 
 class BackendClient:
@@ -85,7 +95,7 @@ class BackendClient:
         *,
         context: VoiceContext,
         text: str,
-    ) -> bytes:
+    ) -> TTSAudio:
         """Generate one TTS chunk through backend provider layer."""
         payload = {
             "clinic_id": context.clinic_id,
@@ -96,6 +106,8 @@ class BackendClient:
             "voice_id": context.voice_id,
             "voice_locale": context.voice_locale,
             "voice_gender": context.voice_gender,
+            "azure_speech_region": context.azure_speech_region,
+            "voice_style": context.voice_style,
             "voice_speed": context.voice_speed,
             "voice_pitch": context.voice_pitch,
             "voice_stability": context.voice_stability,
@@ -112,7 +124,13 @@ class BackendClient:
                 headers=self._headers(),
             )
             response.raise_for_status()
-            return response.content
+            return TTSAudio(
+                audio=response.content,
+                media_type=response.headers.get(
+                    "content-type",
+                    "application/octet-stream",
+                ).split(";", maxsplit=1)[0],
+            )
 
     async def execute_tool(
         self,

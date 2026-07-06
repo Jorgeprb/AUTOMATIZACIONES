@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import struct
 
+from sip_gateway.audio import tts_audio_to_pcm16_8k
 from sip_gateway.codecs import (
     decode_g711,
     encode_g711,
@@ -63,6 +64,21 @@ def test_g711_codecs_decode_and_encode_audio() -> None:
     assert len(pcma_to_pcm16le(pcma)) == len(pcm)
     assert len(decode_g711(0, encode_g711(0, pcm))) == len(pcm)
     assert pcm16_energy(pcm) > 0
+
+
+def test_tts_audio_to_pcm16_handles_raw_telephony_codecs() -> None:
+    pcm = struct.pack("<hhhh", -1000, 0, 1000, 3000)
+
+    assert tts_audio_to_pcm16_8k(
+        pcm16le_to_pcma(pcm),
+        media_type="audio/pcma",
+        telephony_codec="pcma",
+    )
+    assert tts_audio_to_pcm16_8k(
+        pcm16le_to_pcmu(pcm),
+        media_type="audio/pcmu",
+        telephony_codec="pcmu",
+    )
 
 
 def test_rtp_port_pool_leases_even_ports_and_releases() -> None:

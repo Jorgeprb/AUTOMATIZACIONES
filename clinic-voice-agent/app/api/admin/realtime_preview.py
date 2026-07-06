@@ -13,6 +13,7 @@ from app.admin_schemas import (
     RealtimePreviewHeartbeatResponse,
     RealtimePreviewSessionCreate,
     RealtimePreviewSessionResponse,
+    RealtimePreviewStopRequest,
     RealtimePreviewToolCallRequest,
     RealtimePreviewToolCallResponse,
     VoiceProvider,
@@ -76,6 +77,26 @@ def create_realtime_preview_session(
 
 
 @router.post(
+    "/clinics/{clinic_id}/assistant-configs/realtime-test/start",
+    response_model=RealtimePreviewSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def start_realtime_test_session(
+    clinic_id: uuid.UUID,
+    payload: RealtimePreviewSessionCreate,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> RealtimePreviewSessionResponse:
+    """Compatibility alias for UI Realtime microphone tests."""
+    return create_realtime_preview_session(
+        clinic_id=clinic_id,
+        payload=payload,
+        session=session,
+        settings=settings,
+    )
+
+
+@router.post(
     "/realtime-preview-sessions/{session_id}/heartbeat",
     response_model=RealtimePreviewHeartbeatResponse,
 )
@@ -126,3 +147,17 @@ def execute_realtime_preview_tool_call(
 def close_realtime_preview_session(session_id: uuid.UUID) -> None:
     """Invalidate one browser Realtime preview session."""
     close_preview_session(get_session_factory(), session_id)
+
+
+@router.post(
+    "/clinics/{clinic_id}/assistant-configs/realtime-test/stop",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def stop_realtime_test_session(
+    clinic_id: uuid.UUID,
+    payload: RealtimePreviewStopRequest,
+    session: Annotated[Session, Depends(get_db)],
+) -> None:
+    """Compatibility alias to invalidate one browser Realtime preview session."""
+    clinic_or_404(session, clinic_id)
+    close_preview_session(get_session_factory(), payload.session_id)

@@ -526,6 +526,11 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     voice_id: Mapped[str | None] = mapped_column(String(240), nullable=True)
     voice_locale: Mapped[str | None] = mapped_column(String(32), nullable=True)
     voice_gender: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    azure_speech_region: Mapped[str | None] = mapped_column(
+        String(80),
+        nullable=True,
+    )
+    voice_style: Mapped[str | None] = mapped_column(String(80), nullable=True)
     voice_speed: Mapped[Decimal] = mapped_column(
         Numeric(4, 2),
         server_default=text("1.00"),

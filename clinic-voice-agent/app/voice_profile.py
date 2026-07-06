@@ -37,6 +37,12 @@ class VoiceProfileLike(Protocol):
     def voice_gender(self) -> str | None: ...
 
     @property
+    def azure_speech_region(self) -> str | None: ...
+
+    @property
+    def voice_style(self) -> str | None: ...
+
+    @property
     def voice_speed(self) -> Decimal: ...
 
     @property
@@ -211,6 +217,8 @@ def build_voice_instruction_block(profile: VoiceProfileLike) -> str:
         ),
         f"- Voz externa/ID: {_clean(profile.voice_id) or 'no configurada'}.",
         f"- Modelo TTS externo: {_clean(profile.tts_model) or 'no configurado'}.",
+        f"- Region Azure: {_clean(profile.azure_speech_region) or 'global/env'}.",
+        f"- Estilo de voz: {_clean(profile.voice_style) or 'neutro'}.",
         (
             f"- Locale/genero: {_clean(profile.voice_locale) or 'no configurado'} "
             f"/ {_clean(profile.voice_gender) or 'no configurado'}."

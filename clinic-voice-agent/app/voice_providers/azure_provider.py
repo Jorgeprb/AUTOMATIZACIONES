@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+from collections.abc import Iterator
 
 import httpx
 
@@ -58,8 +59,8 @@ class AzureTTSProvider:
     def _key(self) -> str:
         return self._settings.azure_speech_key.get_secret_value().strip()
 
-    def _region(self) -> str:
-        return self._settings.azure_speech_region.strip()
+    def _region(self, override: str | None = None) -> str:
+        return (override or self._settings.azure_speech_region).strip()
 
     def info(self) -> VoiceProviderInfo:
         """Return provider metadata without exposing secrets."""
@@ -131,25 +132,35 @@ class AzureTTSProvider:
     def synthesize(self, request: TTSRequest) -> TTSResult:
         """Generate finite audio using Azure Speech SSML."""
         key = self._key()
-        region = self._region()
+        region = self._region(request.provider_region)
         if not key or not region:
             raise VoiceProviderCredentialError(
                 "AZURE_SPEECH_KEY y AZURE_SPEECH_REGION deben estar configuradas."
             )
+        raw_codec = (
+            request.response_format == "wav"
+            and request.telephony_codec in {"pcma", "pcmu"}
+        )
         output_format = AZURE_OUTPUT_FORMATS.get(
-            request.telephony_codec
-            if request.response_format == "wav" and request.telephony_codec
-            else request.response_format,
+            request.telephony_codec if raw_codec else request.response_format,
             AZURE_OUTPUT_FORMATS["mp3"],
         )
         voice_id = request.voice_id.strip()
         escaped = html.escape(request.text.strip())
         if not voice_id:
             raise VoiceProviderError("Falta voice_id para Azure Speech.")
+        style = (request.voice_style or "").strip()
+        escaped_text = escaped
+        if style:
+            escaped_text = (
+                "<mstts:express-as style='"
+                f"{html.escape(style)}'>{escaped}</mstts:express-as>"
+            )
         ssml = (
-            "<speak version='1.0' xml:lang='"
+            "<speak version='1.0' "
+            "xmlns:mstts='https://www.w3.org/2001/mstts' xml:lang='"
             f"{html.escape(request.locale or 'es-ES')}'>"
-            f"<voice name='{html.escape(voice_id)}'>{escaped}</voice></speak>"
+            f"<voice name='{html.escape(voice_id)}'>{escaped_text}</voice></speak>"
         )
         try:
             response = httpx.post(
@@ -170,4 +181,21 @@ class AzureTTSProvider:
             ) from exc
         except httpx.HTTPError as exc:
             raise VoiceProviderError("No se pudo generar audio con Azure.") from exc
+        if raw_codec:
+            media_type = (
+                "audio/pcma" if request.telephony_codec == "pcma" else "audio/pcmu"
+            )
+            return TTSResult(audio=response.content, media_type=media_type)
         return TTSResult.from_format(response.content, request.response_format)
+
+    def preview(self, request: TTSRequest) -> TTSResult:
+        """Generate one finite preview audio."""
+        return self.synthesize(request)
+
+    def synthesize_stream(self, request: TTSRequest) -> Iterator[bytes]:
+        """Yield one finite Azure chunk; streaming can be added later."""
+        yield self.synthesize(request).audio
+
+    def get_voice_catalog(self) -> list[VoiceCatalogItem]:
+        """Return catalog using provider-neutral name."""
+        return self.catalog()

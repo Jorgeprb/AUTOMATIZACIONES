@@ -44,6 +44,8 @@ class FakeBackend:
             voice_id=None,
             voice_locale="es-ES",
             voice_gender=None,
+            azure_speech_region=None,
+            voice_style=None,
             voice_speed="1.00",
             voice_pitch="0.00",
             voice_stability=None,

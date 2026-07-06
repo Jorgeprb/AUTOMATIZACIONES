@@ -264,7 +264,7 @@ class SipGateway:
             addr,
             body=sdp_answer,
             to_tag=call.local_tag,
-            contact=f"<sip:bot@{self.settings.sip_public_ip or addr[0]}:"
+            contact=f"<sip:bot@{self.settings.advertised_sip_host or addr[0]}:"
             f"{self.settings.sip_port}>",
         )
 

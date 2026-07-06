@@ -308,6 +308,8 @@ describe("operational API calls", () => {
       voice_id: null,
       voice_locale: "es-ES",
       voice_gender: null,
+      azure_speech_region: null,
+      voice_style: null,
       voice_speed: "1",
       voice_pitch: "0",
       voice_stability: null,

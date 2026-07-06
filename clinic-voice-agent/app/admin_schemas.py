@@ -297,6 +297,8 @@ class AssistantConfigBase(BaseModel):
     voice_id: str | None = Field(default=None, max_length=240)
     voice_locale: str | None = Field(default=None, max_length=32)
     voice_gender: str | None = Field(default=None, max_length=32)
+    azure_speech_region: str | None = Field(default=None, max_length=80)
+    voice_style: str | None = Field(default=None, max_length=80)
     voice_speed: Decimal = Field(
         default=Decimal("1.00"),
         ge=Decimal("0.25"),
@@ -413,6 +415,8 @@ class AssistantConfigUpdate(BaseModel):
     voice_id: str | None = Field(default=None, max_length=240)
     voice_locale: str | None = Field(default=None, max_length=32)
     voice_gender: str | None = Field(default=None, max_length=32)
+    azure_speech_region: str | None = Field(default=None, max_length=80)
+    voice_style: str | None = Field(default=None, max_length=80)
     voice_speed: Decimal | None = Field(
         default=None,
         ge=Decimal("0.25"),
@@ -520,6 +524,8 @@ class AssistantVoicePreviewRequest(BaseModel):
     voice_id: str | None = Field(default=None, max_length=240)
     voice_locale: str | None = Field(default=None, max_length=32)
     voice_gender: str | None = Field(default=None, max_length=32)
+    azure_speech_region: str | None = Field(default=None, max_length=80)
+    voice_style: str | None = Field(default=None, max_length=80)
     voice_speed: Decimal = Field(
         default=Decimal("1.00"),
         ge=Decimal("0.25"),
@@ -594,6 +600,12 @@ class RealtimePreviewHeartbeatResponse(BaseModel):
 
     ok: bool
     expires_at: datetime
+
+
+class RealtimePreviewStopRequest(BaseModel):
+    """Stop one browser Realtime preview session by id."""
+
+    session_id: uuid.UUID
 
 
 class PromptPreviewResponse(BaseModel):

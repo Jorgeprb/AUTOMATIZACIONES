@@ -11,7 +11,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
-from sip_gateway.audio import chunk_pcm16_20ms, sentence_chunks, wav_to_pcm16_8k
+from sip_gateway.audio import chunk_pcm16_20ms, sentence_chunks, tts_audio_to_pcm16_8k
 from sip_gateway.backend import BackendClient, VoiceContext
 from sip_gateway.codecs import decode_g711, encode_g711, pcm16_energy
 from sip_gateway.config import GatewaySettings
@@ -242,11 +242,15 @@ class GatewayCallSession:
                     break
                 started = time.perf_counter()
                 try:
-                    wav_audio = await self.backend.synthesize_tts(
+                    tts_audio = await self.backend.synthesize_tts(
                         context=self.context,
                         text=chunk,
                     )
-                    pcm16 = wav_to_pcm16_8k(wav_audio)
+                    pcm16 = tts_audio_to_pcm16_8k(
+                        tts_audio.audio,
+                        media_type=tts_audio.media_type,
+                        telephony_codec=self.context.telephony_codec,
+                    )
                 except Exception:
                     logger.exception(
                         "tts_chunk_failed",
