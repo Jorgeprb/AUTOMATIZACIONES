@@ -474,6 +474,30 @@ def build_realtime_instructions(context: ClinicContext) -> str:
     strict_calendar_usage = (
         "activado" if config.strict_calendar_mode else "desactivado"
     )
+    call_audio_lines = [
+        f"- Modo de llamada: {config.call_audio_mode}.",
+        f"- Proveedor de voz: {config.voice_provider}.",
+        f"- Voz Realtime OpenAI: {config.realtime_voice}.",
+        f"- Voz externa/ID: {_clean(config.voice_id) or 'no configurada'}.",
+        f"- Modelo TTS externo: {_clean(config.tts_model) or 'no configurado'}.",
+        (
+            f"- Locale/género voz: {_clean(config.voice_locale) or 'no configurado'} "
+            f"/ {_clean(config.voice_gender) or 'no configurado'}."
+        ),
+        f"- Formato audio salida: {config.output_audio_format}.",
+        f"- Codec telefónico: {config.telephony_codec}.",
+    ]
+    if config.voice_provider != "openai":
+        call_audio_lines.append(
+            "- Las voces externas requieren VPS Media Bridge; no son válidas "
+            "con OpenAI Hosted SIP. No prometas una voz externa si la llamada "
+            "entra por OpenAI Hosted SIP."
+        )
+    else:
+        call_audio_lines.append(
+            "- Proveedor OpenAI: puede funcionar con OpenAI Hosted SIP o con "
+            "VPS Media Bridge si se configura así."
+        )
     flow_guidance = (
         render_flow_prompt(context.active_conversation_flow)
         if context.active_conversation_flow is not None
@@ -490,6 +514,10 @@ Debes avisar al inicio de que eres un asistente virtual.
 Primer mensaje configurado: "{_clean(config.first_message)}"
 
 {voice_instruction_block}
+
+# Arquitectura de audio de llamada
+
+{chr(10).join(call_audio_lines)}
 
 # Instrucciones de la clínica
 

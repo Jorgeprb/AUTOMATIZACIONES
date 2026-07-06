@@ -84,6 +84,76 @@ exactamente qué variable corregir.
 
 No se usan service accounts.
 
+## Proveedores de voz
+
+El backend expone una capa provider-agnostic para TTS/catálogos de voz:
+
+- `GET /api/admin/voice-providers`
+- `GET /api/admin/voice-providers/{provider}/voices`
+- `POST /api/admin/voice-providers/sync`
+- `POST /api/admin/clinics/{clinic_id}/assistant-configs/voice-preview`
+
+OpenAI funciona con `OPENAI_API_KEY`. Los demás proveedores son opcionales:
+Azure, Google, ElevenLabs, Amazon Polly, Deepgram, Cartesia, Resemble,
+Custom HTTP y adaptadores locales. Si falta una credencial, el panel permite
+guardar configuración, pero la prueba de voz devuelve un error claro con la
+variable que falta.
+
+Para refrescar voces disponibles:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Headers @{ "X-Admin-API-Key" = $env:ADMIN_API_KEY } `
+  http://localhost:8000/api/admin/voice-providers/sync
+```
+
+No se incluyen voces de famosos ni demos no autorizadas. Las voces clonadas o
+custom requieren consentimiento explícito en la configuración del asistente.
+
+## SIP Gateway / VPS Media Bridge
+
+El monorepo incluye un servicio independiente en [`sip-gateway/`](./sip-gateway)
+para llamadas directas al VPS:
+
+```text
+VoIP Studio -> sip:bot@IP_PUBLICA:6060 -> sip-gateway -> FastAPI -> OpenAI Realtime + TTS provider
+```
+
+Este flujo convive con OpenAI Hosted SIP. Debe usarse cuando el asistente tiene
+`voice_provider` distinto de `openai`, y también sirve para probar todo el audio
+desde tu VPS.
+
+Variables principales:
+
+- `SIP_PUBLIC_IP`: IP pública del VPS.
+- `RTP_ADVERTISE_IP`: normalmente la misma IP pública.
+- `SIP_PORT=6060`.
+- `RTP_PORT_MIN=10000` y `RTP_PORT_MAX=20000`.
+- `SIP_ALLOWED_IPS`: allowlist opcional de IPs de VoIP Studio.
+- `BACKEND_INTERNAL_URL=http://app:8000` dentro de Docker.
+- `OPENAI_API_KEY` e `INTERNAL_API_KEY`.
+
+En el firewall del VPS abre UDP `6060` y el rango UDP `10000-20000`. En VoIP
+Studio configura el destino como:
+
+```text
+sip:bot@IP_PUBLICA:6060
+```
+
+Arranque con Docker Compose:
+
+```powershell
+docker compose up -d --build sip-gateway
+docker compose logs -f sip-gateway
+```
+
+Notas importantes:
+
+- soporta PCMU/8000 y PCMA/8000;
+- no actúa como relay SIP abierto, solo contesta llamadas entrantes;
+- si hay barge-in, cancela la respuesta/TTS en curso y vuelve a escuchar;
+- al colgar libera WebSocket, RTP port y tareas async.
+
 ## Exposición local
 
 ```powershell
@@ -103,6 +173,9 @@ webhook público en OpenAI.
 
 La guía completa está en
 [deployment-vps.md](./clinic-voice-agent/docs/deployment-vps.md).
+
+Para desplegar también `sip-gateway` con SIP/RTP directo al VPS, usa:
+[deployment-vps-sip.md](./clinic-voice-agent/docs/deployment-vps-sip.md).
 
 Resumen:
 

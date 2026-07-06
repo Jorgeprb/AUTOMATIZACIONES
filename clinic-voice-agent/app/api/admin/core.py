@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
 from sqlalchemy import cast, or_, select, update
@@ -30,6 +30,9 @@ from app.admin_schemas import (
     ServiceCreate,
     ServiceRead,
     ServiceUpdate,
+    VoiceCatalogRead,
+    VoiceProviderRead,
+    VoiceProviderSyncResponse,
     WorkerCreate,
     WorkerRead,
     WorkerUpdate,
@@ -45,7 +48,7 @@ from app.api.admin.common import (
 )
 from app.api.calendar import calendar_status, list_calendars
 from app.api.workers import create_worker_calendar, link_worker_calendar
-from app.audio import TTSGenerationError, synthesize_openai_speech
+from app.audio import TTSGenerationError, synthesize_speech
 from app.calendar.auth import (
     GoogleOAuthConfigurationError,
     create_google_authorization_request,
@@ -56,6 +59,10 @@ from app.calendar.google_client import (
     get_authorized_calendar_client,
 )
 from app.calendar.scheduler import SchedulingError, query_freebusy
+from app.call_audio import (
+    normalize_call_audio_mode,
+    requires_external_voice_legal_confirmation,
+)
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import (
@@ -64,6 +71,7 @@ from app.models import (
     ConversationFlow,
     PhoneNumber,
     Service,
+    VoiceCatalog,
     Worker,
 )
 from app.openai_realtime.prompt_builder import (
@@ -84,9 +92,14 @@ from app.schemas import (
     WorkerFreeBusyTestResponse,
 )
 from app.voice_profile import (
-    audio_media_type,
     build_voice_instruction_block,
     effective_preview_voice,
+)
+from app.voice_providers import list_voice_provider_info
+from app.voice_providers.catalog import (
+    ensure_voice_catalog_seeded,
+    list_catalog_for_provider,
+    sync_voice_catalog,
 )
 
 router = APIRouter(prefix="/admin")
@@ -166,6 +179,68 @@ def _validate_conversation_flow(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Conversation flow must belong to the clinic.",
+        )
+
+
+def _assistant_config_values_for_create(
+    payload: AssistantConfigCreate,
+) -> dict[str, Any]:
+    """Normalize assistant create payload before it reaches the ORM."""
+    values = payload.model_dump()
+    _enforce_assistant_voice_policy(values)
+    return values
+
+
+def _assistant_config_values_for_update(
+    config: AssistantConfig,
+    payload: AssistantConfigUpdate,
+) -> dict[str, Any]:
+    """Normalize partial assistant updates with existing persisted values."""
+    values = payload.model_dump(exclude_unset=True)
+    _enforce_assistant_voice_policy(values, current=config)
+    return values
+
+
+def _enforce_assistant_voice_policy(
+    values: dict[str, Any],
+    *,
+    current: AssistantConfig | None = None,
+) -> None:
+    """Force VPS media bridge for external voices and guard custom voices."""
+    voice_provider = str(
+        values.get(
+            "voice_provider",
+            current.voice_provider if current is not None else "openai",
+        )
+    )
+    requested_mode = str(
+        values.get(
+            "call_audio_mode",
+            current.call_audio_mode
+            if current is not None
+            else "openai_hosted_sip",
+        )
+    )
+    values["call_audio_mode"] = normalize_call_audio_mode(
+        voice_provider=voice_provider,
+        requested_mode=requested_mode,
+    )
+    legal_confirmed = bool(
+        values.get(
+            "external_voice_legal_confirmed",
+            current.external_voice_legal_confirmed if current is not None else False,
+        )
+    )
+    if (
+        requires_external_voice_legal_confirmation(voice_provider)
+        and not legal_confirmed
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "external_voice_legal_confirmed must be true for cloned or "
+                "custom external voice providers."
+            ),
         )
 
 
@@ -780,14 +855,78 @@ def delete_service(
 
 
 @router.get(
+    "/voice-providers",
+    response_model=list[VoiceProviderRead],
+    tags=["Admin · Voice providers"],
+)
+def list_admin_voice_providers(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> list[VoiceProviderRead]:
+    """Return voice providers and whether their credentials are configured."""
+    return [
+        VoiceProviderRead(
+            id=provider.id,
+            display_name=provider.display_name,
+            configured=provider.configured,
+            supports_tts=provider.supports_tts,
+            supports_streaming=provider.supports_streaming,
+            supports_telephony_codec=provider.supports_telephony_codec,
+            supports_stt=provider.supports_stt,
+            supports_voice_clone=provider.supports_voice_clone,
+            requires_consent=provider.requires_consent,
+            recommended=provider.recommended,
+            enabled=provider.enabled,
+            notes=provider.notes,
+        )
+        for provider in list_voice_provider_info(settings)
+    ]
+
+
+@router.get(
+    "/voice-providers/{provider}/voices",
+    response_model=list[VoiceCatalogRead],
+    tags=["Admin · Voice providers"],
+)
+def list_admin_provider_voices(
+    provider: str,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> list[VoiceCatalog]:
+    """Return synchronized voices for one provider."""
+    try:
+        return list_catalog_for_provider(session, settings, provider)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Proveedor de voz no soportado: {provider}",
+        ) from exc
+
+
+@router.post(
+    "/voice-providers/sync",
+    response_model=VoiceProviderSyncResponse,
+    tags=["Admin · Voice providers"],
+)
+def sync_admin_voice_providers(
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> VoiceProviderSyncResponse:
+    """Sync static and official provider catalogs into the database."""
+    synced = sync_voice_catalog(session, settings)
+    return VoiceProviderSyncResponse(ok=True, synced=synced)
+
+
+@router.get(
     "/assistant-options",
     response_model=AssistantOptionsResponse,
     tags=["Admin · Assistant configs"],
 )
 def get_assistant_options(
+    session: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AssistantOptionsResponse:
     """Return locally allowed models, official voices, and clinic languages."""
+    ensure_voice_catalog_seeded(session, settings)
     return AssistantOptionsResponse(
         default_model=settings.openai_realtime_model,
         default_voice=settings.openai_realtime_voice,
@@ -834,6 +973,25 @@ def get_assistant_options(
                 label="English",
             ),
         ],
+        voice_providers=[
+            VoiceProviderRead(
+                id=provider.id,
+                display_name=provider.display_name,
+                configured=provider.configured,
+                supports_tts=provider.supports_tts,
+                supports_streaming=provider.supports_streaming,
+                supports_telephony_codec=provider.supports_telephony_codec,
+                supports_stt=provider.supports_stt,
+                supports_voice_clone=provider.supports_voice_clone,
+                requires_consent=provider.requires_consent,
+                recommended=provider.recommended,
+                enabled=provider.enabled,
+                notes=provider.notes,
+            )
+            for provider in list_voice_provider_info(settings)
+        ],
+        output_audio_formats=["pcm16", "wav", "mp3", "opus"],
+        telephony_codecs=["pcmu", "pcma", "pcm16"],
     )
 
 
@@ -933,28 +1091,55 @@ def preview_assistant_voice(
 ) -> Response:
     """Generate a finite voice preview without creating a conversation."""
     clinic_or_404(session, clinic_id)
-    voice = effective_preview_voice(payload)
+    if payload.voice_provider == "openai":
+        voice = effective_preview_voice(payload)
+    else:
+        voice = (
+            payload.tts_preview_voice
+            or payload.voice_id
+            or payload.realtime_voice
+        ).strip()
     instructions = build_voice_instruction_block(payload)
     try:
-        audio = synthesize_openai_speech(
+        result = synthesize_speech(
             settings,
+            provider=payload.voice_provider,
             text=payload.text,
             voice=voice,
-            model=payload.realtime_model,
+            model=payload.tts_model or payload.realtime_model,
             instructions=instructions,
             response_format=payload.preview_audio_format,
+            output_audio_format=payload.output_audio_format,
+            telephony_codec=payload.telephony_codec,
+            locale=payload.voice_locale,
+            gender=payload.voice_gender,
+            voice_speed=payload.voice_speed,
+            voice_pitch=payload.voice_pitch,
+            voice_stability=payload.voice_stability,
+            voice_similarity=payload.voice_similarity,
+            voice_temperature=payload.voice_temperature,
         )
     except TTSGenerationError as exc:
         fallback_voice = (payload.fallback_voice or "").strip()
         if fallback_voice and fallback_voice != voice:
             try:
-                audio = synthesize_openai_speech(
+                result = synthesize_speech(
                     settings,
+                    provider=payload.voice_provider,
                     text=payload.text,
                     voice=fallback_voice,
-                    model=payload.realtime_model,
+                    model=payload.tts_model or payload.realtime_model,
                     instructions=instructions,
                     response_format=payload.preview_audio_format,
+                    output_audio_format=payload.output_audio_format,
+                    telephony_codec=payload.telephony_codec,
+                    locale=payload.voice_locale,
+                    gender=payload.voice_gender,
+                    voice_speed=payload.voice_speed,
+                    voice_pitch=payload.voice_pitch,
+                    voice_stability=payload.voice_stability,
+                    voice_similarity=payload.voice_similarity,
+                    voice_temperature=payload.voice_temperature,
                 )
             except TTSGenerationError:
                 raise HTTPException(
@@ -967,8 +1152,8 @@ def preview_assistant_voice(
                 detail=str(exc),
             ) from exc
     return Response(
-        content=audio,
-        media_type=audio_media_type(payload.preview_audio_format),
+        content=result.audio,
+        media_type=result.media_type,
     )
 
 
@@ -1018,7 +1203,8 @@ def create_assistant_config(
         clinic_id,
         payload.conversation_flow_id,
     )
-    config = AssistantConfig(clinic_id=clinic_id, **payload.model_dump())
+    values = _assistant_config_values_for_create(payload)
+    config = AssistantConfig(clinic_id=clinic_id, **values)
     session.add(config)
     commit_or_conflict(
         session,
@@ -1073,7 +1259,8 @@ def update_assistant_config(
             clinic_id,
             payload.conversation_flow_id,
         )
-    apply_update(config, payload)
+    values = _assistant_config_values_for_update(config, payload)
+    set_values(config, values)
     commit_or_conflict(
         session,
         detail="The clinic already has an active assistant configuration.",

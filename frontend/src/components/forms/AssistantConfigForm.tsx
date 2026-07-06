@@ -1,4 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Bot,
@@ -20,6 +21,7 @@ import {
   closeRealtimePreviewSessionKeepalive,
   createRealtimePreviewSession,
   heartbeatRealtimePreviewSession,
+  listVoiceProviderVoices,
   previewAssistantVoice,
   sendRealtimePreviewToolCall,
 } from "@/api/assistants";
@@ -77,6 +79,7 @@ type RealtimePreviewStatus =
   | "connecting"
   | "listening"
   | "speaking"
+  | "interrupted"
   | "error"
   | "closed";
 
@@ -105,10 +108,19 @@ function pauseStyleFromNumber(value: number): AssistantConfigFormValues["pause_s
 }
 
 function buildConfigPayload(values: AssistantConfigFormValues): AssistantConfigPayload {
+  const externalVoice = values.voice_provider !== "openai";
   return {
     ...values,
+    call_audio_mode: externalVoice ? "vps_media_bridge" : values.call_audio_mode,
     temperature: values.temperature || null,
     idle_timeout_ms: values.idle_timeout_ms ? Number(values.idle_timeout_ms) : null,
+    tts_model: values.tts_model.trim() || null,
+    voice_id: values.voice_id.trim() || null,
+    voice_locale: values.voice_locale.trim() || null,
+    voice_gender: values.voice_gender.trim() || null,
+    voice_stability: values.voice_stability || null,
+    voice_similarity: values.voice_similarity || null,
+    voice_temperature: values.voice_temperature || null,
   };
 }
 
@@ -147,8 +159,20 @@ export function AssistantConfigForm({
   const systemPrompt = watch("system_prompt");
   const realtimeVoice = watch("realtime_voice");
   const realtimeModel = watch("realtime_model");
+  const callAudioMode = watch("call_audio_mode");
+  const voiceProvider = watch("voice_provider");
+  const externalVoiceLegalConfirmed = watch("external_voice_legal_confirmed");
   const ttsPreviewVoice = watch("tts_preview_voice");
   const fallbackVoice = watch("fallback_voice");
+  const ttsModel = watch("tts_model");
+  const voiceId = watch("voice_id");
+  const voiceLocale = watch("voice_locale");
+  const voiceSpeed = watch("voice_speed");
+  const voicePitch = watch("voice_pitch");
+  const voiceStability = watch("voice_stability");
+  const voiceSimilarity = watch("voice_similarity");
+  const voiceTemperature = watch("voice_temperature");
+  const telephonyCodec = watch("telephony_codec");
   const voicePreset = watch("voice_preset");
   const voiceInstructions = watch("voice_instructions");
   const speechSpeed = watch("speech_speed");
@@ -161,6 +185,70 @@ export function AssistantConfigForm({
   const aiDisclosureEnabled = watch("ai_disclosure_enabled");
   const aiDisclosureMessage = watch("ai_disclosure_message");
   const previewAudioFormat = watch("preview_audio_format");
+  const usesExternalVoiceProvider = voiceProvider !== "openai";
+  const providerOptions =
+    options.voice_providers?.length > 0
+      ? options.voice_providers
+      : [
+          {
+            id: "openai",
+            display_name: "OpenAI",
+            configured: true,
+            supports_tts: true,
+            supports_streaming: true,
+            supports_telephony_codec: false,
+            supports_stt: false,
+            supports_voice_clone: false,
+            requires_consent: false,
+            recommended: true,
+            enabled: true,
+            notes: null,
+          },
+        ];
+  const selectedVoiceProvider = providerOptions.find(
+    (provider) => provider.id === voiceProvider,
+  );
+  const providerVoicesQuery = useQuery({
+    queryKey: ["voice-provider-voices", voiceProvider],
+    queryFn: () => listVoiceProviderVoices(voiceProvider),
+    enabled: Boolean(voiceProvider),
+    staleTime: 1000 * 60 * 10,
+  });
+  const providerVoices = providerVoicesQuery.data ?? [];
+  const providerVoiceChoices =
+    voiceProvider === "openai"
+      ? options.voices.map((voice) => ({
+          id: voice.id,
+          label: voice.label,
+          model: realtimeModel,
+          locale: "multi",
+          recommended: voice.recommended,
+        }))
+      : providerVoices.map((voice) => ({
+          id: voice.voice_id,
+          label: `${voice.display_name}${voice.locale ? ` · ${voice.locale}` : ""}`,
+          model: voice.model,
+          locale: voice.locale,
+          recommended: voice.recommended,
+        }));
+  const providerModelChoices = Array.from(
+    new Set(providerVoiceChoices.map((voice) => voice.model).filter(Boolean)),
+  );
+  const outputAudioFormats =
+    options.output_audio_formats?.length > 0
+      ? options.output_audio_formats
+      : ["pcm16", "wav", "mp3", "opus"];
+  const telephonyCodecs =
+    options.telephony_codecs?.length > 0
+      ? options.telephony_codecs
+      : ["pcmu", "pcma", "pcm16"];
+  const requiresLegalConfirmation = [
+    "elevenlabs",
+    "resemble",
+    "local_coqui",
+    "local_chatterbox",
+    "custom_http",
+  ].includes(voiceProvider);
   const maxPromptLength = 12000;
   const [activeTab, setActiveTab] = useState<AssistantConfigTab>("settings");
   const [voicePreviewText, setVoicePreviewText] = useState(
@@ -188,6 +276,8 @@ export function AssistantConfigForm({
   const realtimeAudioRef = useRef<HTMLAudioElement | null>(null);
   const realtimeSessionIdRef = useRef<string | null>(null);
   const realtimeHeartbeatRef = useRef<number | null>(null);
+  const realtimeExternalTtsRef = useRef(false);
+  const realtimeTextBufferRef = useRef("");
   const checklist = [
     {
       label: "Trabajadores activos",
@@ -220,6 +310,15 @@ export function AssistantConfigForm({
 
   useEffect(() => reset(defaultValues), [defaultValues, reset]);
 
+  useEffect(() => {
+    if (usesExternalVoiceProvider && callAudioMode !== "vps_media_bridge") {
+      setValue("call_audio_mode", "vps_media_bridge", {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+    }
+  }, [callAudioMode, setValue, usesExternalVoiceProvider]);
+
   const clearVoiceSamples = useCallback(() => {
     for (const url of voiceSampleUrlsRef.current) URL.revokeObjectURL(url);
     voiceSampleUrlsRef.current = [];
@@ -227,10 +326,26 @@ export function AssistantConfigForm({
   }, []);
 
   const buildVoicePreviewPayload = useCallback(
-    (voiceOverride?: string) => ({
-      text: voicePreviewText.trim(),
+    (voiceOverride?: string, textOverride?: string) => ({
+      text: (textOverride ?? voicePreviewText).trim(),
       realtime_voice: realtimeVoice,
       realtime_model: realtimeModel,
+      call_audio_mode: usesExternalVoiceProvider
+        ? "vps_media_bridge"
+        : callAudioMode,
+      voice_provider: voiceProvider,
+      tts_model: getValues().tts_model.trim() || null,
+      voice_id: getValues().voice_id.trim() || null,
+      voice_locale: getValues().voice_locale.trim() || null,
+      voice_gender: getValues().voice_gender.trim() || null,
+      voice_speed: getValues().voice_speed,
+      voice_pitch: getValues().voice_pitch,
+      voice_stability: getValues().voice_stability || null,
+      voice_similarity: getValues().voice_similarity || null,
+      voice_temperature: getValues().voice_temperature || null,
+      output_audio_format: getValues().output_audio_format,
+      telephony_codec: getValues().telephony_codec,
+      external_voice_legal_confirmed: getValues().external_voice_legal_confirmed,
       tts_preview_voice: (voiceOverride ?? ttsPreviewVoice) || null,
       fallback_voice: fallbackVoice || null,
       voice_preset: voicePreset || null,
@@ -249,9 +364,11 @@ export function AssistantConfigForm({
     [
       aiDisclosureEnabled,
       aiDisclosureMessage,
+      callAudioMode,
       allowInterruptions,
       dateReadingStyle,
       fallbackVoice,
+      getValues,
       idleTimeoutMs,
       pauseStyle,
       phoneReadingStyle,
@@ -261,6 +378,8 @@ export function AssistantConfigForm({
       realtimeVoice,
       speechSpeed,
       ttsPreviewVoice,
+      usesExternalVoiceProvider,
+      voiceProvider,
       voiceInstructions,
       voicePreset,
       voicePreviewText,
@@ -298,6 +417,14 @@ export function AssistantConfigForm({
       realtimeStreamRef.current = null;
       realtimeAudioRef.current?.pause();
       realtimeAudioRef.current = null;
+      voiceAbortRef.current?.abort();
+      voiceAbortRef.current = null;
+      voiceAudioRef.current?.pause();
+      voiceAudioRef.current = null;
+      if (voiceAudioUrlRef.current) URL.revokeObjectURL(voiceAudioUrlRef.current);
+      voiceAudioUrlRef.current = null;
+      realtimeExternalTtsRef.current = false;
+      realtimeTextBufferRef.current = "";
       realtimeSessionIdRef.current = null;
       setRealtimeSessionId(null);
       if (sessionId) {
@@ -338,9 +465,63 @@ export function AssistantConfigForm({
           },
         }),
       );
-      dataChannel.send(JSON.stringify({ type: "response.create" }));
+      dataChannel.send(
+        JSON.stringify({
+          type: "response.create",
+          ...(realtimeExternalTtsRef.current
+            ? { response: { modalities: ["text"] } }
+            : {}),
+        }),
+      );
     },
     [],
+  );
+
+  const synthesizeRealtimeExternalSpeech = useCallback(
+    async (text: string) => {
+      const cleanText = text.trim();
+      if (!cleanText || !realtimeExternalTtsRef.current) return;
+      voiceAbortRef.current?.abort();
+      voiceAudioRef.current?.pause();
+      if (voiceAudioUrlRef.current) URL.revokeObjectURL(voiceAudioUrlRef.current);
+      voiceAudioRef.current = null;
+      voiceAudioUrlRef.current = null;
+      const controller = new AbortController();
+      voiceAbortRef.current = controller;
+      setRealtimeStatus("speaking");
+      setVoicePreviewStatus("generating");
+      try {
+        const blob = await previewAssistantVoice(
+          clinicId,
+          buildVoicePreviewPayload(undefined, cleanText),
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.onended = () => {
+          setVoicePreviewStatus("idle");
+          if (realtimeSessionIdRef.current) setRealtimeStatus("listening");
+        };
+        audio.onpause = () => {
+          if (!audio.ended) setVoicePreviewStatus("paused");
+        };
+        voiceAudioUrlRef.current = url;
+        voiceAudioRef.current = audio;
+        await audio.play();
+        setVoicePreviewStatus("playing");
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        const message =
+          error instanceof Error ? error.message : "No se pudo generar TTS externo.";
+        setRealtimeError(message);
+        setRealtimeStatus("error");
+        setVoicePreviewStatus("idle");
+      } finally {
+        if (voiceAbortRef.current === controller) voiceAbortRef.current = null;
+      }
+    },
+    [buildVoicePreviewPayload, clinicId],
   );
 
   const handleRealtimeEvent = useCallback(
@@ -352,11 +533,39 @@ export function AssistantConfigForm({
         return;
       }
       const type = String(payload.type ?? "");
-      if (type.includes("speech_started")) setRealtimeStatus("listening");
-      if (type.startsWith("response.audio") || type.includes("output_audio")) {
+      if (type.includes("speech_started")) {
+        if (voiceAudioRef.current && !voiceAudioRef.current.paused) {
+          voiceAudioRef.current.pause();
+          voiceAbortRef.current?.abort();
+          setRealtimeStatus("interrupted");
+        } else {
+          setRealtimeStatus("listening");
+        }
+      }
+      if (
+        !realtimeExternalTtsRef.current &&
+        (type.startsWith("response.audio") || type.includes("output_audio"))
+      ) {
         setRealtimeStatus("speaking");
       }
-      if (type === "response.done") setRealtimeStatus("listening");
+      if (
+        realtimeExternalTtsRef.current &&
+        (type === "response.output_text.delta" ||
+          type === "response.text.delta" ||
+          type === "response.audio_transcript.delta")
+      ) {
+        realtimeTextBufferRef.current += String(payload.delta ?? "");
+      }
+      if (type === "response.done") {
+        if (realtimeExternalTtsRef.current) {
+          const text = realtimeTextBufferRef.current.trim();
+          realtimeTextBufferRef.current = "";
+          if (text) void synthesizeRealtimeExternalSpeech(text);
+          else setRealtimeStatus("listening");
+        } else {
+          setRealtimeStatus("listening");
+        }
+      }
       if (type === "error") {
         setRealtimeError("OpenAI Realtime devolvió un error.");
         setRealtimeStatus("error");
@@ -385,7 +594,7 @@ export function AssistantConfigForm({
         setRealtimeStatus("error");
       });
     },
-    [sendRealtimeToolOutput],
+    [sendRealtimeToolOutput, synthesizeRealtimeExternalSpeech],
   );
 
   const playVoiceAudio = useCallback(async (audio: HTMLAudioElement) => {
@@ -470,7 +679,8 @@ export function AssistantConfigForm({
     if (
       realtimeStatus === "connecting" ||
       realtimeStatus === "listening" ||
-      realtimeStatus === "speaking"
+      realtimeStatus === "speaking" ||
+      realtimeStatus === "interrupted"
     ) {
       stopRealtimePreview("button_stop");
       return;
@@ -486,6 +696,8 @@ export function AssistantConfigForm({
       });
       realtimeSessionIdRef.current = preview.id;
       setRealtimeSessionId(preview.id);
+      realtimeExternalTtsRef.current = preview.external_tts_required;
+      realtimeTextBufferRef.current = "";
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       realtimeStreamRef.current = stream;
       const peer = new RTCPeerConnection();
@@ -495,6 +707,7 @@ export function AssistantConfigForm({
       audio.autoplay = true;
       realtimeAudioRef.current = audio;
       peer.ontrack = (event) => {
+        if (preview.external_tts_required) return;
         const [remoteStream] = event.streams;
         if (remoteStream) {
           audio.srcObject = remoteStream;
@@ -508,7 +721,10 @@ export function AssistantConfigForm({
         dataChannel.send(
           JSON.stringify({
             type: "response.create",
-            response: { instructions: preview.initial_message },
+            response: {
+              instructions: preview.initial_message,
+              ...(preview.external_tts_required ? { modalities: ["text"] } : {}),
+            },
           }),
         );
         setRealtimeStatus("listening");
@@ -790,10 +1006,53 @@ export function AssistantConfigForm({
                 <Mic2 className="size-5" />
                 {realtimeStatus === "connecting" ||
                 realtimeStatus === "listening" ||
-                realtimeStatus === "speaking"
+                realtimeStatus === "speaking" ||
+                realtimeStatus === "interrupted"
                   ? "Detener prueba"
                   : "Probar conversación real"}
               </Button>
+            </div>
+            <div className="mt-4 grid gap-2 rounded-xl border border-[#dce4ff] bg-white/80 p-3 text-xs text-[#526078] sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <span className="font-semibold text-[#27334a]">Modo</span>
+                <p>
+                  {usesExternalVoiceProvider || callAudioMode === "vps_media_bridge"
+                    ? "VPS Media Bridge"
+                    : "OpenAI Hosted SIP"}
+                </p>
+              </div>
+              <div>
+                <span className="font-semibold text-[#27334a]">Proveedor</span>
+                <p>
+                  {selectedVoiceProvider?.display_name ?? voiceProvider}
+                  {selectedVoiceProvider?.configured ? " · credenciales OK" : " · falta credencial"}
+                </p>
+              </div>
+              <div>
+                <span className="font-semibold text-[#27334a]">Voz / TTS</span>
+                <p>
+                  {(voiceId || ttsPreviewVoice || realtimeVoice) || "sin voz"} ·{" "}
+                  {ttsModel || realtimeModel}
+                </p>
+              </div>
+              <div>
+                <span className="font-semibold text-[#27334a]">Locale / codec</span>
+                <p>
+                  {voiceLocale || "sin locale"} · {telephonyCodec.toUpperCase()}
+                </p>
+              </div>
+              <div className="sm:col-span-2 lg:col-span-4">
+                <span className="font-semibold text-[#27334a]">
+                  Parámetros numéricos
+                </span>
+                <p>
+                  velocidad {voiceSpeed || "1"} · pitch {voicePitch || "0"} ·
+                  estabilidad {voiceStability || "—"} · similitud{" "}
+                  {voiceSimilarity || "—"} · temperatura voz{" "}
+                  {voiceTemperature || "—"} · idle{" "}
+                  {idleTimeoutMs ? `${idleTimeoutMs} ms` : "auto"}
+                </p>
+              </div>
             </div>
             {realtimeError ? (
               <p className="mt-3 text-sm font-medium text-[#bd3341]">
@@ -893,6 +1152,76 @@ export function AssistantConfigForm({
                 Para España o galego, controla idioma y acento desde el prompt.
                 Marin y Cedar quedan como voces recomendadas.
               </p>
+            </div>
+            <div>
+              <Label htmlFor="assistant-call-audio-mode">Modo de llamada</Label>
+              <Select
+                id="assistant-call-audio-mode"
+                className="mt-1.5"
+                {...register("call_audio_mode")}
+                disabled={usesExternalVoiceProvider}
+              >
+                <option value="openai_hosted_sip">
+                  OpenAI Hosted SIP
+                </option>
+                <option value="vps_media_bridge">VPS Media Bridge</option>
+              </Select>
+              <FieldError message={errors.call_audio_mode?.message} />
+              <p className="mt-1 text-xs text-[#7d8899]">
+                OpenAI Hosted SIP mantiene el flujo actual. VPS Media Bridge
+                enruta SIP/RTP por tu VPS.
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="assistant-voice-provider">Proveedor de voz</Label>
+              <Select
+                id="assistant-voice-provider"
+                className="mt-1.5"
+                {...register("voice_provider")}
+              >
+                {providerOptions.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.display_name}
+                    {provider.configured ? "" : " · sin credenciales"}
+                  </option>
+                ))}
+              </Select>
+              <FieldError message={errors.voice_provider?.message} />
+              <p className="mt-1 text-xs text-[#7d8899]">
+                Si no es OpenAI, se usa obligatoriamente VPS Media Bridge.
+              </p>
+              {selectedVoiceProvider?.notes ? (
+                <p className="mt-1 text-xs text-[#7d8899]">
+                  {selectedVoiceProvider.notes}
+                </p>
+              ) : null}
+              {selectedVoiceProvider && !selectedVoiceProvider.configured ? (
+                <p className="mt-1 text-xs font-medium text-[#9b6a00]">
+                  Este proveedor no tiene credenciales configuradas. Puedes
+                  guardar ajustes, pero el preview devolverá el nombre de la
+                  variable que falta.
+                </p>
+              ) : null}
+            </div>
+            <div className="sm:col-span-2 rounded-xl border border-[#dce4ff] bg-[#f8faff] p-4 text-sm leading-6 text-[#526078]">
+              {usesExternalVoiceProvider ? (
+                <>
+                  <strong className="text-[#27334a]">
+                    Voz externa seleccionada.
+                  </strong>{" "}
+                  VoIP Studio debe llamar a tu SIP/RTP en VPS; el VPS conecta
+                  con OpenAI Realtime WebSocket, genera TTS externo y devuelve
+                  RTP. OpenAI Hosted SIP solo soporta voces OpenAI.
+                </>
+              ) : (
+                <>
+                  <strong className="text-[#27334a]">
+                    Flujo compatible actual.
+                  </strong>{" "}
+                  Puedes mantener VoIP Studio → OpenAI SIP → webhook FastAPI,
+                  o elegir VPS Media Bridge para probar todo desde tu VPS.
+                </>
+              )}
             </div>
             <div>
               <Label htmlFor="assistant-temperature">Temperatura opcional</Label>
@@ -1030,6 +1359,203 @@ export function AssistantConfigForm({
               </p>
             </div>
             <div>
+              <Label htmlFor="assistant-tts-model">Modelo TTS externo</Label>
+              <Input
+                id="assistant-tts-model"
+                list="assistant-tts-model-options"
+                className="mt-1.5"
+                placeholder={
+                  providerModelChoices.length
+                    ? "Elige o escribe un modelo"
+                    : "Ej. eleven_multilingual_v2"
+                }
+                {...register("tts_model")}
+              />
+              <datalist id="assistant-tts-model-options">
+                {providerModelChoices.map((model) => (
+                  <option key={model} value={model} />
+                ))}
+              </datalist>
+              <p className="mt-1 text-xs text-[#7d8899]">
+                Solo se usa en VPS Media Bridge o integraciones TTS externas.
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="assistant-voice-id">Voice ID externo</Label>
+              {providerVoiceChoices.length > 0 ? (
+                <Select
+                  id="assistant-voice-id"
+                  className="mt-1.5"
+                  {...register("voice_id")}
+                >
+                  <option value="">Selecciona voz del catálogo</option>
+                  {providerVoiceChoices.map((voice) => (
+                    <option key={`${voice.model}:${voice.id}`} value={voice.id}>
+                      {voice.label}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <Input
+                  id="assistant-voice-id"
+                  className="mt-1.5"
+                  placeholder="ID de voz del proveedor"
+                  {...register("voice_id")}
+                />
+              )}
+              {providerVoicesQuery.isLoading ? (
+                <p className="mt-1 text-xs text-[#7d8899]">
+                  Cargando catálogo de voces...
+                </p>
+              ) : null}
+              {providerVoicesQuery.isError ? (
+                <p className="mt-1 text-xs font-medium text-[#bd3341]">
+                  No se pudo cargar el catálogo. Puedes escribir el ID manualmente.
+                </p>
+              ) : null}
+            </div>
+            <div>
+              <Label htmlFor="assistant-voice-locale">Locale de voz</Label>
+              <Input
+                id="assistant-voice-locale"
+                className="mt-1.5"
+                placeholder="es-ES, gl-ES..."
+                {...register("voice_locale")}
+              />
+            </div>
+            <div>
+              <Label htmlFor="assistant-voice-gender">GÃ©nero/estilo</Label>
+              <Input
+                id="assistant-voice-gender"
+                className="mt-1.5"
+                placeholder="female, male, neutral..."
+                {...register("voice_gender")}
+              />
+            </div>
+            <div>
+              <Label htmlFor="assistant-output-audio-format">
+                Formato audio salida
+              </Label>
+              <Select
+                id="assistant-output-audio-format"
+                className="mt-1.5"
+                {...register("output_audio_format")}
+              >
+                {outputAudioFormats.map((format) => (
+                  <option key={format} value={format}>
+                    {format.toUpperCase()}
+                  </option>
+                ))}
+              </Select>
+              <p className="mt-1 text-xs text-[#7d8899]">
+                Formato intermedio antes de codificar para telefonÃ­a.
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="assistant-telephony-codec">
+                Codec telefonÃ­a
+              </Label>
+              <Select
+                id="assistant-telephony-codec"
+                className="mt-1.5"
+                {...register("telephony_codec")}
+              >
+                {telephonyCodecs.map((codec) => (
+                  <option key={codec} value={codec}>
+                    {codec === "pcmu"
+                      ? "PCMU / G.711 µ-law"
+                      : codec === "pcma"
+                        ? "PCMA / G.711 A-law"
+                        : codec.toUpperCase()}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="assistant-voice-speed">Velocidad voz externa</Label>
+              <Input
+                id="assistant-voice-speed"
+                type="number"
+                min="0.25"
+                max="4"
+                step="0.05"
+                className="mt-1.5"
+                {...register("voice_speed")}
+              />
+              <FieldError message={errors.voice_speed?.message} />
+            </div>
+            <div>
+              <Label htmlFor="assistant-voice-pitch">Pitch</Label>
+              <Input
+                id="assistant-voice-pitch"
+                type="number"
+                min="-24"
+                max="24"
+                step="0.1"
+                className="mt-1.5"
+                {...register("voice_pitch")}
+              />
+              <FieldError message={errors.voice_pitch?.message} />
+            </div>
+            <div>
+              <Label htmlFor="assistant-voice-stability">Estabilidad</Label>
+              <Input
+                id="assistant-voice-stability"
+                type="number"
+                min="0"
+                max="1"
+                step="0.05"
+                className="mt-1.5"
+                placeholder="Opcional"
+                {...register("voice_stability")}
+              />
+              <FieldError message={errors.voice_stability?.message} />
+            </div>
+            <div>
+              <Label htmlFor="assistant-voice-similarity">Similitud</Label>
+              <Input
+                id="assistant-voice-similarity"
+                type="number"
+                min="0"
+                max="1"
+                step="0.05"
+                className="mt-1.5"
+                placeholder="Opcional"
+                {...register("voice_similarity")}
+              />
+              <FieldError message={errors.voice_similarity?.message} />
+            </div>
+            <div>
+              <Label htmlFor="assistant-voice-temperature">
+                Temperatura voz
+              </Label>
+              <Input
+                id="assistant-voice-temperature"
+                type="number"
+                min="0"
+                max="2"
+                step="0.05"
+                className="mt-1.5"
+                placeholder="Opcional"
+                {...register("voice_temperature")}
+              />
+              <FieldError message={errors.voice_temperature?.message} />
+            </div>
+            <label className="flex min-h-10 items-center gap-3 rounded-lg border px-3 text-sm font-medium">
+              <input
+                type="checkbox"
+                className="size-4 accent-[#315efb]"
+                {...register("external_voice_legal_confirmed")}
+              />
+              Confirmo derechos de uso de voz externa/custom
+            </label>
+            {requiresLegalConfirmation && !externalVoiceLegalConfirmed ? (
+              <div className="sm:col-span-2 rounded-xl border border-[#ffd4d8] bg-[#fff6f7] p-4 text-sm text-[#9b2836]">
+                Este proveedor puede usarse con voces clonadas o custom. Debes
+                confirmar derechos legales antes de guardar.
+              </div>
+            ) : null}
+            <div>
               <Label htmlFor="assistant-tts-preview-voice">
                 Voz para pruebas TTS
               </Label>
@@ -1039,8 +1565,8 @@ export function AssistantConfigForm({
                 {...register("tts_preview_voice")}
               >
                 <option value="">Usar voz Realtime ({realtimeVoice})</option>
-                {options.voices.map((voice) => (
-                  <option key={voice.id} value={voice.id}>
+                {providerVoiceChoices.map((voice) => (
+                  <option key={`${voice.model}:${voice.id}`} value={voice.id}>
                     {voice.label}
                   </option>
                 ))}
@@ -1057,14 +1583,14 @@ export function AssistantConfigForm({
                 {...register("fallback_voice")}
               >
                 <option value="">Sin fallback</option>
-                {options.voices.map((voice) => (
-                  <option key={voice.id} value={voice.id}>
+                {providerVoiceChoices.map((voice) => (
+                  <option key={`${voice.model}:${voice.id}`} value={voice.id}>
                     {voice.label}
                   </option>
                 ))}
               </Select>
               <p className="mt-1 text-xs text-[#7d8899]">
-                Si OpenAI rechaza la voz principal al aceptar llamada, se prueba esta.
+                Si el proveedor rechaza la voz principal, se prueba esta.
               </p>
             </div>
             <div>
@@ -1234,9 +1760,9 @@ export function AssistantConfigForm({
                 </span>
               </div>
               <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {options.voices.map((voice) => (
+                {providerVoiceChoices.map((voice) => (
                   <label
-                    key={voice.id}
+                    key={`${voice.model}:${voice.id}`}
                     className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm"
                   >
                     <input
@@ -1257,6 +1783,12 @@ export function AssistantConfigForm({
                   </label>
                 ))}
               </div>
+              {providerVoiceChoices.length === 0 ? (
+                <p className="mt-2 text-xs text-[#7d8899]">
+                  Este proveedor no expone voces todavía. Configura credenciales
+                  y sincroniza catálogo, o escribe un Voice ID manual.
+                </p>
+              ) : null}
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button
                   type="button"

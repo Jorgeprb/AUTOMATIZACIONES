@@ -43,6 +43,8 @@ class RealtimePreviewRegistryEntry:
     call_session_id: uuid.UUID
     model: str
     voice: str
+    call_audio_mode: str
+    voice_provider: str
     expires_at: datetime
     closed: bool = False
 
@@ -190,6 +192,8 @@ def start_realtime_preview_session(
         conversation_state_json={
             "realtime_preview": True,
             "preview_session_id": str(preview_id),
+            "call_audio_mode": payload.call_audio_mode,
+            "voice_provider": payload.voice_provider,
             "processed_tool_call_ids": [],
         },
     )
@@ -241,6 +245,8 @@ def start_realtime_preview_session(
         call_session_id=call.id,
         model=config.model,
         voice=config.voice,
+        call_audio_mode=payload.call_audio_mode,
+        voice_provider=payload.voice_provider,
         expires_at=expires_at,
     )
     _REGISTRY[preview_id] = entry
@@ -252,6 +258,12 @@ def start_realtime_preview_session(
                 "preview_session_id": str(preview_id),
                 "model": config.model,
                 "voice": config.voice,
+                "call_audio_mode": payload.call_audio_mode,
+                "voice_provider": payload.voice_provider,
+                "external_tts_required": (
+                    payload.call_audio_mode == "vps_media_bridge"
+                    or payload.voice_provider != "openai"
+                ),
             },
         )
     )

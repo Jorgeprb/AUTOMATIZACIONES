@@ -1,0 +1,63 @@
+{
+	email {$CADDY_EMAIL}
+	admin off
+}
+
+(secure_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "microphone=(self), camera=(), geolocation=()"
+		-Server
+	}
+}
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+	import secure_headers
+
+	log {
+		output stdout
+		format json
+	}
+
+	handle /api/admin* {
+		respond "not found" 404
+	}
+
+	handle {
+		reverse_proxy api:10000 {
+			health_uri /health/ready
+			health_interval 30s
+			health_timeout 5s
+		}
+	}
+}
+
+{$APP_ADMIN_DOMAIN} {
+	encode zstd gzip
+	import secure_headers
+
+	log {
+		output stdout
+		format json
+	}
+
+	@adminApi path /api/admin*
+	handle @adminApi {
+		reverse_proxy api:10000 {
+			header_up X-Admin-API-Key {$ADMIN_API_KEY}
+		}
+	}
+
+	@api path /api/* /auth/* /health/*
+	handle @api {
+		reverse_proxy api:10000
+	}
+
+	handle {
+		reverse_proxy frontend:80
+	}
+}

@@ -11,8 +11,11 @@ import {
   closeRealtimePreviewSession,
   createRealtimePreviewSession,
   heartbeatRealtimePreviewSession,
+  listVoiceProviderVoices,
+  listVoiceProviders,
   previewAssistantVoice,
   sendRealtimePreviewToolCall,
+  syncVoiceProviders,
 } from "@/api/assistants";
 import { cancelAppointment } from "@/api/appointments";
 import {
@@ -232,6 +235,24 @@ describe("operational API calls", () => {
     );
   });
 
+  it("loads and syncs voice providers", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ ok: true });
+    await listVoiceProviders();
+    await listVoiceProviderVoices("openai");
+    await syncVoiceProviders();
+
+    expect(apiRequest).toHaveBeenNthCalledWith(1, "/api/admin/voice-providers");
+    expect(apiRequest).toHaveBeenNthCalledWith(
+      2,
+      "/api/admin/voice-providers/openai/voices",
+    );
+    expect(apiRequest).toHaveBeenNthCalledWith(
+      3,
+      "/api/admin/voice-providers/sync",
+      { method: "POST" },
+    );
+  });
+
   it("manages realtime assistant preview sessions", async () => {
     vi.mocked(apiRequest).mockResolvedValue({ id: "preview-1" });
     const config = {
@@ -281,6 +302,20 @@ describe("operational API calls", () => {
       transcript_enabled: false,
       recording_enabled: false,
       conversation_retention_days: 30,
+      call_audio_mode: "openai_hosted_sip",
+      voice_provider: "openai",
+      tts_model: null,
+      voice_id: null,
+      voice_locale: "es-ES",
+      voice_gender: null,
+      voice_speed: "1",
+      voice_pitch: "0",
+      voice_stability: null,
+      voice_similarity: null,
+      voice_temperature: null,
+      output_audio_format: "pcm16",
+      telephony_codec: "pcmu",
+      external_voice_legal_confirmed: false,
       voice_instructions: "",
       voice_preset: "",
       tts_preview_voice: "",

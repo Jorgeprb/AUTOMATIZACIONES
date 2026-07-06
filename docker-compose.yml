@@ -100,6 +100,50 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  sip-gateway:
+    build:
+      context: ./sip-gateway
+    env_file:
+      - ${ROOT_ENV_FILE:-.env}
+    environment:
+      SIP_BIND_HOST: ${SIP_BIND_HOST:-0.0.0.0}
+      SIP_PORT: ${SIP_PORT:-6060}
+      SIP_PUBLIC_IP: ${SIP_PUBLIC_IP:-127.0.0.1}
+      RTP_PORT_MIN: ${RTP_PORT_MIN:-10000}
+      RTP_PORT_MAX: ${RTP_PORT_MAX:-20000}
+      RTP_ADVERTISE_IP: ${RTP_ADVERTISE_IP:-127.0.0.1}
+      SIP_ALLOWED_IPS: ${SIP_ALLOWED_IPS:-}
+      BACKEND_INTERNAL_URL: http://app:8000
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-development-only-internal-key}
+    command:
+      - python
+      - -m
+      - sip_gateway
+    volumes:
+      - ./sip-gateway:/gateway
+    ports:
+      - "6060:6060/udp"
+      - "10000-20000:10000-20000/udp"
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from sip_gateway.config import GatewaySettings; GatewaySettings(); print('ok')"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   postgres_data:
   frontend_node_modules:

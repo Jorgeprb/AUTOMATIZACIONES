@@ -40,6 +40,20 @@ export interface AssistantConfig {
   name: string;
   realtime_model: string;
   realtime_voice: string;
+  call_audio_mode: "openai_hosted_sip" | "vps_media_bridge";
+  voice_provider: string;
+  tts_model: string | null;
+  voice_id: string | null;
+  voice_locale: string | null;
+  voice_gender: string | null;
+  voice_speed: string;
+  voice_pitch: string;
+  voice_stability: string | null;
+  voice_similarity: string | null;
+  voice_temperature: string | null;
+  output_audio_format: "pcm16" | "wav" | "mp3" | "opus";
+  telephony_codec: "pcmu" | "pcma" | "pcm16";
+  external_voice_legal_confirmed: boolean;
   voice_instructions: string | null;
   voice_preset: string | null;
   tts_preview_voice: string | null;
@@ -148,6 +162,43 @@ export interface AssistantOptions {
   models: Array<{ id: string; label: string; recommended: boolean }>;
   voices: Array<{ id: string; label: string; recommended: boolean }>;
   languages: Array<{ id: string; label: string; recommended: boolean }>;
+  voice_providers: VoiceProviderInfo[];
+  output_audio_formats: string[];
+  telephony_codecs: string[];
+}
+
+export interface VoiceProviderInfo {
+  id: string;
+  display_name: string;
+  configured: boolean;
+  supports_tts: boolean;
+  supports_streaming: boolean;
+  supports_telephony_codec: boolean;
+  supports_stt: boolean;
+  supports_voice_clone: boolean;
+  requires_consent: boolean;
+  recommended: boolean;
+  enabled: boolean;
+  notes: string | null;
+}
+
+export interface VoiceCatalogVoice {
+  id: string;
+  provider: string;
+  model: string;
+  voice_id: string;
+  display_name: string;
+  locale: string | null;
+  language: string | null;
+  gender: string | null;
+  supports_streaming: boolean;
+  supports_telephony_codec: boolean;
+  supports_voice_clone: boolean;
+  requires_consent: boolean;
+  recommended: boolean;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PromptPreview {

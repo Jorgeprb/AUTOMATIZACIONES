@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.production.example
 clinic-voice-agent/.env
 clinic-voice-agent/.env.*
 !clinic-voice-agent/.env.example
@@ -41,5 +42,7 @@ Thumbs.db
 .vscode/
 
 # Backups generated locally
+backups/*
+!backups/.gitkeep
 clinic-voice-agent/backups/*
 !clinic-voice-agent/backups/.gitkeep

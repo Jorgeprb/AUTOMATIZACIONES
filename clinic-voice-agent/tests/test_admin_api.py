@@ -34,6 +34,7 @@ from app.models import (
     Service,
     Worker,
 )
+from app.voice_providers.base import TTSResult
 
 ADMIN_KEY = "test-admin-api-key-with-32-characters"
 ADMIN_HEADERS = {"X-Admin-API-Key": ADMIN_KEY}
@@ -364,6 +365,11 @@ async def test_assistant_knowledge_and_flow_crud(database_engine: Engine) -> Non
         assert {"marin", "cedar"}.issubset(
             {voice["id"] for voice in assistant_options.json()["voices"]}
         )
+        assert "openai" in {
+            provider["id"]
+            for provider in assistant_options.json()["voice_providers"]
+        }
+        assert "mp3" in assistant_options.json()["output_audio_formats"]
         assert "gl-ES" in {
             language["id"]
             for language in assistant_options.json()["languages"]
@@ -603,26 +609,142 @@ async def test_assistant_knowledge_and_flow_crud(database_engine: Engine) -> Non
 
 
 @pytest.mark.anyio
+async def test_assistant_dual_call_audio_policy(database_engine: Engine) -> None:
+    """External voice providers should force VPS media bridge safely."""
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(database_engine)),
+        base_url="http://testserver",
+    ) as client:
+        clinic = await _create_clinic(client, "Audio")
+        clinic_id = clinic["id"]
+        base_payload = {
+            "name": "Principal",
+            "realtime_model": "gpt-realtime-2",
+            "realtime_voice": "marin",
+            "language": "es",
+            "first_message": "Hola, soy el asistente virtual.",
+            "system_prompt": "Gestiona citas.",
+            "safety_prompt": "No diagnostiques.",
+            "booking_policy_prompt": "Propón huecos reales.",
+            "cancellation_policy_prompt": "Confirma antes de cancelar.",
+            "transfer_policy_prompt": "Transfiere si se solicita.",
+        }
+
+        openai_config = await client.post(
+            f"/api/admin/clinics/{clinic_id}/assistant-configs",
+            headers=ADMIN_HEADERS,
+            json=base_payload,
+        )
+        assert openai_config.status_code == 201, openai_config.text
+        assert openai_config.json()["voice_provider"] == "openai"
+        assert openai_config.json()["call_audio_mode"] == "openai_hosted_sip"
+
+        azure_config = await client.post(
+            f"/api/admin/clinics/{clinic_id}/assistant-configs",
+            headers=ADMIN_HEADERS,
+            json={
+                **base_payload,
+                "name": "Azure",
+                "voice_provider": "azure",
+                "call_audio_mode": "openai_hosted_sip",
+                "voice_id": "es-ES-ElviraNeural",
+            },
+        )
+        assert azure_config.status_code == 201, azure_config.text
+        assert azure_config.json()["voice_provider"] == "azure"
+        assert azure_config.json()["call_audio_mode"] == "vps_media_bridge"
+
+        cloned_without_confirmation = await client.post(
+            f"/api/admin/clinics/{clinic_id}/assistant-configs",
+            headers=ADMIN_HEADERS,
+            json={
+                **base_payload,
+                "name": "ElevenLabs",
+                "voice_provider": "elevenlabs",
+                "call_audio_mode": "vps_media_bridge",
+                "voice_id": "custom_voice",
+            },
+        )
+        assert cloned_without_confirmation.status_code == 422
+
+        cloned_confirmed = await client.post(
+            f"/api/admin/clinics/{clinic_id}/assistant-configs",
+            headers=ADMIN_HEADERS,
+            json={
+                **base_payload,
+                "name": "ElevenLabs confirmado",
+                "voice_provider": "elevenlabs",
+                "call_audio_mode": "openai_hosted_sip",
+                "voice_id": "custom_voice",
+                "external_voice_legal_confirmed": True,
+            },
+        )
+        assert cloned_confirmed.status_code == 201, cloned_confirmed.text
+        assert cloned_confirmed.json()["call_audio_mode"] == "vps_media_bridge"
+
+
+@pytest.mark.anyio
+async def test_voice_provider_catalog_endpoints(database_engine: Engine) -> None:
+    """Admin UI should discover providers and synchronized voices from backend."""
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(database_engine)),
+        base_url="http://testserver",
+    ) as client:
+        providers = await client.get(
+            "/api/admin/voice-providers",
+            headers=ADMIN_HEADERS,
+        )
+        assert providers.status_code == 200
+        provider_ids = {item["id"] for item in providers.json()}
+        assert {"openai", "azure", "google", "elevenlabs"}.issubset(provider_ids)
+
+        synced = await client.post(
+            "/api/admin/voice-providers/sync",
+            headers=ADMIN_HEADERS,
+        )
+        assert synced.status_code == 200
+        assert synced.json()["synced"]["openai"] >= 1
+        assert synced.json()["synced"]["azure"] >= 1
+
+        openai_voices = await client.get(
+            "/api/admin/voice-providers/openai/voices",
+            headers=ADMIN_HEADERS,
+        )
+        assert openai_voices.status_code == 200
+        assert {"marin", "cedar"}.issubset(
+            {item["voice_id"] for item in openai_voices.json()}
+        )
+
+        missing = await client.get(
+            "/api/admin/voice-providers/nope/voices",
+            headers=ADMIN_HEADERS,
+        )
+        assert missing.status_code == 404
+
+
+@pytest.mark.anyio
 async def test_assistant_voice_preview_returns_audio(
     database_engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The assistant editor should preview voice without creating a conversation."""
-    calls: list[tuple[str, str, str | None, str | None, str]] = []
+    calls: list[tuple[str, str, str, str | None, str | None, str]] = []
 
     def fake_speech(
         settings: object,
         *,
+        provider: str,
         text: str,
         voice: str,
         model: str | None = None,
         instructions: str | None = None,
         response_format: str = "mp3",
-    ) -> bytes:
-        calls.append((text, voice, model, instructions, response_format))
-        return b"audio-bytes"
+        **kwargs: object,
+    ) -> TTSResult:
+        calls.append((provider, text, voice, model, instructions, response_format))
+        return TTSResult(audio=b"audio-bytes", media_type="audio/wav")
 
-    monkeypatch.setattr(core_api, "synthesize_openai_speech", fake_speech)
+    monkeypatch.setattr(core_api, "synthesize_speech", fake_speech)
     async with AsyncClient(
         transport=ASGITransport(app=_app(database_engine)),
         base_url="http://testserver",
@@ -645,7 +767,15 @@ async def test_assistant_voice_preview_returns_audio(
     assert response.headers["content-type"].startswith("audio/wav")
     assert response.content == b"audio-bytes"
     assert len(calls) == 1
-    call_text, call_voice, call_model, call_instructions, call_format = calls[0]
+    (
+        call_provider,
+        call_text,
+        call_voice,
+        call_model,
+        call_instructions,
+        call_format,
+    ) = calls[0]
+    assert call_provider == "openai"
     assert call_text == "Hola, soy el asistente."
     assert call_voice == "cedar"
     assert call_model == "gpt-realtime-2"

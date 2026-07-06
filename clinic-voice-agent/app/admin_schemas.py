@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Generic, Literal, TypeVar, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
@@ -17,6 +17,10 @@ from pydantic import (
     model_validator,
 )
 
+from app.call_audio import (
+    normalize_call_audio_mode,
+    requires_external_voice_legal_confirmation,
+)
 from app.conversation_flows import validate_flow_json
 from app.models import (
     AppointmentSource,
@@ -28,6 +32,26 @@ from app.models import (
 )
 
 T = TypeVar("T")
+
+CallAudioMode = Literal["openai_hosted_sip", "vps_media_bridge"]
+VoiceProvider = Literal[
+    "openai",
+    "azure",
+    "google",
+    "elevenlabs",
+    "amazon_polly",
+    "deepgram",
+    "cartesia",
+    "resemble",
+    "readspeaker",
+    "acapela",
+    "cereproc",
+    "local_coqui",
+    "local_chatterbox",
+    "custom_http",
+]
+TelephonyCodec = Literal["pcmu", "pcma", "pcm16"]
+OutputAudioFormat = Literal["pcm16", "wav", "mp3", "opus"]
 
 
 class Page(BaseModel, Generic[T]):
@@ -267,10 +291,32 @@ class AssistantConfigBase(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     realtime_model: str = Field(min_length=1, max_length=120)
     realtime_voice: str = Field(min_length=1, max_length=80)
+    call_audio_mode: CallAudioMode = "openai_hosted_sip"
+    voice_provider: VoiceProvider = "openai"
+    tts_model: str | None = Field(default=None, max_length=160)
+    voice_id: str | None = Field(default=None, max_length=240)
+    voice_locale: str | None = Field(default=None, max_length=32)
+    voice_gender: str | None = Field(default=None, max_length=32)
+    voice_speed: Decimal = Field(
+        default=Decimal("1.00"),
+        ge=Decimal("0.25"),
+        le=Decimal("4.00"),
+    )
+    voice_pitch: Decimal = Field(
+        default=Decimal("0.00"),
+        ge=Decimal("-24.00"),
+        le=Decimal("24.00"),
+    )
+    voice_stability: Decimal | None = Field(default=None, ge=0, le=1)
+    voice_similarity: Decimal | None = Field(default=None, ge=0, le=1)
+    voice_temperature: Decimal | None = Field(default=None, ge=0, le=2)
+    output_audio_format: OutputAudioFormat = "pcm16"
+    telephony_codec: TelephonyCodec = "pcmu"
+    external_voice_legal_confirmed: bool = False
     voice_instructions: str | None = None
     voice_preset: str | None = Field(default=None, max_length=80)
-    tts_preview_voice: str | None = Field(default=None, max_length=80)
-    fallback_voice: str | None = Field(default=None, max_length=80)
+    tts_preview_voice: str | None = Field(default=None, max_length=240)
+    fallback_voice: str | None = Field(default=None, max_length=240)
     speech_speed: Literal["slow", "normal", "fast"] = "normal"
     pause_style: Literal["short", "natural", "slow"] = "natural"
     phone_reading_style: Literal["digits", "groups", "natural"] = "groups"
@@ -330,6 +376,26 @@ class AssistantConfigBase(BaseModel):
     conversation_flow_id: uuid.UUID | None = None
     is_active: bool = False
 
+    @model_validator(mode="after")
+    def validate_dual_call_audio_policy(self) -> AssistantConfigBase:
+        """Keep OpenAI hosted SIP compatible and bridge external voices."""
+        self.call_audio_mode = cast(
+            CallAudioMode,
+            normalize_call_audio_mode(
+                voice_provider=self.voice_provider,
+                requested_mode=self.call_audio_mode,
+            ),
+        )
+        if (
+            requires_external_voice_legal_confirmation(self.voice_provider)
+            and not self.external_voice_legal_confirmed
+        ):
+            raise ValueError(
+                "external_voice_legal_confirmed must be true for cloned or "
+                "custom external voice providers."
+            )
+        return self
+
 
 class AssistantConfigCreate(AssistantConfigBase):
     """Create one assistant configuration."""
@@ -341,10 +407,32 @@ class AssistantConfigUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     realtime_model: str | None = Field(default=None, min_length=1, max_length=120)
     realtime_voice: str | None = Field(default=None, min_length=1, max_length=80)
+    call_audio_mode: CallAudioMode | None = None
+    voice_provider: VoiceProvider | None = None
+    tts_model: str | None = Field(default=None, max_length=160)
+    voice_id: str | None = Field(default=None, max_length=240)
+    voice_locale: str | None = Field(default=None, max_length=32)
+    voice_gender: str | None = Field(default=None, max_length=32)
+    voice_speed: Decimal | None = Field(
+        default=None,
+        ge=Decimal("0.25"),
+        le=Decimal("4.00"),
+    )
+    voice_pitch: Decimal | None = Field(
+        default=None,
+        ge=Decimal("-24.00"),
+        le=Decimal("24.00"),
+    )
+    voice_stability: Decimal | None = Field(default=None, ge=0, le=1)
+    voice_similarity: Decimal | None = Field(default=None, ge=0, le=1)
+    voice_temperature: Decimal | None = Field(default=None, ge=0, le=2)
+    output_audio_format: OutputAudioFormat | None = None
+    telephony_codec: TelephonyCodec | None = None
+    external_voice_legal_confirmed: bool | None = None
     voice_instructions: str | None = None
     voice_preset: str | None = Field(default=None, max_length=80)
-    tts_preview_voice: str | None = Field(default=None, max_length=80)
-    fallback_voice: str | None = Field(default=None, max_length=80)
+    tts_preview_voice: str | None = Field(default=None, max_length=240)
+    fallback_voice: str | None = Field(default=None, max_length=240)
     speech_speed: Literal["slow", "normal", "fast"] | None = None
     pause_style: Literal["short", "natural", "slow"] | None = None
     phone_reading_style: Literal["digits", "groups", "natural"] | None = None
@@ -426,8 +514,30 @@ class AssistantVoicePreviewRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
     realtime_voice: str = Field(min_length=1, max_length=80)
     realtime_model: str | None = Field(default=None, max_length=120)
-    tts_preview_voice: str | None = Field(default=None, max_length=80)
-    fallback_voice: str | None = Field(default=None, max_length=80)
+    call_audio_mode: CallAudioMode = "openai_hosted_sip"
+    voice_provider: VoiceProvider = "openai"
+    tts_model: str | None = Field(default=None, max_length=160)
+    voice_id: str | None = Field(default=None, max_length=240)
+    voice_locale: str | None = Field(default=None, max_length=32)
+    voice_gender: str | None = Field(default=None, max_length=32)
+    voice_speed: Decimal = Field(
+        default=Decimal("1.00"),
+        ge=Decimal("0.25"),
+        le=Decimal("4.00"),
+    )
+    voice_pitch: Decimal = Field(
+        default=Decimal("0.00"),
+        ge=Decimal("-24.00"),
+        le=Decimal("24.00"),
+    )
+    voice_stability: Decimal | None = Field(default=None, ge=0, le=1)
+    voice_similarity: Decimal | None = Field(default=None, ge=0, le=1)
+    voice_temperature: Decimal | None = Field(default=None, ge=0, le=2)
+    output_audio_format: OutputAudioFormat = "pcm16"
+    telephony_codec: TelephonyCodec = "pcmu"
+    external_voice_legal_confirmed: bool = False
+    tts_preview_voice: str | None = Field(default=None, max_length=240)
+    fallback_voice: str | None = Field(default=None, max_length=240)
     voice_preset: str | None = Field(default=None, max_length=80)
     voice_instructions: str | None = None
     speech_speed: Literal["slow", "normal", "fast"] = "normal"
@@ -457,6 +567,9 @@ class RealtimePreviewSessionResponse(BaseModel):
     client_secret: str
     model: str
     voice: str
+    call_audio_mode: CallAudioMode
+    voice_provider: VoiceProvider
+    external_tts_required: bool = False
     initial_message: str
     expires_at: datetime
 
@@ -503,14 +616,62 @@ class AssistantOptionRead(BaseModel):
     recommended: bool = False
 
 
+class VoiceProviderRead(BaseModel):
+    """Safe voice provider metadata for the admin UI."""
+
+    id: str
+    display_name: str
+    configured: bool
+    supports_tts: bool = True
+    supports_streaming: bool = False
+    supports_telephony_codec: bool = False
+    supports_stt: bool = False
+    supports_voice_clone: bool = False
+    requires_consent: bool = False
+    recommended: bool = False
+    enabled: bool = True
+    notes: str | None = None
+
+
+class VoiceCatalogRead(ORMReadModel):
+    """One selectable voice in the synchronized catalog."""
+
+    id: uuid.UUID
+    provider: str
+    model: str
+    voice_id: str
+    display_name: str
+    locale: str | None = None
+    language: str | None = None
+    gender: str | None = None
+    supports_streaming: bool
+    supports_telephony_codec: bool
+    supports_voice_clone: bool
+    requires_consent: bool
+    recommended: bool
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class VoiceProviderSyncResponse(BaseModel):
+    """Result of syncing static/remote voice catalogs."""
+
+    ok: bool
+    synced: dict[str, int]
+
+
 class AssistantOptionsResponse(BaseModel):
-    """Models and voices configurable without calling OpenAI."""
+    """Models, voices and provider capabilities configurable from UI."""
 
     default_model: str
     default_voice: str
     models: list[AssistantOptionRead]
     voices: list[AssistantOptionRead]
     languages: list[AssistantOptionRead]
+    voice_providers: list[VoiceProviderRead] = Field(default_factory=list)
+    output_audio_formats: list[str] = Field(default_factory=list)
+    telephony_codecs: list[str] = Field(default_factory=list)
 
 
 class AssistantRecommendedTemplateResponse(BaseModel):

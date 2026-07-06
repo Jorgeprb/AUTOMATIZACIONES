@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.admin_schemas import (
+    CallAudioMode,
     RealtimePreviewHeartbeatResponse,
     RealtimePreviewSessionCreate,
     RealtimePreviewSessionResponse,
     RealtimePreviewToolCallRequest,
     RealtimePreviewToolCallResponse,
+    VoiceProvider,
 )
 from app.api.admin.common import clinic_or_404
 from app.config import Settings, get_settings
@@ -62,6 +64,12 @@ def create_realtime_preview_session(
         client_secret=client_secret,
         model=entry.model,
         voice=entry.voice,
+        call_audio_mode=cast(CallAudioMode, entry.call_audio_mode),
+        voice_provider=cast(VoiceProvider, entry.voice_provider),
+        external_tts_required=(
+            entry.call_audio_mode == "vps_media_bridge"
+            or entry.voice_provider != "openai"
+        ),
         initial_message=initial_message,
         expires_at=entry.expires_at,
     )

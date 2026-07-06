@@ -80,4 +80,37 @@ describe("assistant configuration", () => {
     expect(assistantConfigFormSchema.safeParse(result).success).toBe(true);
     expect(invalidTimeout.success).toBe(false);
   });
+
+  it("validates dual call audio mode for external voices", () => {
+    const invalidHostedExternal = assistantConfigFormSchema.safeParse({
+      ...assistantConfigDefaults,
+      voice_provider: "azure",
+      call_audio_mode: "openai_hosted_sip",
+    });
+    const validBridgeExternal = assistantConfigFormSchema.safeParse({
+      ...assistantConfigDefaults,
+      voice_provider: "azure",
+      call_audio_mode: "vps_media_bridge",
+      voice_id: "es-ES-ElviraNeural",
+    });
+    const customWithoutLegal = assistantConfigFormSchema.safeParse({
+      ...assistantConfigDefaults,
+      voice_provider: "elevenlabs",
+      call_audio_mode: "vps_media_bridge",
+      voice_id: "custom_voice",
+      external_voice_legal_confirmed: false,
+    });
+    const customWithLegal = assistantConfigFormSchema.safeParse({
+      ...assistantConfigDefaults,
+      voice_provider: "elevenlabs",
+      call_audio_mode: "vps_media_bridge",
+      voice_id: "custom_voice",
+      external_voice_legal_confirmed: true,
+    });
+
+    expect(invalidHostedExternal.success).toBe(false);
+    expect(validBridgeExternal.success).toBe(true);
+    expect(customWithoutLegal.success).toBe(false);
+    expect(customWithLegal.success).toBe(true);
+  });
 });

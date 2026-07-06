@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Protocol
 
 
@@ -16,6 +17,48 @@ class VoiceProfileLike(Protocol):
 
     @property
     def realtime_voice(self) -> str: ...
+
+    @property
+    def call_audio_mode(self) -> str: ...
+
+    @property
+    def voice_provider(self) -> str: ...
+
+    @property
+    def tts_model(self) -> str | None: ...
+
+    @property
+    def voice_id(self) -> str | None: ...
+
+    @property
+    def voice_locale(self) -> str | None: ...
+
+    @property
+    def voice_gender(self) -> str | None: ...
+
+    @property
+    def voice_speed(self) -> Decimal: ...
+
+    @property
+    def voice_pitch(self) -> Decimal: ...
+
+    @property
+    def voice_stability(self) -> Decimal | None: ...
+
+    @property
+    def voice_similarity(self) -> Decimal | None: ...
+
+    @property
+    def voice_temperature(self) -> Decimal | None: ...
+
+    @property
+    def output_audio_format(self) -> str: ...
+
+    @property
+    def telephony_codec(self) -> str: ...
+
+    @property
+    def external_voice_legal_confirmed(self) -> bool: ...
 
     @property
     def tts_preview_voice(self) -> str | None: ...
@@ -104,6 +147,11 @@ def _clean(value: str | None) -> str:
     return (value or "").strip()
 
 
+def _optional_decimal(value: Decimal | None) -> str:
+    """Render an optional decimal without treating zero as missing."""
+    return str(value) if value is not None else "no configurada"
+
+
 def effective_preview_voice(profile: VoiceProfileLike) -> str:
     """Return the one-shot preview voice with backwards-compatible fallback."""
     return _clean(profile.tts_preview_voice) or profile.realtime_voice
@@ -157,6 +205,28 @@ def build_voice_instruction_block(profile: VoiceProfileLike) -> str:
         "Estas instrucciones controlan como suena el asistente. No cambian "
         "las reglas de agenda ni seguridad.",
         f"- Voz Realtime principal: {profile.realtime_voice}.",
+        (
+            f"- Modo llamada/proveedor: {profile.call_audio_mode} / "
+            f"{profile.voice_provider}."
+        ),
+        f"- Voz externa/ID: {_clean(profile.voice_id) or 'no configurada'}.",
+        f"- Modelo TTS externo: {_clean(profile.tts_model) or 'no configurado'}.",
+        (
+            f"- Locale/genero: {_clean(profile.voice_locale) or 'no configurado'} "
+            f"/ {_clean(profile.voice_gender) or 'no configurado'}."
+        ),
+        f"- Velocidad numérica de voz: {profile.voice_speed}.",
+        f"- Pitch: {profile.voice_pitch}.",
+        (
+            "- Estabilidad/similitud/temperatura: "
+            f"{_optional_decimal(profile.voice_stability)} / "
+            f"{_optional_decimal(profile.voice_similarity)} / "
+            f"{_optional_decimal(profile.voice_temperature)}."
+        ),
+        (
+            f"- Formato salida/codec telefonía: {profile.output_audio_format} / "
+            f"{profile.telephony_codec}."
+        ),
         f"- Voz de fallback: {_clean(profile.fallback_voice) or 'no configurada'}.",
         f"- Voz para previews TTS: {effective_preview_voice(profile)}.",
         f"- Preset de voz: {_clean(profile.voice_preset) or 'personalizado'}.",

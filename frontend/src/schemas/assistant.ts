@@ -1,10 +1,90 @@
 import { z } from "zod";
 
-export const assistantConfigFormSchema = z.object({
+export const callAudioModes = ["openai_hosted_sip", "vps_media_bridge"] as const;
+export const voiceProviders = [
+  "openai",
+  "azure",
+  "google",
+  "elevenlabs",
+  "amazon_polly",
+  "deepgram",
+  "cartesia",
+  "resemble",
+  "readspeaker",
+  "acapela",
+  "cereproc",
+  "local_coqui",
+  "local_chatterbox",
+  "custom_http",
+] as const;
+export const telephonyCodecs = ["pcmu", "pcma", "pcm16"] as const;
+export const outputAudioFormats = ["pcm16", "wav", "mp3", "opus"] as const;
+export const clonedOrCustomVoiceProviders = [
+  "elevenlabs",
+  "resemble",
+  "local_coqui",
+  "local_chatterbox",
+  "custom_http",
+] as const;
+
+const clonedOrCustomProviderSet = new Set<string>(clonedOrCustomVoiceProviders);
+
+function requiredDecimalString(
+  label: string,
+  min: number,
+  max: number,
+) {
+  return z
+    .string()
+    .trim()
+    .refine(
+      (value) =>
+        value !== "" &&
+        Number.isFinite(Number(value)) &&
+        Number(value) >= min &&
+        Number(value) <= max,
+      `${label} debe estar entre ${min} y ${max}`,
+    );
+}
+
+function optionalDecimalString(
+  label: string,
+  min: number,
+  max: number,
+) {
+  return z
+    .string()
+    .trim()
+    .refine(
+      (value) =>
+        value === "" ||
+        (Number.isFinite(Number(value)) &&
+          Number(value) >= min &&
+          Number(value) <= max),
+      `${label} debe estar entre ${min} y ${max}`,
+    );
+}
+
+export const assistantConfigFormSchema = z
+  .object({
   name: z.string().trim().min(1, "El nombre es obligatorio").max(200),
   is_active: z.boolean(),
   realtime_model: z.string().trim().min(1, "El modelo es obligatorio"),
   realtime_voice: z.string().trim().min(1, "La voz es obligatoria"),
+  call_audio_mode: z.enum(callAudioModes),
+  voice_provider: z.string().trim().min(1, "El proveedor de voz es obligatorio"),
+  tts_model: z.string(),
+  voice_id: z.string(),
+  voice_locale: z.string(),
+  voice_gender: z.string(),
+  voice_speed: requiredDecimalString("La velocidad de voz", 0.25, 4),
+  voice_pitch: requiredDecimalString("El pitch", -24, 24),
+  voice_stability: optionalDecimalString("La estabilidad", 0, 1),
+  voice_similarity: optionalDecimalString("La similitud", 0, 1),
+  voice_temperature: optionalDecimalString("La temperatura de voz", 0, 2),
+  output_audio_format: z.enum(outputAudioFormats),
+  telephony_codec: z.enum(telephonyCodecs),
+  external_voice_legal_confirmed: z.boolean(),
   voice_instructions: z.string(),
   voice_preset: z.string(),
   tts_preview_voice: z.string(),
@@ -98,16 +178,57 @@ export const assistantConfigFormSchema = z.object({
   transcript_enabled: z.boolean(),
   recording_enabled: z.boolean(),
   conversation_retention_days: z.number().int().min(1).max(3650),
-});
+})
+  .superRefine((value, ctx) => {
+    if (
+      value.voice_provider !== "openai" &&
+      value.call_audio_mode !== "vps_media_bridge"
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["call_audio_mode"],
+        message: "Las voces externas requieren VPS Media Bridge.",
+      });
+    }
+    if (
+      clonedOrCustomProviderSet.has(value.voice_provider) &&
+      !value.external_voice_legal_confirmed
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["external_voice_legal_confirmed"],
+        message:
+          "Confirma derechos legales para usar voces clonadas o personalizadas.",
+      });
+    }
+  });
 
 export type AssistantConfigFormValues = z.infer<
   typeof assistantConfigFormSchema
 >;
 
 export interface AssistantConfigPayload
-  extends Omit<AssistantConfigFormValues, "temperature" | "idle_timeout_ms"> {
+  extends Omit<
+    AssistantConfigFormValues,
+    | "temperature"
+    | "idle_timeout_ms"
+    | "tts_model"
+    | "voice_id"
+    | "voice_locale"
+    | "voice_gender"
+    | "voice_stability"
+    | "voice_similarity"
+    | "voice_temperature"
+  > {
   temperature: string | null;
   idle_timeout_ms: number | null;
+  tts_model: string | null;
+  voice_id: string | null;
+  voice_locale: string | null;
+  voice_gender: string | null;
+  voice_stability: string | null;
+  voice_similarity: string | null;
+  voice_temperature: string | null;
 }
 
 export const assistantConfigDefaults: AssistantConfigFormValues = {
@@ -115,6 +236,20 @@ export const assistantConfigDefaults: AssistantConfigFormValues = {
   is_active: false,
   realtime_model: "gpt-realtime-2",
   realtime_voice: "marin",
+  call_audio_mode: "openai_hosted_sip",
+  voice_provider: "openai",
+  tts_model: "",
+  voice_id: "",
+  voice_locale: "es-ES",
+  voice_gender: "",
+  voice_speed: "1",
+  voice_pitch: "0",
+  voice_stability: "",
+  voice_similarity: "",
+  voice_temperature: "",
+  output_audio_format: "pcm16",
+  telephony_codec: "pcmu",
+  external_voice_legal_confirmed: false,
   voice_instructions:
     "Habla con voz clara, amable y tranquila. Sonríe al hablar, evita sonar robótico y marca bien nombres, horas y teléfonos.",
   voice_preset: "Recepcionista clínica formal",

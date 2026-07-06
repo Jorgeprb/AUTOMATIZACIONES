@@ -32,7 +32,7 @@ export async function apiRequest<T>(
   if (init.body && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
-  if (path.startsWith("/api/admin")) {
+  if (path.startsWith("/api/admin") && adminApiKey) {
     headers.set("X-Admin-API-Key", adminApiKey);
   }
 
@@ -71,7 +71,7 @@ export async function apiBlobRequest(
   if (init.body && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
-  if (path.startsWith("/api/admin")) {
+  if (path.startsWith("/api/admin") && adminApiKey) {
     headers.set("X-Admin-API-Key", adminApiKey);
   }
 

@@ -19,7 +19,7 @@ from app.admin_schemas import (
     TestSessionRead,
     TestToolTrace,
 )
-from app.audio import TTSGenerationError, synthesize_openai_speech
+from app.audio import TTSGenerationError, synthesize_speech
 from app.config import Settings
 from app.conversation_policy import load_conversation_state
 from app.models import (
@@ -592,7 +592,7 @@ def synthesize_test_session_audio(
     settings: Settings,
     test_session: TestSession,
     text: str,
-) -> bytes:
+) -> tuple[bytes, str]:
     """Generate one finite TTS audio blob using the selected AssistantConfig."""
     if _is_closed(test_session):
         raise TestConsoleError("El chat de prueba ya está finalizado.")
@@ -602,14 +602,32 @@ def synthesize_test_session_audio(
     config = session.get(AssistantConfig, test_session.assistant_config_id)
     if config is None or config.clinic_id != test_session.clinic_id:
         raise TestConsoleError("Configuración del asistente no encontrada.")
+    voice = effective_preview_voice(config)
+    if config.voice_provider != "openai":
+        voice = (
+            config.tts_preview_voice
+            or config.voice_id
+            or config.realtime_voice
+        ).strip()
     try:
-        return synthesize_openai_speech(
+        result = synthesize_speech(
             settings,
+            provider=config.voice_provider,
             text=cleaned,
-            voice=effective_preview_voice(config),
-            model=config.realtime_model,
+            voice=voice,
+            model=config.tts_model or config.realtime_model,
             instructions=build_voice_instruction_block(config),
             response_format=config.preview_audio_format,
+            output_audio_format=config.output_audio_format,
+            telephony_codec=config.telephony_codec,
+            locale=config.voice_locale,
+            gender=config.voice_gender,
+            voice_speed=config.voice_speed,
+            voice_pitch=config.voice_pitch,
+            voice_stability=config.voice_stability,
+            voice_similarity=config.voice_similarity,
+            voice_temperature=config.voice_temperature,
         )
+        return result.audio, result.media_type
     except TTSGenerationError as exc:
         raise TestConsoleError(str(exc)) from exc

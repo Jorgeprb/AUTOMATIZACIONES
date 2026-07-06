@@ -77,6 +77,18 @@ class Settings(BaseSettings):
     test_console_engine: Literal["simulator", "openai"] = "simulator"
     test_console_model: str = "gpt-5.4-mini"
     openai_tts_model: str = "gpt-4o-mini-tts"
+    azure_speech_key: SecretStr = SecretStr("")
+    azure_speech_region: str = ""
+    google_tts_api_key: SecretStr = SecretStr("")
+    elevenlabs_api_key: SecretStr = SecretStr("")
+    amazon_polly_region: str = ""
+    deepgram_api_key: SecretStr = SecretStr("")
+    cartesia_api_key: SecretStr = SecretStr("")
+    resemble_api_key: SecretStr = SecretStr("")
+    resemble_tts_url: str = ""
+    custom_http_tts_url: str = ""
+    custom_http_tts_api_key: SecretStr = SecretStr("")
+    local_tts_base_url: str = ""
 
     public_base_url: str
     frontend_base_url: str = "http://localhost:5173"

@@ -58,6 +58,20 @@ function formValues(config: AssistantConfig): AssistantConfigFormValues {
     is_active: config.is_active,
     realtime_model: config.realtime_model,
     realtime_voice: config.realtime_voice,
+    call_audio_mode: config.call_audio_mode,
+    voice_provider: config.voice_provider,
+    tts_model: config.tts_model ?? "",
+    voice_id: config.voice_id ?? "",
+    voice_locale: config.voice_locale ?? "es-ES",
+    voice_gender: config.voice_gender ?? "",
+    voice_speed: config.voice_speed ?? "1",
+    voice_pitch: config.voice_pitch ?? "0",
+    voice_stability: config.voice_stability ?? "",
+    voice_similarity: config.voice_similarity ?? "",
+    voice_temperature: config.voice_temperature ?? "",
+    output_audio_format: config.output_audio_format,
+    telephony_codec: config.telephony_codec,
+    external_voice_legal_confirmed: config.external_voice_legal_confirmed,
     voice_instructions: config.voice_instructions ?? "",
     voice_preset: config.voice_preset ?? "",
     tts_preview_voice: config.tts_preview_voice ?? "",
@@ -121,13 +135,22 @@ function payload(
   values: AssistantConfigFormValues,
   isActive: boolean,
 ): AssistantConfigPayload {
+  const externalVoice = values.voice_provider !== "openai";
   return {
     ...values,
     is_active: isActive,
+    call_audio_mode: externalVoice ? "vps_media_bridge" : values.call_audio_mode,
     temperature: values.temperature || null,
     idle_timeout_ms: values.idle_timeout_ms
       ? Number(values.idle_timeout_ms)
       : null,
+    tts_model: values.tts_model.trim() || null,
+    voice_id: values.voice_id.trim() || null,
+    voice_locale: values.voice_locale.trim() || null,
+    voice_gender: values.voice_gender.trim() || null,
+    voice_stability: values.voice_stability || null,
+    voice_similarity: values.voice_similarity || null,
+    voice_temperature: values.voice_temperature || null,
   };
 }
 
@@ -318,6 +341,24 @@ export function AssistantConfigPage() {
                     {`Grabación ${
                       config.recording_enabled ? "solicitada" : "desactivada"
                     }`}
+                  </StatusBadge>
+                  <StatusBadge
+                    status={
+                      config.call_audio_mode === "vps_media_bridge"
+                        ? "info"
+                        : "neutral"
+                    }
+                  >
+                    {config.call_audio_mode === "vps_media_bridge"
+                      ? "VPS Media Bridge"
+                      : "OpenAI Hosted SIP"}
+                  </StatusBadge>
+                  <StatusBadge
+                    status={
+                      config.voice_provider === "openai" ? "success" : "warning"
+                    }
+                  >
+                    {`Voz: ${config.voice_provider}`}
                   </StatusBadge>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-3">

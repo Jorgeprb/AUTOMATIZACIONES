@@ -453,6 +453,48 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "idle_timeout_ms IS NULL OR idle_timeout_ms BETWEEN 1000 AND 60000",
             name="valid_assistant_idle_timeout_ms",
         ),
+        CheckConstraint(
+            "call_audio_mode IN ('openai_hosted_sip', 'vps_media_bridge')",
+            name="valid_assistant_call_audio_mode",
+        ),
+        CheckConstraint(
+            (
+                "voice_provider IN ("
+                "'openai', 'azure', 'google', 'elevenlabs', 'amazon_polly', "
+                "'deepgram', 'cartesia', 'resemble', 'readspeaker', "
+                "'acapela', 'cereproc', 'local_coqui', 'local_chatterbox', "
+                "'custom_http')"
+            ),
+            name="valid_assistant_voice_provider",
+        ),
+        CheckConstraint(
+            "voice_speed BETWEEN 0.25 AND 4.00",
+            name="valid_assistant_voice_speed",
+        ),
+        CheckConstraint(
+            "voice_pitch BETWEEN -24.00 AND 24.00",
+            name="valid_assistant_voice_pitch",
+        ),
+        CheckConstraint(
+            "voice_stability IS NULL OR voice_stability BETWEEN 0.00 AND 1.00",
+            name="valid_assistant_voice_stability",
+        ),
+        CheckConstraint(
+            "voice_similarity IS NULL OR voice_similarity BETWEEN 0.00 AND 1.00",
+            name="valid_assistant_voice_similarity",
+        ),
+        CheckConstraint(
+            "voice_temperature IS NULL OR voice_temperature BETWEEN 0.00 AND 2.00",
+            name="valid_assistant_voice_temperature",
+        ),
+        CheckConstraint(
+            "output_audio_format IN ('pcm16', 'wav', 'mp3', 'opus')",
+            name="valid_assistant_output_audio_format",
+        ),
+        CheckConstraint(
+            "telephony_codec IN ('pcmu', 'pcma', 'pcm16')",
+            name="valid_assistant_telephony_codec",
+        ),
     )
 
     clinic_id: Mapped[uuid.UUID] = mapped_column(
@@ -468,10 +510,68 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     realtime_model: Mapped[str] = mapped_column(String(120), nullable=False)
     realtime_voice: Mapped[str] = mapped_column(String(80), nullable=False)
+    call_audio_mode: Mapped[str] = mapped_column(
+        String(32),
+        server_default=text("'openai_hosted_sip'"),
+        default="openai_hosted_sip",
+        nullable=False,
+    )
+    voice_provider: Mapped[str] = mapped_column(
+        String(32),
+        server_default=text("'openai'"),
+        default="openai",
+        nullable=False,
+    )
+    tts_model: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    voice_id: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    voice_locale: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    voice_gender: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    voice_speed: Mapped[Decimal] = mapped_column(
+        Numeric(4, 2),
+        server_default=text("1.00"),
+        default=Decimal("1.00"),
+        nullable=False,
+    )
+    voice_pitch: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2),
+        server_default=text("0.00"),
+        default=Decimal("0.00"),
+        nullable=False,
+    )
+    voice_stability: Mapped[Decimal | None] = mapped_column(
+        Numeric(4, 2),
+        nullable=True,
+    )
+    voice_similarity: Mapped[Decimal | None] = mapped_column(
+        Numeric(4, 2),
+        nullable=True,
+    )
+    voice_temperature: Mapped[Decimal | None] = mapped_column(
+        Numeric(4, 2),
+        nullable=True,
+    )
+    output_audio_format: Mapped[str] = mapped_column(
+        String(16),
+        server_default=text("'pcm16'"),
+        default="pcm16",
+        nullable=False,
+    )
+    telephony_codec: Mapped[str] = mapped_column(
+        String(16),
+        server_default=text("'pcmu'"),
+        default="pcmu",
+        nullable=False,
+    )
+    external_voice_legal_confirmed: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("false"),
+        default=False,
+        nullable=False,
+    )
     voice_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     voice_preset: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    tts_preview_voice: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    fallback_voice: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    tts_preview_voice: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    fallback_voice: Mapped[str | None] = mapped_column(String(240), nullable=True)
     speech_speed: Mapped[str] = mapped_column(
         String(16),
         server_default=text("'normal'"),
@@ -703,6 +803,66 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     conversation_flow: Mapped[ConversationFlow | None] = relationship(
         back_populates="assistant_configs",
+    )
+
+
+class VoiceCatalog(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Selectable voice/model options exposed by provider adapters."""
+
+    __tablename__ = "voice_catalog"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "model",
+            "voice_id",
+            name="uq_voice_catalog_provider_model_voice",
+        ),
+        Index("ix_voice_catalog_provider_enabled", "provider", "enabled"),
+        Index("ix_voice_catalog_locale", "locale"),
+    )
+
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    model: Mapped[str] = mapped_column(String(160), nullable=False)
+    voice_id: Mapped[str] = mapped_column(String(240), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(240), nullable=False)
+    locale: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    gender: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    supports_streaming: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("false"),
+        default=False,
+        nullable=False,
+    )
+    supports_telephony_codec: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("false"),
+        default=False,
+        nullable=False,
+    )
+    supports_voice_clone: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("false"),
+        default=False,
+        nullable=False,
+    )
+    requires_consent: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("false"),
+        default=False,
+        nullable=False,
+    )
+    recommended: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("false"),
+        default=False,
+        nullable=False,
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
     )
 
 

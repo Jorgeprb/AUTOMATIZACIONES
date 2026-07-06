@@ -177,13 +177,18 @@ def synthesize_speech(
     """Generate finite TTS audio for one assistant message in the browser."""
     test_session = _test_session_or_404(session, session_id)
     try:
-        audio = synthesize_test_session_audio(
+        generated = synthesize_test_session_audio(
             session,
             settings,
             test_session,
             payload.text,
         )
-        return Response(content=audio, media_type="audio/mpeg")
+        if isinstance(generated, tuple):
+            audio, media_type = generated
+        else:
+            audio = generated
+            media_type = "audio/mpeg"
+        return Response(content=audio, media_type=media_type)
     except TestConsoleError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

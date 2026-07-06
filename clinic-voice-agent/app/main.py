@@ -11,7 +11,17 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, agent, calendar, calls, dev, google_auth, health, workers
+from app.api import (
+    admin,
+    agent,
+    calendar,
+    calls,
+    dev,
+    google_auth,
+    health,
+    internal_voice,
+    workers,
+)
 from app.config import Settings, get_settings
 from app.openai_realtime import webhook
 from app.openai_realtime.session import shutdown_call_control_tasks
@@ -182,6 +192,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     application.include_router(
         calls.router,
+        prefix="/api",
+        dependencies=internal_dependencies,
+    )
+    application.include_router(
+        internal_voice.router,
         prefix="/api",
         dependencies=internal_dependencies,
     )

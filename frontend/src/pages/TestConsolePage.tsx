@@ -175,6 +175,14 @@ export function TestConsolePage() {
     queryFn: () => listAssistantConfigs(clinicId as string),
     enabled: Boolean(clinicId),
   });
+  const selectedConfig = configsQuery.data?.items.find(
+    (config) => config.id === configId,
+  );
+  const selectedFlowLabel =
+    selectedConfig?.call_audio_mode === "vps_media_bridge" ||
+    selectedConfig?.voice_provider !== "openai"
+      ? "VPS Media Bridge"
+      : "OpenAI Hosted SIP";
 
   useEffect(() => {
     const active =
@@ -434,6 +442,20 @@ export function TestConsolePage() {
             </Button>
           </div>
           <div className="rounded-xl border border-[#e4e8ef] bg-[#fbfcfe] p-3">
+            <div className="mb-3 rounded-lg bg-white px-3 py-2 text-xs text-[#526078]">
+              <p className="font-semibold text-[#27334a]">{selectedFlowLabel}</p>
+              <p>
+                {selectedConfig?.voice_provider ?? "openai"} ·{" "}
+                {selectedConfig?.voice_id ||
+                  selectedConfig?.tts_preview_voice ||
+                  selectedConfig?.realtime_voice ||
+                  "voz no configurada"}
+              </p>
+              <p>
+                {selectedConfig?.telephony_codec?.toUpperCase() ?? "PCMU"} ·{" "}
+                {selectedConfig?.voice_locale ?? "es-ES"}
+              </p>
+            </div>
             <label className="flex items-center gap-2 text-sm font-medium text-[#37445b]">
               <input
                 type="checkbox"
@@ -447,6 +469,11 @@ export function TestConsolePage() {
               />
               Escuchar voz del bot
             </label>
+            <p className="mt-1 text-xs text-[#7a8699]">
+              {selectedFlowLabel === "VPS Media Bridge"
+                ? "Simula modelo texto → TTS provider → audio, sin llamada telefónica."
+                : "Reproduce la voz OpenAI configurada para el flujo Hosted SIP."}
+            </p>
             <div className="mt-3 flex gap-2">
               <Button
                 type="button"
