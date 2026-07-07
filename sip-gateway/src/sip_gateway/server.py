@@ -9,7 +9,7 @@ import time
 import zlib
 from collections import defaultdict, deque
 
-from sip_gateway.backend import BackendClient
+from sip_gateway.backend import BackendClient, BackendRequestError
 from sip_gateway.config import GatewaySettings
 from sip_gateway.rtp import RTPPortPool
 from sip_gateway.sdp import build_sdp_answer, parse_sdp_offer
@@ -238,12 +238,35 @@ class SipGateway:
                 rtp_port=rtp_port,
             )
             await call.prepare()
+        except BackendRequestError as exc:
+            self.invite_failures += 1
+            self.provider_errors += 1
+            logger.warning(
+                "sip_invite_backend_context_failed",
+                extra={
+                    "call_id": message.call_id,
+                    "caller": message.caller,
+                    "callee": message.callee,
+                    "sip_to": message.header("to") or message.header("t"),
+                    "sip_from": message.header("from") or message.header("f"),
+                    "backend_endpoint": exc.endpoint,
+                    "backend_status_code": exc.status_code,
+                    "backend_detail": exc.detail,
+                },
+            )
+            self._send(message, 488, "Not Acceptable Here", addr)
+            return
         except Exception:
             self.invite_failures += 1
             self.provider_errors += 1
             logger.exception(
                 "sip_invite_failed",
-                extra={"call_id": message.call_id, "caller": message.caller},
+                extra={
+                    "call_id": message.call_id,
+                    "caller": message.caller,
+                    "callee": message.callee,
+                    "sip_to": message.header("to") or message.header("t"),
+                },
             )
             self._send(message, 488, "Not Acceptable Here", addr)
             return

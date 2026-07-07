@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from decimal import Decimal
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.audio import TTSGenerationError, synthesize_speech
 from app.config import Settings, get_settings
 from app.db import get_db, get_session_factory
-from app.models import CallSession, CallStatus
+from app.models import AssistantConfig, CallSession, CallStatus, Clinic
 from app.openai_realtime.prompt_builder import (
     ActiveAssistantConfigMissing,
     UnknownCalledNumber,
+    build_clinic_context,
     build_realtime_instructions,
     resolve_clinic_by_called_number,
 )
@@ -33,10 +36,28 @@ router = APIRouter(prefix="/internal/voice", tags=["internal-voice"])
 class VoiceContextRequest(BaseModel):
     """Data extracted by SIP gateway before media starts."""
 
-    called_number: str = Field(min_length=1, max_length=64)
-    caller_phone: str = Field(default="", max_length=64)
+    called_number: str | None = Field(default=None, max_length=128)
+    caller_phone: str | None = Field(default=None, max_length=128)
+    caller: str | None = Field(default=None, max_length=128)
+    callee: str | None = Field(default=None, max_length=128)
+    sip_to: str | None = Field(default=None, max_length=512)
+    sip_from: str | None = Field(default=None, max_length=512)
     openai_call_id: str = Field(min_length=1, max_length=128)
     provider_call_id: str | None = Field(default=None, max_length=128)
+
+
+class VoiceClinicInfo(BaseModel):
+    """Safe clinic data returned to the internal media bridge."""
+
+    id: uuid.UUID
+    name: str
+    timezone: str
+    default_language: str
+    main_phone_number: str
+    address: str | None
+    website: str | None
+    email: str | None
+    description: str | None
 
 
 class VoiceContextResponse(BaseModel):
@@ -48,6 +69,7 @@ class VoiceContextResponse(BaseModel):
     assistant_config_id: uuid.UUID
     model: str
     realtime_voice: str
+    call_audio_mode: str
     voice_provider: str
     tts_model: str | None
     voice_id: str | None
@@ -68,6 +90,11 @@ class VoiceContextResponse(BaseModel):
     transcript_enabled: bool
     first_message: str
     instructions: str
+    prompt: str
+    caller: str | None
+    called_number: str
+    resolved_called_number: str | None
+    clinic: VoiceClinicInfo
     tools: list[dict[str, Any]]
 
 
@@ -124,6 +151,110 @@ def _decimal_to_str(value: Decimal | None) -> str | None:
     return str(value) if value is not None else None
 
 
+PHONE_RE = re.compile(r"\+?\d[\d\s().-]{3,}\d")
+SIP_USER_RE = re.compile(r"sip:([^@;>\s]+)", flags=re.IGNORECASE)
+
+
+def _normalize_phone_candidates(value: str | None) -> tuple[str, ...]:
+    """Return exact-match phone candidates from SIP-ish text without broad scans."""
+    if not value:
+        return ()
+    raw = value.strip()
+    values: list[str] = []
+    for candidate in [raw, *SIP_USER_RE.findall(raw), *PHONE_RE.findall(raw)]:
+        candidate = candidate.strip().strip('"<>')
+        digits = "".join(character for character in candidate if character.isdigit())
+        if not digits:
+            continue
+        values.append(candidate)
+        values.append(digits)
+        values.append(f"+{digits}")
+    deduplicated: list[str] = []
+    for item in values:
+        if item and item not in deduplicated:
+            deduplicated.append(item[:64])
+    return tuple(deduplicated)
+
+
+def _called_number_candidates(payload: VoiceContextRequest) -> tuple[str, ...]:
+    """Build ordered DID candidates from gateway payload."""
+    values: list[str] = []
+    for item in (payload.called_number, payload.callee, payload.sip_to):
+        for candidate in _normalize_phone_candidates(item):
+            if candidate not in values:
+                values.append(candidate)
+    return tuple(values)
+
+
+def _caller_phone(payload: VoiceContextRequest) -> str:
+    """Pick the safest caller value for the call session."""
+    for item in (payload.caller_phone, payload.caller, payload.sip_from):
+        candidates = _normalize_phone_candidates(item)
+        if candidates:
+            return candidates[0][:32]
+        if item and item.strip():
+            return item.strip()[:32]
+    return "unknown"
+
+
+def _single_active_clinic_fallback(session: Session):
+    """Resolve only when fallback cannot cross tenant boundaries."""
+    clinic_ids = list(
+        session.scalars(
+            select(Clinic.id)
+            .join(AssistantConfig, AssistantConfig.clinic_id == Clinic.id)
+            .where(
+                Clinic.is_active.is_(True),
+                AssistantConfig.is_active.is_(True),
+            )
+            .order_by(Clinic.created_at, Clinic.id)
+        ).unique()
+    )
+    if len(clinic_ids) == 1:
+        return build_clinic_context(session, clinic_id=clinic_ids[0])
+    if not clinic_ids:
+        raise ActiveAssistantConfigMissing(
+            "No active clinic with an active assistant configuration is available."
+        )
+    raise UnknownCalledNumber(
+        "No active clinic matches the called number and fallback is unsafe because "
+        "multiple active clinics have active assistant configurations."
+    )
+
+
+def _resolve_context_from_payload(payload: VoiceContextRequest, session: Session):
+    """Resolve tenant context from called DID candidates or safe fallback."""
+    candidates = _called_number_candidates(payload)
+    last_config_error: ActiveAssistantConfigMissing | None = None
+    for candidate in candidates:
+        try:
+            return resolve_clinic_by_called_number(candidate, session=session), candidate
+        except UnknownCalledNumber:
+            continue
+        except ActiveAssistantConfigMissing as exc:
+            last_config_error = exc
+    if last_config_error is not None:
+        raise last_config_error
+    if not candidates:
+        return _single_active_clinic_fallback(session), None
+    raise UnknownCalledNumber("No active clinic matches the called number candidates.")
+
+
+def _clinic_info(clinic: Clinic) -> VoiceClinicInfo:
+    """Serialize non-secret clinic basics for the gateway."""
+    return VoiceClinicInfo(
+        id=clinic.id,
+        name=clinic.name,
+        timezone=clinic.timezone,
+        default_language=clinic.default_language,
+        main_phone_number=clinic.main_phone_number,
+        address=clinic.address,
+        website=clinic.website,
+        email=clinic.email,
+        description=clinic.description,
+    )
+
+
 @router.post("/context", response_model=VoiceContextResponse)
 def create_voice_context(
     payload: VoiceContextRequest,
@@ -131,37 +262,58 @@ def create_voice_context(
 ) -> VoiceContextResponse:
     """Resolve DID to clinic context and create a CallSession for tools."""
     try:
-        context = resolve_clinic_by_called_number(
-            payload.called_number,
-            session=session,
-        )
+        context, resolved_candidate = _resolve_context_from_payload(payload, session)
     except UnknownCalledNumber as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
+            detail={
+                "error": "clinic_not_found",
+                "message": str(exc),
+                "called_number_candidates": list(_called_number_candidates(payload)),
+                "callee": payload.callee,
+            },
         ) from exc
     except ActiveAssistantConfigMissing as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
+            detail={"error": "assistant_config_missing", "message": str(exc)},
         ) from exc
+
     config = context.active_assistant_config
+    caller_phone = _caller_phone(payload)
+    called_number = (
+        context.phone_number.phone_number
+        if context.phone_number is not None
+        else resolved_candidate
+        or payload.called_number
+        or payload.callee
+        or "unknown"
+    )[:32]
     call_session = CallSession(
         clinic_id=context.clinic.id,
         phone_number_id=context.phone_number.id if context.phone_number else None,
         assistant_config_id=config.id,
         openai_call_id=payload.openai_call_id,
         provider_call_id=payload.provider_call_id,
-        caller_phone=payload.caller_phone or "unknown",
-        called_number=payload.called_number,
+        caller_phone=caller_phone,
+        called_number=called_number,
         status=CallStatus.ACTIVE,
         recording_enabled=config.recording_enabled,
         transcript_enabled=config.transcript_enabled,
-        conversation_state_json={"source": "vps_media_bridge"},
+        conversation_state_json={
+            "source": "vps_media_bridge",
+            "caller": payload.caller,
+            "callee": payload.callee,
+            "sip_to": payload.sip_to,
+            "sip_from": payload.sip_from,
+            "resolved_called_number": resolved_candidate,
+        },
     )
+
     session.add(call_session)
     session.commit()
     session.refresh(call_session)
+
     instructions = build_realtime_instructions(context)
     instructions = (
         f"{instructions}\n\n# Contexto técnico\n"
@@ -170,6 +322,7 @@ def create_voice_context(
         f"call_session_id técnico de esta llamada: {call_session.id}. "
         "No lo leas en voz alta."
     )
+
     return VoiceContextResponse(
         clinic_id=context.clinic.id,
         call_session_id=call_session.id,
@@ -177,6 +330,7 @@ def create_voice_context(
         assistant_config_id=config.id,
         model=config.realtime_model,
         realtime_voice=config.realtime_voice,
+        call_audio_mode=config.call_audio_mode,
         voice_provider=config.voice_provider,
         tts_model=config.tts_model,
         voice_id=config.voice_id,
@@ -197,6 +351,11 @@ def create_voice_context(
         transcript_enabled=config.transcript_enabled,
         first_message=config.first_message,
         instructions=instructions,
+        prompt=instructions,
+        caller=caller_phone,
+        called_number=called_number,
+        resolved_called_number=resolved_candidate,
+        clinic=_clinic_info(context.clinic),
         tools=list(get_realtime_tools()),
     )
 

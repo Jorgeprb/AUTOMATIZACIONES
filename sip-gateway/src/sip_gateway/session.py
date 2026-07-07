@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from collections.abc import Coroutine
@@ -21,6 +22,21 @@ from sip_gateway.sdp import SdpOffer
 from sip_gateway.sip import SipMessage
 
 logger = logging.getLogger(__name__)
+
+
+def _looks_like_phone_number(value: str | None) -> bool:
+    """Return whether a SIP user/header contains a usable phone number."""
+    if not value:
+        return False
+    return re.search(r"\d{5,}", value) is not None
+
+
+def select_called_number(invite: SipMessage, fallback_called_number: str | None) -> str:
+    """Prefer real DID over route aliases such as sip:bot@... ."""
+    sip_callee = invite.callee
+    if fallback_called_number and not _looks_like_phone_number(sip_callee):
+        return fallback_called_number
+    return sip_callee or fallback_called_number or ""
 
 
 class RtpProtocol(asyncio.DatagramProtocol):
@@ -92,10 +108,17 @@ class GatewayCallSession:
             local_addr=(self.settings.sip_bind_host, self.rtp_port),
         )
         self.rtp_transport = transport  # type: ignore[assignment]
-        called_number = self.invite.callee or self.settings.fallback_called_number or ""
+        called_number = select_called_number(
+            self.invite,
+            self.settings.fallback_called_number,
+        )
         self.context = await self.backend.resolve_voice_context(
             called_number=called_number,
             caller_phone=self.invite.caller,
+            caller=self.invite.caller,
+            callee=self.invite.callee,
+            sip_to=self.invite.header("to") or self.invite.header("t"),
+            sip_from=self.invite.header("from") or self.invite.header("f"),
             openai_call_id=self.openai_call_id,
             provider_call_id=self.call_id,
         )

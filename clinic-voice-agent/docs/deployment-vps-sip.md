@@ -121,6 +121,9 @@ RTP_ADVERTISE_IP=51.210.180.115
 SIP_PORT=6060
 RTP_PORT_MIN=10000
 RTP_PORT_MAX=20000
+# Si VoIP Studio llama a un alias como sip:bot@sip.autogal.es:6060,
+# configura aquí el DID real de la clínica para que el gateway resuelva tenant.
+FALLBACK_CALLED_NUMBER=+34XXXXXXXXX
 ```
 
 Para Supabase, usa `DATABASE_URL` externo. Para Postgres local, deja:
@@ -224,6 +227,42 @@ VPS. Para Sabela/Azure:
 
 ```text
 sip:bot@sip.autogal.es:6060
+```
+
+El alias `bot` solo identifica la ruta SIP del gateway. La clínica se resuelve por
+DID real. Si VoIP Studio no entrega el DID en `To`/Request-URI, define
+`FALLBACK_CALLED_NUMBER` con el número público de esa clínica. El backend solo usa
+fallback sin DID cuando hay una única clínica activa con configuración activa, para
+evitar cruzar datos entre tenants.
+
+Prueba interna del contrato gateway -> backend desde la red Docker:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production exec sip-gateway sh -lc '
+python - <<"PY"
+import json, os, urllib.request
+url = os.environ.get("BACKEND_INTERNAL_URL", "http://api:10000") + "/api/internal/voice/context"
+payload = {
+    "caller": "+34600111222",
+    "caller_phone": "+34600111222",
+    "callee": "bot",
+    "called_number": os.environ.get("FALLBACK_CALLED_NUMBER", ""),
+    "sip_to": "<sip:bot@sip.autogal.es:6060>",
+    "sip_from": "<sip:+34600111222@voipstudio.example>",
+    "openai_call_id": "diag-context",
+    "provider_call_id": "diag-context",
+}
+request = urllib.request.Request(
+    url,
+    data=json.dumps(payload).encode(),
+    headers={
+        "Content-Type": "application/json",
+        "X-Internal-API-Key": os.environ["INTERNAL_API_KEY"],
+    },
+    method="POST",
+)
+print(urllib.request.urlopen(request, timeout=10).read().decode()[:2000])
+PY'
 ```
 
 Mantén el número en VoIP Studio. No hace falta portarlo.

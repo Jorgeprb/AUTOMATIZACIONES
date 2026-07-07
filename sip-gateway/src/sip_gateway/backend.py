@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any
 
 import httpx
@@ -41,6 +41,21 @@ class VoiceContext:
     first_message: str
     instructions: str
     tools: list[dict[str, Any]]
+    call_audio_mode: str = "vps_media_bridge"
+    prompt: str | None = None
+    caller: str | None = None
+    called_number: str | None = None
+    resolved_called_number: str | None = None
+    clinic: dict[str, Any] | None = None
+
+    @classmethod
+    def from_response(cls, data: dict[str, Any]) -> "VoiceContext":
+        """Build context while ignoring backend fields unknown to this client."""
+        allowed = {field.name for field in fields(cls)}
+        filtered = {key: value for key, value in data.items() if key in allowed}
+        if not filtered.get("prompt"):
+            filtered["prompt"] = filtered.get("instructions")
+        return cls(**filtered)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +64,24 @@ class TTSAudio:
 
     audio: bytes
     media_type: str
+
+
+class BackendRequestError(RuntimeError):
+    """Backend rejected an internal gateway request."""
+
+    def __init__(self, *, endpoint: str, status_code: int, detail: Any) -> None:
+        self.endpoint = endpoint
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(f"backend {endpoint} returned HTTP {status_code}: {detail}")
+
+
+def _response_detail(response: httpx.Response) -> Any:
+    """Return a log-safe backend error body."""
+    try:
+        return response.json()
+    except ValueError:
+        return response.text[:500]
 
 
 class BackendClient:
@@ -65,6 +98,30 @@ class BackendClient:
             )
         return headers
 
+    def _build_context_payload(
+        self,
+        *,
+        called_number: str,
+        caller_phone: str,
+        openai_call_id: str,
+        provider_call_id: str,
+        caller: str | None = None,
+        callee: str | None = None,
+        sip_to: str | None = None,
+        sip_from: str | None = None,
+    ) -> dict[str, Any]:
+        """Build the backend context payload without exposing secrets."""
+        return {
+            "called_number": called_number,
+            "caller_phone": caller_phone,
+            "caller": caller or caller_phone,
+            "callee": callee or called_number,
+            "sip_to": sip_to,
+            "sip_from": sip_from,
+            "openai_call_id": openai_call_id,
+            "provider_call_id": provider_call_id,
+        }
+
     async def resolve_voice_context(
         self,
         *,
@@ -72,23 +129,39 @@ class BackendClient:
         caller_phone: str,
         openai_call_id: str,
         provider_call_id: str,
+        caller: str | None = None,
+        callee: str | None = None,
+        sip_to: str | None = None,
+        sip_from: str | None = None,
     ) -> VoiceContext:
         """Resolve called DID to clinic prompt/config through backend."""
-        payload = {
-            "called_number": called_number,
-            "caller_phone": caller_phone,
-            "openai_call_id": openai_call_id,
-            "provider_call_id": provider_call_id,
-        }
+        payload = self._build_context_payload(
+            called_number=called_number,
+            caller_phone=caller_phone,
+            caller=caller,
+            callee=callee,
+            sip_to=sip_to,
+            sip_from=sip_from,
+            openai_call_id=openai_call_id,
+            provider_call_id=provider_call_id,
+        )
+        endpoint = f"{self._settings.backend_internal_url}/api/internal/voice/context"
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.post(
-                f"{self._settings.backend_internal_url}/api/internal/voice/context",
+                endpoint,
                 json=payload,
                 headers=self._headers(),
             )
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise BackendRequestError(
+                    endpoint="/api/internal/voice/context",
+                    status_code=response.status_code,
+                    detail=_response_detail(response),
+                ) from exc
             data = response.json()
-        return VoiceContext(**data)
+        return VoiceContext.from_response(data)
 
     async def synthesize_tts(
         self,
