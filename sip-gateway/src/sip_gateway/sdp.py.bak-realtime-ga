@@ -9,42 +9,6 @@ PAYLOAD_PCMA = 8
 SUPPORTED_PAYLOADS = {PAYLOAD_PCMU: "PCMU", PAYLOAD_PCMA: "PCMA"}
 
 
-def normalize_telephony_codec(value: str | None) -> str:
-    """Normalize telephony codec names accepted from env/backend."""
-    codec = (value or "pcmu").strip().casefold()
-    aliases = {
-        "0": "pcmu",
-        "ulaw": "pcmu",
-        "u-law": "pcmu",
-        "mulaw": "pcmu",
-        "g711_ulaw": "pcmu",
-        "audio/pcmu": "pcmu",
-        "8": "pcma",
-        "alaw": "pcma",
-        "a-law": "pcma",
-        "g711_alaw": "pcma",
-        "audio/pcma": "pcma",
-    }
-    codec = aliases.get(codec, codec)
-    if codec not in {"pcmu", "pcma"}:
-        raise ValueError("TELEPHONY_CODEC must be 'pcmu' or 'pcma'")
-    return codec
-
-
-def payload_type_for_codec(codec: str | None) -> int:
-    """Map normalized codec to static RTP payload type."""
-    return PAYLOAD_PCMA if normalize_telephony_codec(codec) == "pcma" else PAYLOAD_PCMU
-
-
-def codec_for_payload_type(payload_type: int) -> str:
-    """Return normalized codec name for a supported static RTP payload type."""
-    if payload_type == PAYLOAD_PCMA:
-        return "pcma"
-    if payload_type == PAYLOAD_PCMU:
-        return "pcmu"
-    raise ValueError(f"unsupported payload type: {payload_type}")
-
-
 @dataclass(frozen=True, slots=True)
 class SdpOffer:
     """Parsed RTP media offer."""
@@ -53,12 +17,8 @@ class SdpOffer:
     audio_port: int
     payloads: list[int]
 
-    def choose_payload(self, preferred_codec: str | None = None) -> int:
-        """Choose supported payload, honoring TELEPHONY_CODEC when offered."""
-        if preferred_codec:
-            preferred_payload = payload_type_for_codec(preferred_codec)
-            if preferred_payload in self.payloads:
-                return preferred_payload
+    def choose_payload(self) -> int:
+        """Choose preferred supported payload."""
         if PAYLOAD_PCMU in self.payloads:
             return PAYLOAD_PCMU
         if PAYLOAD_PCMA in self.payloads:
@@ -72,7 +32,6 @@ def parse_sdp_offer(body: str) -> SdpOffer:
     audio_port = 0
     payloads: list[int] = []
     rtpmap: dict[int, str] = {}
-
     for raw_line in body.splitlines():
         line = raw_line.strip()
         if line.startswith("c="):
@@ -89,7 +48,6 @@ def parse_sdp_offer(body: str) -> SdpOffer:
             payload = left.split(":", maxsplit=1)[1]
             if payload.isdigit():
                 rtpmap[int(payload)] = codec.upper()
-
     supported = [
         payload
         for payload in payloads
@@ -99,12 +57,10 @@ def parse_sdp_offer(body: str) -> SdpOffer:
             or rtpmap[payload].startswith(f"{SUPPORTED_PAYLOADS[payload]}/8000")
         )
     ]
-
     if not connection_ip or audio_port <= 0:
         raise ValueError("SDP offer missing connection IP or audio port")
     if not supported:
         raise ValueError("SDP offer does not include supported G.711 payloads")
-
     return SdpOffer(
         connection_ip=connection_ip,
         audio_port=audio_port,

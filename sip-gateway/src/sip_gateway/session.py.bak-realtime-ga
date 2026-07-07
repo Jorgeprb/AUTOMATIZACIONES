@@ -18,7 +18,7 @@ from sip_gateway.codecs import decode_g711, encode_g711, pcm16_energy
 from sip_gateway.config import GatewaySettings
 from sip_gateway.openai_bridge import OpenAIRealtimeBridge
 from sip_gateway.rtp import JitterBuffer, RTPPacket, RTPPortPool, RTPSequencer
-from sip_gateway.sdp import SdpOffer, codec_for_payload_type
+from sip_gateway.sdp import SdpOffer
 from sip_gateway.sip import SipMessage
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ def _looks_like_phone_number(value: str | None) -> bool:
 
 
 def select_called_number(invite: SipMessage, fallback_called_number: str | None) -> str:
-    """Prefer real DID over route aliases such as sip:bot@..."""
+    """Prefer real DID over route aliases such as sip:bot@... ."""
     sip_callee = invite.callee
     if fallback_called_number and not _looks_like_phone_number(sip_callee):
         return fallback_called_number
@@ -97,7 +97,6 @@ class GatewayCallSession:
         self._closed = asyncio.Event()
         self._bot_speaking = False
         self._stop_tts = asyncio.Event()
-        self._tts_lock = asyncio.Lock()
         self.stats = CallStats()
         self.started_at = time.perf_counter()
 
@@ -109,7 +108,6 @@ class GatewayCallSession:
             local_addr=(self.settings.sip_bind_host, self.rtp_port),
         )
         self.rtp_transport = transport  # type: ignore[assignment]
-
         called_number = select_called_number(
             self.invite,
             self.settings.fallback_called_number,
@@ -132,7 +130,7 @@ class GatewayCallSession:
                 "caller": self.invite.caller,
                 "callee": called_number,
                 "provider": self.context.voice_provider,
-                "codec": codec_for_payload_type(self.payload_type).upper(),
+                "codec": "PCMU" if self.payload_type == 0 else "PCMA",
             },
         )
 
@@ -151,48 +149,20 @@ class GatewayCallSession:
                 arguments=arguments,
             )
 
-        self._spawn(self._max_duration_watchdog())
-
-        if context.voice_provider != "openai":
-            self._spawn(
-                self._speak_text(
-                    self.settings.initial_greeting,
-                    reason="initial_greeting",
-                )
-            )
-
         self.bridge = OpenAIRealtimeBridge(
             settings=self.settings,
             backend=self.backend,
             context=context,
             call_id=self.call_id,
             tool_executor=tool_executor,
-            payload_type=self.payload_type,
         )
-
-        try:
-            await self.bridge.start()
-        except Exception:
-            logger.exception(
-                "openai_bridge_start_failed",
-                extra={"call_id": self.call_id, "clinic_id": context.clinic_id},
-            )
-            if context.voice_provider != "openai":
-                self._spawn(
-                    self._speak_then_close(
-                        self.settings.openai_failure_message,
-                        reason="openai_start_failed",
-                    )
-                )
-                return
-            await self.close("openai_start_failed")
-            return
-
+        await self.bridge.start()
         self._spawn(self._inbound_audio_loop())
         if context.voice_provider == "openai":
             self._spawn(self._openai_audio_output_loop())
         else:
             self._spawn(self._external_tts_output_loop())
+        self._spawn(self._max_duration_watchdog())
 
     def on_rtp(self, data: bytes, addr: tuple[str, int]) -> None:
         """Process one RTP datagram from UDP protocol."""
@@ -237,7 +207,7 @@ class GatewayCallSession:
                 "caller": self.invite.caller,
                 "callee": self.invite.callee,
                 "provider": self.context.voice_provider if self.context else None,
-                "codec": codec_for_payload_type(self.payload_type).upper(),
+                "codec": "PCMU" if self.payload_type == 0 else "PCMA",
                 "latency_first_audio": self.stats.first_audio_latency_ms,
                 "tts_latency": self.stats.tts_latency_ms,
                 "inbound_packets": self.stats.inbound_packets,
@@ -263,19 +233,16 @@ class GatewayCallSession:
                 self._stop_tts.set()
                 await self.bridge.cancel_response()
                 logger.info("barge_in_detected", extra={"call_id": self.call_id})
-            await self.bridge.send_audio(packet.payload)
+            await self.bridge.send_pcm16(pcm16)
 
     async def _openai_audio_output_loop(self) -> None:
         assert self.bridge is not None
         while not self._closed.is_set():
-            audio = await self.bridge.audio_queue.get()
-            if self.bridge.output_audio_is_telephony:
-                await self._send_g711_as_rtp(audio, reason="openai_audio")
-            else:
-                await self._send_pcm16_as_rtp(audio, reason="openai_audio")
+            pcm16 = await self.bridge.audio_queue.get()
+            await self._send_pcm16_as_rtp(pcm16)
 
     async def _external_tts_output_loop(self) -> None:
-        assert self.bridge is not None
+        assert self.bridge is not None and self.context is not None
         buffer = ""
         while not self._closed.is_set():
             try:
@@ -296,67 +263,33 @@ class GatewayCallSession:
                 if self._stop_tts.is_set():
                     self._stop_tts.clear()
                     break
-                await self._speak_text(chunk, reason="assistant_text")
+                started = time.perf_counter()
+                try:
+                    tts_audio = await self.backend.synthesize_tts(
+                        context=self.context,
+                        text=chunk,
+                    )
+                    pcm16 = tts_audio_to_pcm16_8k(
+                        tts_audio.audio,
+                        media_type=tts_audio.media_type,
+                        telephony_codec=self.context.telephony_codec,
+                    )
+                except Exception:
+                    logger.exception(
+                        "tts_chunk_failed",
+                        extra={"call_id": self.call_id},
+                    )
+                    continue
+                self.stats.tts_latency_ms = round(
+                    (time.perf_counter() - started) * 1000,
+                    2,
+                )
+                await self._send_pcm16_as_rtp(pcm16)
 
-    async def _speak_then_close(self, text: str, *, reason: str) -> None:
-        await self._speak_text(text, reason=reason)
-        await asyncio.sleep(0.25)
-        await self.close(reason)
-
-    async def _speak_text(self, text: str, *, reason: str) -> None:
-        if self.context is None:
-            return
-        async with self._tts_lock:
-            started = time.perf_counter()
-            logger.info(
-                "azure_tts_started",
-                extra={
-                    "call_id": self.call_id,
-                    "clinic_id": self.context.clinic_id,
-                    "voice_provider": self.context.voice_provider,
-                    "voice_id": self.context.voice_id,
-                    "reason": reason,
-                    "chars": len(text),
-                },
-            )
-            try:
-                tts_audio = await self.backend.synthesize_tts(
-                    context=self.context,
-                    text=text,
-                )
-                logger.info(
-                    "azure_tts_first_chunk",
-                    extra={
-                        "call_id": self.call_id,
-                        "clinic_id": self.context.clinic_id,
-                        "voice_provider": self.context.voice_provider,
-                        "voice_id": self.context.voice_id,
-                        "reason": reason,
-                        "media_type": tts_audio.media_type,
-                    },
-                )
-                pcm16 = tts_audio_to_pcm16_8k(
-                    tts_audio.audio,
-                    media_type=tts_audio.media_type,
-                    telephony_codec=self.context.telephony_codec,
-                )
-            except Exception:
-                logger.exception(
-                    "tts_chunk_failed",
-                    extra={"call_id": self.call_id, "reason": reason},
-                )
-                return
-            self.stats.tts_latency_ms = round(
-                (time.perf_counter() - started) * 1000,
-                2,
-            )
-            await self._send_pcm16_as_rtp(pcm16, reason=reason)
-
-    async def _send_pcm16_as_rtp(self, pcm16: bytes, *, reason: str) -> None:
+    async def _send_pcm16_as_rtp(self, pcm16: bytes) -> None:
         if self.rtp_transport is None:
             return
         self._bot_speaking = True
-        first_packet_logged = False
         try:
             for frame in chunk_pcm16_20ms(pcm16):
                 if self._closed.is_set() or self._stop_tts.is_set():
@@ -366,48 +299,6 @@ class GatewayCallSession:
                 packet = self.sequencer.packet(payload).serialize()
                 self.rtp_transport.sendto(packet, self.remote_rtp_addr)
                 self.stats.outbound_packets += 1
-                if not first_packet_logged:
-                    first_packet_logged = True
-                    logger.info(
-                        "rtp_out_sent",
-                        extra={
-                            "call_id": self.call_id,
-                            "reason": reason,
-                            "payload_type": self.payload_type,
-                            "remote_rtp_addr": self.remote_rtp_addr,
-                        },
-                    )
-                await asyncio.sleep(0.02)
-        finally:
-            self._bot_speaking = False
-
-    async def _send_g711_as_rtp(self, payload_bytes: bytes, *, reason: str) -> None:
-        if self.rtp_transport is None:
-            return
-        self._bot_speaking = True
-        first_packet_logged = False
-        try:
-            for offset in range(0, len(payload_bytes), 160):
-                if self._closed.is_set() or self._stop_tts.is_set():
-                    self._stop_tts.clear()
-                    break
-                payload = payload_bytes[offset : offset + 160]
-                if len(payload) < 160:
-                    payload += b"\xff" * (160 - len(payload))
-                packet = self.sequencer.packet(payload).serialize()
-                self.rtp_transport.sendto(packet, self.remote_rtp_addr)
-                self.stats.outbound_packets += 1
-                if not first_packet_logged:
-                    first_packet_logged = True
-                    logger.info(
-                        "rtp_out_sent",
-                        extra={
-                            "call_id": self.call_id,
-                            "reason": reason,
-                            "payload_type": self.payload_type,
-                            "remote_rtp_addr": self.remote_rtp_addr,
-                        },
-                    )
                 await asyncio.sleep(0.02)
         finally:
             self._bot_speaking = False

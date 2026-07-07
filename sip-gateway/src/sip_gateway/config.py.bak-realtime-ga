@@ -7,8 +7,6 @@ from functools import cached_property
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from sip_gateway.sdp import normalize_telephony_codec
-
 
 class GatewaySettings(BaseSettings):
     """Environment-driven settings for SIP/RTP media bridge."""
@@ -41,13 +39,6 @@ class GatewaySettings(BaseSettings):
     silence_energy_threshold: int = 350
     silence_timeout_ms: int = 900
     openai_realtime_ws_url: str = "wss://api.openai.com/v1/realtime"
-    openai_realtime_model: str | None = None
-    telephony_codec: str = "pcmu"
-    initial_greeting: str = "Ola, son a asistente virtual da clínica. En que podo axudarche?"
-    openai_failure_message: str = (
-        "Perdoa, agora mesmo teño un problema técnico para continuar a chamada. "
-        "Por favor, chama de novo nuns minutos."
-    )
 
     @field_validator("sip_port", "rtp_port_min", "rtp_port_max", "health_port")
     @classmethod
@@ -76,18 +67,6 @@ class GatewaySettings(BaseSettings):
     def normalize_backend_url(cls, value: str) -> str:
         """Normalize backend URL."""
         return value.rstrip("/")
-
-    @field_validator("openai_realtime_ws_url")
-    @classmethod
-    def normalize_realtime_url(cls, value: str) -> str:
-        """Normalize OpenAI Realtime WebSocket base URL."""
-        return value.rstrip("?")
-
-    @field_validator("telephony_codec")
-    @classmethod
-    def validate_telephony_codec(cls, value: str) -> str:
-        """Validate and normalize preferred static G.711 codec."""
-        return normalize_telephony_codec(value)
 
     @cached_property
     def allowed_ip_set(self) -> set[str]:

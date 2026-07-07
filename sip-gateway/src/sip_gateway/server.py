@@ -225,7 +225,7 @@ class SipGateway:
             return
         try:
             offer = parse_sdp_offer(message.body)
-            payload_type = offer.choose_payload()
+            payload_type = offer.choose_payload(self.settings.telephony_codec)
             rtp_port = self.port_pool.lease()
             call = GatewayCallSession(
                 settings=self.settings,
