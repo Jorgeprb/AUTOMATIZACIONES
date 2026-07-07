@@ -88,22 +88,6 @@ def _object_schema(
     return schema
 
 
-REALTIME_SCHEMA_FORBIDDEN_ROOT_KEYS = {"oneOf", "anyOf", "allOf", "enum", "const", "not"}
-
-
-def _sanitize_realtime_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
-    """Return a Realtime GA-compatible root JSON Schema object."""
-    sanitized = {
-        key: value
-        for key, value in parameters.items()
-        if key not in REALTIME_SCHEMA_FORBIDDEN_ROOT_KEYS
-    }
-    sanitized.setdefault("type", "object")
-    sanitized.setdefault("properties", {})
-    sanitized.setdefault("additionalProperties", False)
-    return sanitized
-
-
 def _function_tool(
     name: str,
     description: str,
@@ -114,7 +98,7 @@ def _function_tool(
         "type": "function",
         "name": name,
         "description": description,
-        "parameters": _sanitize_realtime_parameters(parameters),
+        "parameters": parameters,
     }
 
 

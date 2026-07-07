@@ -7,6 +7,8 @@ from functools import cached_property
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from sip_gateway.sdp import normalize_telephony_codec
+
 
 class GatewaySettings(BaseSettings):
     """Environment-driven settings for SIP/RTP media bridge."""
@@ -39,9 +41,13 @@ class GatewaySettings(BaseSettings):
     silence_energy_threshold: int = 350
     silence_timeout_ms: int = 900
     openai_realtime_ws_url: str = "wss://api.openai.com/v1/realtime"
+    openai_realtime_model: str | None = None
     telephony_codec: str = "pcmu"
-    rtp_initial_buffer_ms: int = 240
-    rtp_packet_log_every: int = 50
+    initial_greeting: str = "Ola, son a asistente virtual da clínica. En que podo axudarche?"
+    openai_failure_message: str = (
+        "Perdoa, agora mesmo teño un problema técnico para continuar a chamada. "
+        "Por favor, chama de novo nuns minutos."
+    )
 
     @field_validator("sip_port", "rtp_port_min", "rtp_port_max", "health_port")
     @classmethod
@@ -59,41 +65,38 @@ class GatewaySettings(BaseSettings):
             raise ValueError("max_concurrent_calls must be between 1 and 500")
         return value
 
+    @field_validator("rtp_port_max")
+    @classmethod
+    def validate_rtp_order(cls, value: int) -> int:
+        """Field-level sanity; full ordering is checked lazily by pool."""
+        return value
+
     @field_validator("backend_internal_url")
     @classmethod
     def normalize_backend_url(cls, value: str) -> str:
         """Normalize backend URL."""
         return value.rstrip("/")
 
+    @field_validator("openai_realtime_ws_url")
+    @classmethod
+    def normalize_realtime_url(cls, value: str) -> str:
+        """Normalize OpenAI Realtime WebSocket base URL."""
+        return value.rstrip("?")
+
     @field_validator("telephony_codec")
     @classmethod
-    def normalize_telephony_codec(cls, value: str) -> str:
-        """Normalize selected G.711 codec."""
-        normalized = value.strip().casefold()
-        if normalized not in {"pcma", "pcmu"}:
-            raise ValueError("TELEPHONY_CODEC must be pcma or pcmu")
-        return normalized
-
-    @field_validator("rtp_initial_buffer_ms")
-    @classmethod
-    def validate_initial_buffer(cls, value: int) -> int:
-        """Keep initial RTP playout buffer in a telephone-safe range."""
-        if not 20 <= value <= 1000:
-            raise ValueError("rtp_initial_buffer_ms must be between 20 and 1000")
-        return value
-
-    @field_validator("rtp_packet_log_every")
-    @classmethod
-    def validate_packet_log_every(cls, value: int) -> int:
-        """Keep packet logging rate sane."""
-        if not 1 <= value <= 10_000:
-            raise ValueError("rtp_packet_log_every must be between 1 and 10000")
-        return value
+    def validate_telephony_codec(cls, value: str) -> str:
+        """Validate and normalize preferred static G.711 codec."""
+        return normalize_telephony_codec(value)
 
     @cached_property
     def allowed_ip_set(self) -> set[str]:
         """Return configured SIP source allowlist."""
-        return {item.strip() for item in self.sip_allowed_ips.split(",") if item.strip()}
+        return {
+            item.strip()
+            for item in self.sip_allowed_ips.split(",")
+            if item.strip()
+        }
 
     @property
     def advertised_rtp_ip(self) -> str:

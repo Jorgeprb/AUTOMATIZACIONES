@@ -49,13 +49,12 @@ class VoiceContext:
     clinic: dict[str, Any] | None = None
 
     @classmethod
-    def from_response(cls, data: dict[str, Any]) -> VoiceContext:
+    def from_response(cls, data: dict[str, Any]) -> "VoiceContext":
         """Build context while ignoring backend fields unknown to this client."""
         allowed = {field.name for field in fields(cls)}
         filtered = {key: value for key, value in data.items() if key in allowed}
         if not filtered.get("prompt"):
             filtered["prompt"] = filtered.get("instructions")
-        filtered["telephony_codec"] = str(filtered.get("telephony_codec") or "pcmu").casefold()
         return cls(**filtered)
 
 
@@ -83,13 +82,6 @@ def _response_detail(response: httpx.Response) -> Any:
         return response.json()
     except ValueError:
         return response.text[:500]
-
-
-def _preview_format_for_call(context: VoiceContext) -> str:
-    """Ask backend providers for raw G.711 when this is a telephony call."""
-    if context.telephony_codec in {"pcma", "pcmu"}:
-        return "wav"
-    return context.preview_audio_format or "wav"
 
 
 class BackendClient:
@@ -155,16 +147,21 @@ class BackendClient:
         )
         endpoint = f"{self._settings.backend_internal_url}/api/internal/voice/context"
         async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.post(endpoint, json=payload, headers=self._headers())
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise BackendRequestError(
-                endpoint="/api/internal/voice/context",
-                status_code=response.status_code,
-                detail=_response_detail(response),
-            ) from exc
-        return VoiceContext.from_response(response.json())
+            response = await client.post(
+                endpoint,
+                json=payload,
+                headers=self._headers(),
+            )
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise BackendRequestError(
+                    endpoint="/api/internal/voice/context",
+                    status_code=response.status_code,
+                    detail=_response_detail(response),
+                ) from exc
+            data = response.json()
+        return VoiceContext.from_response(data)
 
     async def synthesize_tts(
         self,
@@ -189,10 +186,9 @@ class BackendClient:
             "voice_stability": context.voice_stability,
             "voice_similarity": context.voice_similarity,
             "voice_temperature": context.voice_temperature,
-            "output_audio_format": context.telephony_codec,
+            "output_audio_format": "pcm16",
             "telephony_codec": context.telephony_codec,
-            "preview_audio_format": _preview_format_for_call(context),
-            "call_audio_mode": context.call_audio_mode,
+            "preview_audio_format": "wav",
         }
         async with httpx.AsyncClient(timeout=45.0) as client:
             response = await client.post(
@@ -200,14 +196,14 @@ class BackendClient:
                 json=payload,
                 headers=self._headers(),
             )
-        response.raise_for_status()
-        return TTSAudio(
-            audio=response.content,
-            media_type=response.headers.get(
-                "content-type",
-                "application/octet-stream",
-            ).split(";", maxsplit=1)[0],
-        )
+            response.raise_for_status()
+            return TTSAudio(
+                audio=response.content,
+                media_type=response.headers.get(
+                    "content-type",
+                    "application/octet-stream",
+                ).split(";", maxsplit=1)[0],
+            )
 
     async def execute_tool(
         self,
@@ -232,5 +228,5 @@ class BackendClient:
                 json=payload,
                 headers=self._headers(),
             )
-        response.raise_for_status()
-        return response.json()
+            response.raise_for_status()
+            return response.json()

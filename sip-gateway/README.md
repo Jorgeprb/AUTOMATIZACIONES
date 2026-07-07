@@ -136,3 +136,20 @@ azure_tts_first_chunk
 rtp_out_sent
 ```
 
+
+## RTP saliente y pacing
+
+El flujo VPS Media Bridge no envía chunks completos de TTS directamente por UDP. El TTS se convierte primero a PCMA/PCMU raw 8 kHz y entra en una cola de salida. Una tarea dedicada `rtp_sender` mantiene reloj RTP telefónico con planificación absoluta (`time.monotonic()`): 160 bytes cada 20 ms, timestamp +160, sequence +1 y SSRC estable por llamada.
+
+Variables útiles:
+
+    TELEPHONY_CODEC=pcma        # pcma => payload 8 PCMA/8000; pcmu => payload 0 PCMU/8000
+    RTP_INITIAL_BUFFER_MS=240   # buffer de playout inicial para absorber jitter de TTS
+    RTP_PACKET_LOG_EVERY=50     # frecuencia de logs agregados de RTP saliente
+
+Para Azure en llamadas, el backend debe devolver audio raw G.711:
+
+- `pcma`: `raw-8khz-8bit-mono-alaw`, `audio/pcma`
+- `pcmu`: `raw-8khz-8bit-mono-mulaw`, `audio/pcmu`
+
+Los logs relevantes son `rtp_sender_started`, `rtp_out_sent`, `rtp_out_packet_sent`, `rtp_out_interval_ms`, `rtp_underrun`, `rtp_overrun`, `tts_audio_buffered_ms`, `tts_audio_bytes` y `packetizer_finished`.

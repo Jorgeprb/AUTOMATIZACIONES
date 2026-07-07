@@ -12,16 +12,31 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
-from sip_gateway.audio import chunk_pcm16_20ms, sentence_chunks, tts_audio_to_pcm16_8k
+from sip_gateway.audio import sentence_chunks, tts_audio_to_g711_8k
 from sip_gateway.backend import BackendClient, VoiceContext
 from sip_gateway.codecs import decode_g711, encode_g711, pcm16_energy
 from sip_gateway.config import GatewaySettings
 from sip_gateway.openai_bridge import OpenAIRealtimeBridge
-from sip_gateway.rtp import JitterBuffer, RTPPacket, RTPPortPool, RTPSequencer
-from sip_gateway.sdp import SdpOffer, codec_for_payload_type
+from sip_gateway.rtp import (
+    RTP_G711_PAYLOAD_BYTES,
+    RTP_PACKET_INTERVAL_SEC,
+    JitterBuffer,
+    RTPPacket,
+    RTPPortPool,
+    RTPSequencer,
+    RtpIntervalStats,
+    comfort_silence_payload,
+)
+from sip_gateway.sdp import SdpOffer
 from sip_gateway.sip import SipMessage
 
 logger = logging.getLogger(__name__)
+
+INITIAL_GREETING = "Ola, son a asistente virtual da clínica. En que podo axudarche?"
+OPENAI_ERROR_MESSAGE = (
+    "Desculpa, estou tendo un problema técnico co asistente. "
+    "Podes chamar de novo nuns minutos."
+)
 
 
 def _looks_like_phone_number(value: str | None) -> bool:
@@ -56,6 +71,8 @@ class CallStats:
 
     inbound_packets: int = 0
     outbound_packets: int = 0
+    outbound_underruns: int = 0
+    outbound_overruns: int = 0
     first_audio_latency_ms: float | None = None
     tts_latency_ms: float | None = None
 
@@ -93,11 +110,12 @@ class GatewayCallSession:
         self.jitter = JitterBuffer(depth=3)
         self.sequencer = RTPSequencer(payload_type=payload_type)
         self.inbound_queue: asyncio.Queue[RTPPacket] = asyncio.Queue(maxsize=200)
+        self.outbound_audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=200)
         self._tasks: set[asyncio.Task[Any]] = set()
         self._closed = asyncio.Event()
         self._bot_speaking = False
         self._stop_tts = asyncio.Event()
-        self._tts_lock = asyncio.Lock()
+        self._rtp_sender_started = False
         self.stats = CallStats()
         self.started_at = time.perf_counter()
 
@@ -132,12 +150,12 @@ class GatewayCallSession:
                 "caller": self.invite.caller,
                 "callee": called_number,
                 "provider": self.context.voice_provider,
-                "codec": codec_for_payload_type(self.payload_type).upper(),
+                "codec": "PCMU" if self.payload_type == 0 else "PCMA",
             },
         )
 
     async def start_media(self) -> None:
-        """Start OpenAI bridge and media tasks after ACK."""
+        """Start RTP sender, initial greeting, OpenAI bridge and media tasks."""
         if self.context is None:
             raise RuntimeError("call context not prepared")
         context = self.context
@@ -151,48 +169,18 @@ class GatewayCallSession:
                 arguments=arguments,
             )
 
-        self._spawn(self._max_duration_watchdog())
-
-        if context.voice_provider != "openai":
-            self._spawn(
-                self._speak_text(
-                    self.settings.initial_greeting,
-                    reason="initial_greeting",
-                )
-            )
-
         self.bridge = OpenAIRealtimeBridge(
             settings=self.settings,
             backend=self.backend,
             context=context,
             call_id=self.call_id,
             tool_executor=tool_executor,
-            payload_type=self.payload_type,
         )
-
-        try:
-            await self.bridge.start()
-        except Exception:
-            logger.exception(
-                "openai_bridge_start_failed",
-                extra={"call_id": self.call_id, "clinic_id": context.clinic_id},
-            )
-            if context.voice_provider != "openai":
-                self._spawn(
-                    self._speak_then_close(
-                        self.settings.openai_failure_message,
-                        reason="openai_start_failed",
-                    )
-                )
-                return
-            await self.close("openai_start_failed")
-            return
-
-        self._spawn(self._inbound_audio_loop())
-        if context.voice_provider == "openai":
-            self._spawn(self._openai_audio_output_loop())
-        else:
-            self._spawn(self._external_tts_output_loop())
+        self._spawn(self._rtp_sender_loop())
+        if context.voice_provider != "openai":
+            self._spawn(self._speak_text(INITIAL_GREETING, reason="initial_greeting"))
+        self._spawn(self._start_openai_bridge_and_media())
+        self._spawn(self._max_duration_watchdog())
 
     def on_rtp(self, data: bytes, addr: tuple[str, int]) -> None:
         """Process one RTP datagram from UDP protocol."""
@@ -237,11 +225,13 @@ class GatewayCallSession:
                 "caller": self.invite.caller,
                 "callee": self.invite.callee,
                 "provider": self.context.voice_provider if self.context else None,
-                "codec": codec_for_payload_type(self.payload_type).upper(),
+                "codec": "PCMU" if self.payload_type == 0 else "PCMA",
                 "latency_first_audio": self.stats.first_audio_latency_ms,
                 "tts_latency": self.stats.tts_latency_ms,
                 "inbound_packets": self.stats.inbound_packets,
                 "outbound_packets": self.stats.outbound_packets,
+                "outbound_underruns": self.stats.outbound_underruns,
+                "outbound_overruns": self.stats.outbound_overruns,
             },
         )
 
@@ -249,6 +239,24 @@ class GatewayCallSession:
         task = asyncio.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    async def _start_openai_bridge_and_media(self) -> None:
+        assert self.bridge is not None and self.context is not None
+        try:
+            await self.bridge.start()
+        except Exception:
+            logger.exception("openai_bridge_start_failed", extra={"call_id": self.call_id})
+            if self.context.voice_provider != "openai":
+                await self._speak_text(OPENAI_ERROR_MESSAGE, reason="openai_start_failed")
+                return
+            await self.close("openai_start_failed")
+            return
+
+        self._spawn(self._inbound_audio_loop())
+        if self.context.voice_provider == "openai":
+            self._spawn(self._openai_audio_output_loop())
+        else:
+            self._spawn(self._external_tts_output_loop())
 
     async def _inbound_audio_loop(self) -> None:
         assert self.bridge is not None
@@ -263,154 +271,256 @@ class GatewayCallSession:
                 self._stop_tts.set()
                 await self.bridge.cancel_response()
                 logger.info("barge_in_detected", extra={"call_id": self.call_id})
-            await self.bridge.send_audio(packet.payload)
+            await self.bridge.send_pcm16(pcm16)
 
     async def _openai_audio_output_loop(self) -> None:
         assert self.bridge is not None
         while not self._closed.is_set():
-            audio = await self.bridge.audio_queue.get()
-            if self.bridge.output_audio_is_telephony:
-                await self._send_g711_as_rtp(audio, reason="openai_audio")
-            else:
-                await self._send_pcm16_as_rtp(audio, reason="openai_audio")
+            pcm16 = await self.bridge.audio_queue.get()
+            raw_g711 = encode_g711(self.payload_type, pcm16)
+            await self._queue_g711_audio(raw_g711, source="openai_audio")
 
     async def _external_tts_output_loop(self) -> None:
-        assert self.bridge is not None
+        assert self.bridge is not None and self.context is not None
         buffer = ""
         while not self._closed.is_set():
             try:
-                delta = await asyncio.wait_for(
-                    self.bridge.text_queue.get(),
-                    timeout=0.4,
-                )
+                delta = await asyncio.wait_for(self.bridge.text_queue.get(), timeout=0.45)
             except TimeoutError:
                 delta = ""
-            buffer += delta
-            chunks = sentence_chunks(buffer)
-            if not chunks:
+            if delta == "__OPENAI_ERROR__":
+                await self._speak_text(OPENAI_ERROR_MESSAGE, reason="openai_error")
                 continue
-            if delta and buffer.strip() not in chunks[-1]:
+            buffer += delta
+            if not buffer.strip():
+                continue
+            chunks = sentence_chunks(buffer)
+            should_flush = not delta or delta == "\n"
+            if not chunks and not should_flush:
+                continue
+            if not chunks and should_flush:
+                chunks = [buffer.strip()]
+            elif delta and buffer.strip() not in chunks[-1] and not should_flush:
                 continue
             buffer = ""
             for chunk in chunks:
                 if self._stop_tts.is_set():
                     self._stop_tts.clear()
                     break
-                await self._speak_text(chunk, reason="assistant_text")
-
-    async def _speak_then_close(self, text: str, *, reason: str) -> None:
-        await self._speak_text(text, reason=reason)
-        await asyncio.sleep(0.25)
-        await self.close(reason)
+                await self._speak_text(chunk, reason="assistant_response")
 
     async def _speak_text(self, text: str, *, reason: str) -> None:
-        if self.context is None:
+        assert self.context is not None
+        cleaned = text.strip()
+        if not cleaned:
             return
-        async with self._tts_lock:
-            started = time.perf_counter()
+        if self.context.voice_provider == "azure":
             logger.info(
                 "azure_tts_started",
+                extra={"call_id": self.call_id, "reason": reason, "chars": len(cleaned)},
+            )
+        started = time.perf_counter()
+        try:
+            tts_audio = await self.backend.synthesize_tts(
+                context=self.context,
+                text=cleaned,
+            )
+            raw_g711 = tts_audio_to_g711_8k(
+                tts_audio.audio,
+                media_type=tts_audio.media_type,
+                telephony_codec=self.context.telephony_codec,
+                payload_type=self.payload_type,
+            )
+        except Exception:
+            logger.exception(
+                "tts_chunk_failed",
+                extra={"call_id": self.call_id, "reason": reason},
+            )
+            return
+        self.stats.tts_latency_ms = round((time.perf_counter() - started) * 1000, 2)
+        if self.context.voice_provider == "azure":
+            logger.info(
+                "azure_tts_first_chunk",
                 extra={
                     "call_id": self.call_id,
-                    "clinic_id": self.context.clinic_id,
-                    "voice_provider": self.context.voice_provider,
-                    "voice_id": self.context.voice_id,
                     "reason": reason,
-                    "chars": len(text),
+                    "bytes": len(raw_g711),
+                    "media_type": tts_audio.media_type,
+                    "latency_ms": self.stats.tts_latency_ms,
                 },
             )
-            try:
-                tts_audio = await self.backend.synthesize_tts(
-                    context=self.context,
-                    text=text,
-                )
+        await self._queue_g711_audio(raw_g711, source=f"tts:{reason}")
+
+    async def _queue_g711_audio(self, raw_g711: bytes, *, source: str) -> None:
+        if not raw_g711:
+            return
+        buffered_ms = round(len(raw_g711) / 8.0, 2)
+        logger.info(
+            "tts_audio_bytes",
+            extra={"call_id": self.call_id, "source": source, "bytes": len(raw_g711)},
+        )
+        logger.info(
+            "tts_audio_buffered_ms",
+            extra={"call_id": self.call_id, "source": source, "buffered_ms": buffered_ms},
+        )
+        await self.outbound_audio_queue.put(raw_g711)
+
+    async def _rtp_sender_loop(self) -> None:
+        if self.rtp_transport is None:
+            return
+        initial_buffer_bytes = max(
+            RTP_G711_PAYLOAD_BYTES,
+            int(self.settings.rtp_initial_buffer_ms / 20) * RTP_G711_PAYLOAD_BYTES,
+        )
+        payload_buffer = bytearray()
+        silence = comfort_silence_payload(self.payload_type)
+        log_every = self.settings.rtp_packet_log_every
+        interval_stats = RtpIntervalStats()
+        last_send_at: float | None = None
+        packet_index = 0
+        underruns = 0
+        overruns = 0
+        first_packet_logged = False
+
+        try:
+            while not self._closed.is_set():
+                while len(payload_buffer) < initial_buffer_bytes:
+                    if self._closed.is_set():
+                        return
+                    try:
+                        chunk = await asyncio.wait_for(
+                            self.outbound_audio_queue.get(),
+                            timeout=0.5 if payload_buffer else None,
+                        )
+                    except TimeoutError:
+                        if payload_buffer:
+                            break
+                        continue
+                    payload_buffer.extend(chunk)
+
+                start = time.monotonic()
+                packet_index = 0
+                self._rtp_sender_started = True
                 logger.info(
-                    "azure_tts_first_chunk",
+                    "rtp_sender_started",
                     extra={
                         "call_id": self.call_id,
-                        "clinic_id": self.context.clinic_id,
-                        "voice_provider": self.context.voice_provider,
-                        "voice_id": self.context.voice_id,
-                        "reason": reason,
-                        "media_type": tts_audio.media_type,
+                        "payload_type": self.payload_type,
+                        "initial_buffer_bytes": len(payload_buffer),
+                        "initial_buffer_ms": round(len(payload_buffer) / 8.0, 2),
+                        "remote_rtp_addr": self.remote_rtp_addr,
                     },
                 )
-                pcm16 = tts_audio_to_pcm16_8k(
-                    tts_audio.audio,
-                    media_type=tts_audio.media_type,
-                    telephony_codec=self.context.telephony_codec,
-                )
-            except Exception:
-                logger.exception(
-                    "tts_chunk_failed",
-                    extra={"call_id": self.call_id, "reason": reason},
-                )
-                return
-            self.stats.tts_latency_ms = round(
-                (time.perf_counter() - started) * 1000,
-                2,
+
+                while not self._closed.is_set():
+                    target_send = start + packet_index * RTP_PACKET_INTERVAL_SEC
+                    delay = target_send - time.monotonic()
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+                    else:
+                        late_ms = -delay * 1000
+                        if late_ms > 3:
+                            overruns += 1
+                            self.stats.outbound_overruns += 1
+                            if overruns == 1 or overruns % log_every == 0:
+                                logger.warning(
+                                    "rtp_overrun",
+                                    extra={
+                                        "call_id": self.call_id,
+                                        "late_ms": round(late_ms, 3),
+                                        "overruns": overruns,
+                                    },
+                                )
+
+                    if self._stop_tts.is_set():
+                        payload_buffer.clear()
+                        self._drain_outbound_audio_queue()
+                        self._stop_tts.clear()
+
+                    self._drain_outbound_audio_queue_into(payload_buffer)
+
+                    if len(payload_buffer) >= RTP_G711_PAYLOAD_BYTES:
+                        payload = bytes(payload_buffer[:RTP_G711_PAYLOAD_BYTES])
+                        del payload_buffer[:RTP_G711_PAYLOAD_BYTES]
+                        self._bot_speaking = True
+                    else:
+                        payload = silence
+                        self._bot_speaking = False
+                        underruns += 1
+                        self.stats.outbound_underruns += 1
+                        if underruns == 1 or underruns % log_every == 0:
+                            logger.warning(
+                                "rtp_underrun",
+                                extra={
+                                    "call_id": self.call_id,
+                                    "underruns": underruns,
+                                    "buffer_bytes": len(payload_buffer),
+                                },
+                            )
+
+                    packet = self.sequencer.packet(payload).serialize()
+                    self.rtp_transport.sendto(packet, self.remote_rtp_addr)
+                    now = time.monotonic()
+                    if last_send_at is not None:
+                        interval_stats.add((now - last_send_at) * 1000)
+                    last_send_at = now
+                    self.stats.outbound_packets += 1
+
+                    if not first_packet_logged:
+                        first_packet_logged = True
+                        logger.info(
+                            "rtp_out_sent",
+                            extra={
+                                "call_id": self.call_id,
+                                "payload_size": len(payload),
+                                "payload_type": self.payload_type,
+                                "sequence": self.sequencer.sequence_number - 1,
+                            },
+                        )
+
+                    if self.stats.outbound_packets % log_every == 0:
+                        snapshot = interval_stats.snapshot()
+                        logger.info(
+                            "rtp_out_packet_sent",
+                            extra={
+                                "call_id": self.call_id,
+                                "rtp_out_packets_count": self.stats.outbound_packets,
+                                "rtp_out_payload_size": len(payload),
+                                "payload_type": self.payload_type,
+                            },
+                        )
+                        logger.info(
+                            "rtp_out_interval_ms",
+                            extra={"call_id": self.call_id, **snapshot},
+                        )
+                        interval_stats.reset()
+
+                    packet_index += 1
+        finally:
+            self._bot_speaking = False
+            logger.info(
+                "packetizer_finished",
+                extra={
+                    "call_id": self.call_id,
+                    "rtp_out_packets_count": self.stats.outbound_packets,
+                    "rtp_underruns": self.stats.outbound_underruns,
+                    "rtp_overruns": self.stats.outbound_overruns,
+                },
             )
-            await self._send_pcm16_as_rtp(pcm16, reason=reason)
 
-    async def _send_pcm16_as_rtp(self, pcm16: bytes, *, reason: str) -> None:
-        if self.rtp_transport is None:
-            return
-        self._bot_speaking = True
-        first_packet_logged = False
-        try:
-            for frame in chunk_pcm16_20ms(pcm16):
-                if self._closed.is_set() or self._stop_tts.is_set():
-                    self._stop_tts.clear()
-                    break
-                payload = encode_g711(self.payload_type, frame)
-                packet = self.sequencer.packet(payload).serialize()
-                self.rtp_transport.sendto(packet, self.remote_rtp_addr)
-                self.stats.outbound_packets += 1
-                if not first_packet_logged:
-                    first_packet_logged = True
-                    logger.info(
-                        "rtp_out_sent",
-                        extra={
-                            "call_id": self.call_id,
-                            "reason": reason,
-                            "payload_type": self.payload_type,
-                            "remote_rtp_addr": self.remote_rtp_addr,
-                        },
-                    )
-                await asyncio.sleep(0.02)
-        finally:
-            self._bot_speaking = False
+    def _drain_outbound_audio_queue_into(self, payload_buffer: bytearray) -> None:
+        while True:
+            try:
+                payload_buffer.extend(self.outbound_audio_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                return
 
-    async def _send_g711_as_rtp(self, payload_bytes: bytes, *, reason: str) -> None:
-        if self.rtp_transport is None:
-            return
-        self._bot_speaking = True
-        first_packet_logged = False
-        try:
-            for offset in range(0, len(payload_bytes), 160):
-                if self._closed.is_set() or self._stop_tts.is_set():
-                    self._stop_tts.clear()
-                    break
-                payload = payload_bytes[offset : offset + 160]
-                if len(payload) < 160:
-                    payload += b"\xff" * (160 - len(payload))
-                packet = self.sequencer.packet(payload).serialize()
-                self.rtp_transport.sendto(packet, self.remote_rtp_addr)
-                self.stats.outbound_packets += 1
-                if not first_packet_logged:
-                    first_packet_logged = True
-                    logger.info(
-                        "rtp_out_sent",
-                        extra={
-                            "call_id": self.call_id,
-                            "reason": reason,
-                            "payload_type": self.payload_type,
-                            "remote_rtp_addr": self.remote_rtp_addr,
-                        },
-                    )
-                await asyncio.sleep(0.02)
-        finally:
-            self._bot_speaking = False
+    def _drain_outbound_audio_queue(self) -> None:
+        while True:
+            try:
+                self.outbound_audio_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
 
     async def _max_duration_watchdog(self) -> None:
         await asyncio.sleep(self.settings.max_call_seconds)

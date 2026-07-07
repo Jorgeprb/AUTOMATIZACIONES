@@ -1,4 +1,4 @@
-"""Audio helpers for telephony bridge input and output."""
+"""Audio helpers for telephony bridge output."""
 
 from __future__ import annotations
 
@@ -6,23 +6,11 @@ import audioop
 import io
 import wave
 
-from sip_gateway.codecs import (
-    encode_g711,
-    pcma_to_pcm16le,
-    pcmu_to_pcm16le,
-)
-from sip_gateway.rtp import (
-    PAYLOAD_PCMA,
-    PAYLOAD_PCMU,
-    RTP_G711_PAYLOAD_BYTES,
-    RTP_SAMPLES_PER_PACKET,
-    comfort_silence_byte,
-)
+from sip_gateway.codecs import pcma_to_pcm16le, pcmu_to_pcm16le
 
 SAMPLE_RATE = 8000
-SAMPLES_PER_20MS = RTP_SAMPLES_PER_PACKET
+SAMPLES_PER_20MS = 160
 BYTES_PER_20MS_PCM16 = SAMPLES_PER_20MS * 2
-G711_BYTES_PER_20MS = RTP_G711_PAYLOAD_BYTES
 
 
 def wav_to_pcm16_8k(data: bytes) -> bytes:
@@ -32,7 +20,6 @@ def wav_to_pcm16_8k(data: bytes) -> bytes:
         sample_width = wav_file.getsampwidth()
         frame_rate = wav_file.getframerate()
         frames = wav_file.readframes(wav_file.getnframes())
-
     if sample_width != 2:
         frames = audioop.lin2lin(frames, sample_width, 2)
     if channels > 1:
@@ -48,7 +35,7 @@ def tts_audio_to_pcm16_8k(
     media_type: str,
     telephony_codec: str,
 ) -> bytes:
-    """Convert backend TTS audio to 8 kHz PCM16."""
+    """Convert backend TTS audio to 8 kHz PCM16 for RTP encoding."""
     normalized = media_type.casefold()
     codec = telephony_codec.casefold()
     if normalized in {"audio/pcma", "audio/x-alaw"}:
@@ -64,37 +51,6 @@ def tts_audio_to_pcm16_8k(
     return wav_to_pcm16_8k(data)
 
 
-def tts_audio_to_g711_8k(
-    data: bytes,
-    *,
-    media_type: str,
-    telephony_codec: str,
-    payload_type: int,
-) -> bytes:
-    """Convert backend TTS audio directly to raw PCMA/PCMU payload bytes."""
-    normalized = media_type.casefold()
-    codec = telephony_codec.casefold()
-    if payload_type == PAYLOAD_PCMA and normalized in {
-        "audio/pcma",
-        "audio/x-alaw",
-        "application/octet-stream",
-    } and codec == "pcma":
-        return data
-    if payload_type == PAYLOAD_PCMU and normalized in {
-        "audio/pcmu",
-        "audio/basic",
-        "audio/x-mulaw",
-        "application/octet-stream",
-    } and codec == "pcmu":
-        return data
-    pcm16 = tts_audio_to_pcm16_8k(
-        data,
-        media_type=media_type,
-        telephony_codec=telephony_codec,
-    )
-    return encode_g711(payload_type, pcm16)
-
-
 def chunk_pcm16_20ms(pcm16le: bytes) -> list[bytes]:
     """Split PCM16 into 20 ms telephony frames, padding the last frame."""
     chunks: list[bytes] = []
@@ -102,22 +58,6 @@ def chunk_pcm16_20ms(pcm16le: bytes) -> list[bytes]:
         chunk = pcm16le[offset : offset + BYTES_PER_20MS_PCM16]
         if len(chunk) < BYTES_PER_20MS_PCM16:
             chunk += b"\x00" * (BYTES_PER_20MS_PCM16 - len(chunk))
-        chunks.append(chunk)
-    return chunks
-
-
-def chunk_g711_20ms(
-    audio: bytes,
-    *,
-    payload_type: int,
-) -> list[bytes]:
-    """Split raw G.711 into 20 ms payloads, padding final frame with silence."""
-    pad = bytes([comfort_silence_byte(payload_type)])
-    chunks: list[bytes] = []
-    for offset in range(0, len(audio), G711_BYTES_PER_20MS):
-        chunk = audio[offset : offset + G711_BYTES_PER_20MS]
-        if len(chunk) < G711_BYTES_PER_20MS:
-            chunk += pad * (G711_BYTES_PER_20MS - len(chunk))
         chunks.append(chunk)
     return chunks
 
