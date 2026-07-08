@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import time
-import uuid
 import zlib
 from collections import defaultdict, deque
 
@@ -14,7 +13,7 @@ from sip_gateway.backend import BackendClient, BackendRequestError
 from sip_gateway.config import GatewaySettings
 from sip_gateway.rtp import RTPPortPool
 from sip_gateway.sdp import build_sdp_answer, parse_sdp_offer
-from sip_gateway.session import GatewayCallSession, select_called_number
+from sip_gateway.session import GatewayCallSession
 from sip_gateway.sip import SipMessage, build_response
 
 logger = logging.getLogger(__name__)
@@ -220,176 +219,13 @@ class SipGateway:
         message: SipMessage,
         addr: tuple[str, int],
     ) -> None:
-        """Handle one inbound INVITE.
-
-        Important ordering:
-        1. Resolve backend context first.
-        2. Route OpenAI Hosted SIP calls with SIP 302 before leasing RTP.
-        3. Lease/bind RTP only for VPS media bridge calls.
-
-        This prevents OpenAI Hosted SIP attempts from consuming local RTP ports
-        and prevents leaked ports when prepare() fails after lease().
-        """
         self._send(message, 100, "Trying", addr)
-
-        caller = message.caller
-        callee = message.callee
-        sip_to = message.header("to") or message.header("t")
-        sip_from = message.header("from") or message.header("f")
-        provider_call_id = message.call_id or str(uuid.uuid4())
-        openai_call_id = f"vps-{provider_call_id}"
-        called_number = select_called_number(message, self.settings.fallback_called_number)
-
-        logger.info(
-            "sip_invite_received",
-            extra={
-                "call_id": provider_call_id,
-                "caller": caller,
-                "callee": callee,
-                "called_number": called_number,
-                "sip_to": sip_to,
-                "sip_from": sip_from,
-                "source_ip": addr[0],
-            },
-        )
-
-        try:
-            context = await self.backend.resolve_voice_context(
-                called_number=called_number,
-                caller_phone=caller,
-                caller=caller,
-                callee=callee,
-                sip_to=sip_to,
-                sip_from=sip_from,
-                openai_call_id=openai_call_id,
-                provider_call_id=provider_call_id,
-            )
-        except BackendRequestError as exc:
-            self.invite_failures += 1
-            self.provider_errors += 1
-            logger.warning(
-                "sip_invite_backend_context_failed",
-                extra={
-                    "call_id": provider_call_id,
-                    "caller": caller,
-                    "callee": callee,
-                    "called_number": called_number,
-                    "sip_to": sip_to,
-                    "sip_from": sip_from,
-                    "backend_endpoint": exc.endpoint,
-                    "backend_status_code": exc.status_code,
-                    "backend_detail": exc.detail,
-                },
-            )
-            self._send(message, 488, "Not Acceptable Here", addr)
-            return
-        except Exception:
-            self.invite_failures += 1
-            self.provider_errors += 1
-            logger.exception(
-                "sip_invite_context_failed",
-                extra={
-                    "call_id": provider_call_id,
-                    "caller": caller,
-                    "callee": callee,
-                    "called_number": called_number,
-                    "sip_to": sip_to,
-                },
-            )
-            self._send(message, 488, "Not Acceptable Here", addr)
-            return
-
-        route = (context.call_audio_mode or "vps_media_bridge").strip().casefold()
-        voice_provider = (context.voice_provider or "").strip().casefold()
-        if voice_provider == "openai":
-            route = "openai_hosted_sip"
-        elif voice_provider == "azure":
-            route = "vps_media_bridge"
-
-        logger.info(
-            "voice_context_resolved",
-            extra={
-                "call_id": provider_call_id,
-                "clinic_id": context.clinic_id,
-                "caller": caller,
-                "callee": callee,
-                "called_number": called_number,
-                "voice_provider": context.voice_provider,
-                "call_audio_mode": context.call_audio_mode,
-                "route": route,
-            },
-        )
-        logger.info(
-            "call_route_selected",
-            extra={"call_id": provider_call_id, "route": route},
-        )
-
-        if route == "openai_hosted_sip":
-            project_id = (
-                getattr(context, "openai_project_id", None)
-                or getattr(self.settings, "openai_project_id", "")
-                or ""
-            ).strip()
-            domain = (getattr(self.settings, "openai_hosted_sip_domain", "sip.api.openai.com") or "sip.api.openai.com").strip()
-            transport = (getattr(self.settings, "openai_hosted_sip_transport", "tls") or "tls").strip().lower()
-            if not project_id:
-                self.invite_failures += 1
-                self.provider_errors += 1
-                logger.error(
-                    "openai_hosted_sip_project_id_missing",
-                    extra={"call_id": provider_call_id, "clinic_id": context.clinic_id},
-                )
-                self._send(message, 488, "Not Acceptable Here", addr)
-                return
-            target = f"sip:{project_id}@{domain};transport={transport}"
-            logger.info(
-                "route=openai_hosted_sip_redirect",
-                extra={"call_id": provider_call_id, "clinic_id": context.clinic_id, "target": target},
-            )
-            self._send(
-                message,
-                302,
-                "Moved Temporarily",
-                addr,
-                contact=f"<{target}>",
-                extra_headers={"X-Autogal-Route": "openai_hosted_sip_redirect"},
-            )
-            logger.info(
-                "sip_redirect_sent",
-                extra={"call_id": provider_call_id, "clinic_id": context.clinic_id, "target": target},
-            )
-            return
-
-        if route != "vps_media_bridge":
-            self.invite_failures += 1
-            self.provider_errors += 1
-            logger.error(
-                "unsupported_call_route",
-                extra={
-                    "call_id": provider_call_id,
-                    "clinic_id": context.clinic_id,
-                    "route": route,
-                    "voice_provider": context.voice_provider,
-                },
-            )
-            self._send(message, 488, "Not Acceptable Here", addr)
-            return
-
-        logger.info(
-            "route=vps_media_bridge",
-            extra={"call_id": provider_call_id, "clinic_id": context.clinic_id},
-        )
-
         if len(self.calls_by_id) >= self.settings.max_concurrent_calls:
             self._send(message, 486, "Busy Here", addr)
             return
-
-        call: GatewayCallSession | None = None
-        rtp_port: int | None = None
         try:
             offer = parse_sdp_offer(message.body)
-            preferred_codec = context.telephony_codec or self.settings.telephony_codec
-            payload_type = offer.choose_payload(preferred_codec)
+            payload_type = offer.choose_payload(self.settings.telephony_codec)
             rtp_port = self.port_pool.lease()
             call = GatewayCallSession(
                 settings=self.settings,
@@ -401,32 +237,39 @@ class SipGateway:
                 payload_type=payload_type,
                 rtp_port=rtp_port,
             )
-            # Avoid resolving /api/internal/voice/context twice. prepare() will
-            # bind RTP and reuse this context when present.
-            call.context = context
             await call.prepare()
+        except BackendRequestError as exc:
+            self.invite_failures += 1
+            self.provider_errors += 1
+            logger.warning(
+                "sip_invite_backend_context_failed",
+                extra={
+                    "call_id": message.call_id,
+                    "caller": message.caller,
+                    "callee": message.callee,
+                    "sip_to": message.header("to") or message.header("t"),
+                    "sip_from": message.header("from") or message.header("f"),
+                    "backend_endpoint": exc.endpoint,
+                    "backend_status_code": exc.status_code,
+                    "backend_detail": exc.detail,
+                },
+            )
+            self._send(message, 488, "Not Acceptable Here", addr)
+            return
         except Exception:
             self.invite_failures += 1
             self.provider_errors += 1
             logger.exception(
                 "sip_invite_failed",
                 extra={
-                    "call_id": provider_call_id,
-                    "caller": caller,
-                    "callee": callee,
-                    "called_number": called_number,
-                    "sip_to": sip_to,
-                    "rtp_port": rtp_port,
-                    "rtp_ports_available": self.port_pool.available_count,
+                    "call_id": message.call_id,
+                    "caller": message.caller,
+                    "callee": message.callee,
+                    "sip_to": message.header("to") or message.header("t"),
                 },
             )
-            if call is not None:
-                await call.close("invite_failed")
-            elif rtp_port is not None:
-                self.port_pool.release(rtp_port)
             self._send(message, 488, "Not Acceptable Here", addr)
             return
-
         self.calls_by_id[call.call_id] = call
         if message.branch:
             self.calls_by_branch[message.branch] = call
@@ -444,7 +287,8 @@ class SipGateway:
             addr,
             body=sdp_answer,
             to_tag=call.local_tag,
-            contact=f"<sip:bot@{self.settings.advertised_sip_host}:{self.settings.sip_port};transport=udp>",
+            contact=f"<sip:bot@{self.settings.advertised_sip_host or addr[0]}:"
+            f"{self.settings.sip_port}>",
         )
 
     async def _handle_ack(self, message: SipMessage) -> None:

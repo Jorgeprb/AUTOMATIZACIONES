@@ -132,17 +132,16 @@ class GatewayCallSession:
             self.invite,
             self.settings.fallback_called_number,
         )
-        if self.context is None:
-            self.context = await self.backend.resolve_voice_context(
-                called_number=called_number,
-                caller_phone=self.invite.caller,
-                caller=self.invite.caller,
-                callee=self.invite.callee,
-                sip_to=self.invite.header("to") or self.invite.header("t"),
-                sip_from=self.invite.header("from") or self.invite.header("f"),
-                openai_call_id=self.openai_call_id,
-                provider_call_id=self.call_id,
-            )
+        self.context = await self.backend.resolve_voice_context(
+            called_number=called_number,
+            caller_phone=self.invite.caller,
+            caller=self.invite.caller,
+            callee=self.invite.callee,
+            sip_to=self.invite.header("to") or self.invite.header("t"),
+            sip_from=self.invite.header("from") or self.invite.header("f"),
+            openai_call_id=self.openai_call_id,
+            provider_call_id=self.call_id,
+        )
         logger.info(
             "sip_call_prepared",
             extra={

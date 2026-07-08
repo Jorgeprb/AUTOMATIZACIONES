@@ -42,6 +42,7 @@ class VoiceContext:
     instructions: str
     tools: list[dict[str, Any]]
     call_audio_mode: str = "vps_media_bridge"
+    openai_project_id: str | None = None
     prompt: str | None = None
     caller: str | None = None
     called_number: str | None = None

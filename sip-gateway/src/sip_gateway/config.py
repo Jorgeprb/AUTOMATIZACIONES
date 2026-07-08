@@ -39,6 +39,9 @@ class GatewaySettings(BaseSettings):
     silence_energy_threshold: int = 350
     silence_timeout_ms: int = 900
     openai_realtime_ws_url: str = "wss://api.openai.com/v1/realtime"
+    openai_project_id: str = ""
+    openai_hosted_sip_domain: str = "sip.api.openai.com"
+    openai_hosted_sip_transport: str = "tls"
     telephony_codec: str = "pcmu"
     rtp_initial_buffer_ms: int = 240
     rtp_packet_log_every: int = 50
