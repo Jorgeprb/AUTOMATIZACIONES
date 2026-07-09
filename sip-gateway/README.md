@@ -32,6 +32,7 @@ RTP_PORT_MAX=20000
 RTP_ADVERTISE_IP=51.210.180.115
 SIP_ALLOWED_IPS=
 BACKEND_INTERNAL_URL=http://app:8000
+OPENAI_HOSTED_SIP_STRATEGY=blocked
 OPENAI_API_KEY=...
 INTERNAL_API_KEY=...
 MAX_CONCURRENT_CALLS=10
@@ -57,6 +58,11 @@ sip:bot@sip.autogal.es:6060
 
 OpenAI Hosted SIP no cambia. Úsalo para voces OpenAI. Usa este gateway para
 Azure `gl-ES-SabelaNeural` y otras voces externas.
+
+Si VoIP Studio llama siempre a este gateway, OpenAI Hosted SIP queda bloqueado
+por defecto con SIP `488`. Esto evita el cuelgue por 302 UDP -> TLS. El B2BUA TLS
+completo queda pendiente; `OPENAI_HOSTED_SIP_STRATEGY=redirect` conserva el 302
+solo para pruebas.
 
 ## Capacidades implementadas
 

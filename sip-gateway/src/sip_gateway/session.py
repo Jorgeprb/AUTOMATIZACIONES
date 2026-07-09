@@ -12,7 +12,11 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
-from sip_gateway.audio import sentence_chunks, tts_audio_to_g711_8k
+from sip_gateway.audio import (
+    pcm16_24k_to_8k,
+    sentence_chunks,
+    tts_audio_to_g711_8k,
+)
 from sip_gateway.backend import BackendClient, VoiceContext
 from sip_gateway.codecs import decode_g711, encode_g711, pcm16_energy
 from sip_gateway.config import GatewaySettings
@@ -21,10 +25,10 @@ from sip_gateway.rtp import (
     RTP_G711_PAYLOAD_BYTES,
     RTP_PACKET_INTERVAL_SEC,
     JitterBuffer,
+    RtpIntervalStats,
     RTPPacket,
     RTPPortPool,
     RTPSequencer,
-    RtpIntervalStats,
     comfort_silence_payload,
 )
 from sip_gateway.sdp import SdpOffer
@@ -246,9 +250,15 @@ class GatewayCallSession:
         try:
             await self.bridge.start()
         except Exception:
-            logger.exception("openai_bridge_start_failed", extra={"call_id": self.call_id})
+            logger.exception(
+                "openai_bridge_start_failed",
+                extra={"call_id": self.call_id},
+            )
             if self.context.voice_provider != "openai":
-                await self._speak_text(OPENAI_ERROR_MESSAGE, reason="openai_start_failed")
+                await self._speak_text(
+                    OPENAI_ERROR_MESSAGE,
+                    reason="openai_start_failed",
+                )
                 return
             await self.close("openai_start_failed")
             return
@@ -278,7 +288,8 @@ class GatewayCallSession:
         assert self.bridge is not None
         while not self._closed.is_set():
             pcm16 = await self.bridge.audio_queue.get()
-            raw_g711 = encode_g711(self.payload_type, pcm16)
+            pcm16_8k = pcm16_24k_to_8k(pcm16)
+            raw_g711 = encode_g711(self.payload_type, pcm16_8k)
             await self._queue_g711_audio(raw_g711, source="openai_audio")
 
     async def _external_tts_output_loop(self) -> None:
@@ -286,11 +297,20 @@ class GatewayCallSession:
         buffer = ""
         while not self._closed.is_set():
             try:
-                delta = await asyncio.wait_for(self.bridge.text_queue.get(), timeout=0.45)
+                delta = await asyncio.wait_for(
+                    self.bridge.text_queue.get(),
+                    timeout=0.45,
+                )
             except TimeoutError:
                 delta = ""
             if delta == "__OPENAI_ERROR__":
                 await self._speak_text(OPENAI_ERROR_MESSAGE, reason="openai_error")
+                continue
+            if delta == "__OPENAI_CONFIG_ERROR_SUPPRESSED__":
+                logger.error(
+                    "openai_config_error_suppressed",
+                    extra={"call_id": self.call_id},
+                )
                 continue
             buffer += delta
             if not buffer.strip():
@@ -318,7 +338,11 @@ class GatewayCallSession:
         if self.context.voice_provider == "azure":
             logger.info(
                 "azure_tts_started",
-                extra={"call_id": self.call_id, "reason": reason, "chars": len(cleaned)},
+                extra={
+                    "call_id": self.call_id,
+                    "reason": reason,
+                    "chars": len(cleaned),
+                },
             )
         started = time.perf_counter()
         try:
@@ -362,7 +386,11 @@ class GatewayCallSession:
         )
         logger.info(
             "tts_audio_buffered_ms",
-            extra={"call_id": self.call_id, "source": source, "buffered_ms": buffered_ms},
+            extra={
+                "call_id": self.call_id,
+                "source": source,
+                "buffered_ms": buffered_ms,
+            },
         )
         await self.outbound_audio_queue.put(raw_g711)
 

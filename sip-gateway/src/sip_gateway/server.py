@@ -20,6 +20,18 @@ from sip_gateway.sip import SipMessage, build_response
 logger = logging.getLogger(__name__)
 
 
+def openai_hosted_sip_target(
+    settings: GatewaySettings,
+    *,
+    project_id: str | None = None,
+) -> str:
+    """Build the OpenAI Hosted SIP target URI."""
+    effective_project_id = (project_id or settings.openai_project_id).strip()
+    domain = (settings.openai_hosted_sip_domain or "sip.api.openai.com").strip()
+    transport = (settings.openai_hosted_sip_transport or "tls").strip().lower()
+    return f"sip:{effective_project_id}@{domain};transport={transport}"
+
+
 class SlidingWindowRateLimiter:
     """Simple per-IP sliding-window limiter."""
 
@@ -238,7 +250,10 @@ class SipGateway:
         sip_from = message.header("from") or message.header("f")
         provider_call_id = message.call_id or str(uuid.uuid4())
         openai_call_id = f"vps-{provider_call_id}"
-        called_number = select_called_number(message, self.settings.fallback_called_number)
+        called_number = select_called_number(
+            message,
+            self.settings.fallback_called_number,
+        )
 
         logger.info(
             "sip_invite_received",
@@ -301,9 +316,7 @@ class SipGateway:
 
         route = (context.call_audio_mode or "vps_media_bridge").strip().casefold()
         voice_provider = (context.voice_provider or "").strip().casefold()
-        if voice_provider == "openai":
-            route = "openai_hosted_sip"
-        elif voice_provider == "azure":
+        if voice_provider != "openai":
             route = "vps_media_bridge"
 
         logger.info(
@@ -330,8 +343,6 @@ class SipGateway:
                 or getattr(self.settings, "openai_project_id", "")
                 or ""
             ).strip()
-            domain = (getattr(self.settings, "openai_hosted_sip_domain", "sip.api.openai.com") or "sip.api.openai.com").strip()
-            transport = (getattr(self.settings, "openai_hosted_sip_transport", "tls") or "tls").strip().lower()
             if not project_id:
                 self.invite_failures += 1
                 self.provider_errors += 1
@@ -341,10 +352,42 @@ class SipGateway:
                 )
                 self._send(message, 488, "Not Acceptable Here", addr)
                 return
-            target = f"sip:{project_id}@{domain};transport={transport}"
+            target = openai_hosted_sip_target(self.settings, project_id=project_id)
+            if self.settings.openai_hosted_sip_strategy != "redirect":
+                self.invite_failures += 1
+                logger.error(
+                    "sip_b2bua_unavailable",
+                    extra={
+                        "call_id": provider_call_id,
+                        "clinic_id": context.clinic_id,
+                        "target": target,
+                        "strategy": self.settings.openai_hosted_sip_strategy,
+                        "reason": (
+                            "VoIP Studio does not reliably follow UDP to TLS "
+                            "302 redirects. B2BUA/TLS proxy is not enabled."
+                        ),
+                    },
+                )
+                self._send(
+                    message,
+                    488,
+                    "OpenAI Hosted SIP B2BUA Not Implemented",
+                    addr,
+                    extra_headers={
+                        "X-Autogal-Route": "openai_hosted_sip_blocked",
+                        "X-Autogal-OpenAI-SIP-Target": target,
+                    },
+                )
+                return
             logger.info(
                 "route=openai_hosted_sip_redirect",
-                extra={"call_id": provider_call_id, "clinic_id": context.clinic_id, "target": target},
+                extra={
+                    "call_id": provider_call_id,
+                    "clinic_id": context.clinic_id,
+                    "target": target,
+                    "stable_call_established": False,
+                    "reason": "redirect_only_no_b2bua",
+                },
             )
             self._send(
                 message,
@@ -356,7 +399,12 @@ class SipGateway:
             )
             logger.info(
                 "sip_redirect_sent",
-                extra={"call_id": provider_call_id, "clinic_id": context.clinic_id, "target": target},
+                extra={
+                    "call_id": provider_call_id,
+                    "clinic_id": context.clinic_id,
+                    "target": target,
+                    "stable_call_established": False,
+                },
             )
             return
 

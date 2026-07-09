@@ -56,7 +56,9 @@ class VoiceContext:
         filtered = {key: value for key, value in data.items() if key in allowed}
         if not filtered.get("prompt"):
             filtered["prompt"] = filtered.get("instructions")
-        filtered["telephony_codec"] = str(filtered.get("telephony_codec") or "pcmu").casefold()
+        filtered["telephony_codec"] = str(
+            filtered.get("telephony_codec") or "pcmu"
+        ).casefold()
         return cls(**filtered)
 
 
@@ -156,7 +158,11 @@ class BackendClient:
         )
         endpoint = f"{self._settings.backend_internal_url}/api/internal/voice/context"
         async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.post(endpoint, json=payload, headers=self._headers())
+            response = await client.post(
+                endpoint,
+                json=payload,
+                headers=self._headers(),
+            )
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:

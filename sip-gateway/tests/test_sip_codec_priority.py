@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from sip_gateway.config import GatewaySettings
-from sip_gateway.sdp import PAYLOAD_PCMA, PAYLOAD_PCMU, build_sdp_answer, parse_sdp_offer
+from sip_gateway.sdp import (
+    PAYLOAD_PCMA,
+    PAYLOAD_PCMU,
+    build_sdp_answer,
+    parse_sdp_offer,
+)
 
 
 def test_telephony_codec_pcma_has_priority_when_offered() -> None:

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 
 from sip_gateway.backend import TTSAudio, VoiceContext
 from sip_gateway.config import GatewaySettings
-from sip_gateway.rtp import RTPPacket
-from sip_gateway.rtp import RTPPortPool
+from sip_gateway.rtp import RTPPacket, RTPPortPool
 from sip_gateway.sdp import SdpOffer
-from sip_gateway.session import GatewayCallSession, INITIAL_GREETING
+from sip_gateway.session import INITIAL_GREETING, GatewayCallSession
 from sip_gateway.sip import SipMessage
 
 
@@ -77,15 +75,13 @@ def _context() -> VoiceContext:
 def test_initial_greeting_is_sent_as_rtp_after_ack() -> None:
     async def run() -> None:
         invite = SipMessage.parse(
-            (
-                "INVITE sip:bot@sip.autogal.es SIP/2.0\r\n"
-                "Via: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-test\r\n"
-                "From: <sip:+34600111222@example.com>;tag=abc\r\n"
-                "To: <sip:bot@sip.autogal.es>\r\n"
-                "Call-ID: call-123\r\n"
-                "CSeq: 1 INVITE\r\n"
-                "Content-Length: 0\r\n\r\n"
-            ).encode()
+            b"INVITE sip:bot@sip.autogal.es SIP/2.0\r\n"
+            b"Via: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-test\r\n"
+            b"From: <sip:+34600111222@example.com>;tag=abc\r\n"
+            b"To: <sip:bot@sip.autogal.es>\r\n"
+            b"Call-ID: call-123\r\n"
+            b"CSeq: 1 INVITE\r\n"
+            b"Content-Length: 0\r\n\r\n"
         )
         fake_backend = FakeBackend()
         call = GatewayCallSession(
@@ -107,14 +103,16 @@ def test_initial_greeting_is_sent_as_rtp_after_ack() -> None:
         call.rtp_transport = FakeTransport()  # type: ignore[assignment]
         call.bridge = FakeBridge()  # type: ignore[assignment]
 
-        call._spawn(call._rtp_sender_loop())  # noqa: SLF001
-        await call._speak_text(INITIAL_GREETING, reason="initial_greeting")  # noqa: SLF001
+        call._spawn(call._rtp_sender_loop())
+        await call._speak_text(INITIAL_GREETING, reason="initial_greeting")
         await asyncio.sleep(0.08)
         await call.close("test")
 
         assert fake_backend.tts_texts == [INITIAL_GREETING]
         assert call.rtp_transport.sent  # type: ignore[union-attr]
-        packet = RTPPacket.parse(call.rtp_transport.sent[0][0])  # type: ignore[union-attr]
+        packet = RTPPacket.parse(
+            call.rtp_transport.sent[0][0]  # type: ignore[union-attr]
+        )
         assert packet.payload_type == 8
         assert len(packet.payload) == 160
 

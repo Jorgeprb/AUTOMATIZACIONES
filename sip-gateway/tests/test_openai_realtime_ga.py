@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from types import SimpleNamespace
-from typing import Any
 
 from sip_gateway.backend import VoiceContext
 from sip_gateway.config import GatewaySettings
-from sip_gateway.openai_bridge import OpenAIRealtimeBridge, _sanitize_tool_schema
+from sip_gateway.openai_bridge import (
+    OpenAIRealtimeBridge,
+    _sanitize_tool_schema,
+    build_realtime_session,
+)
 
 
 def _context() -> VoiceContext:
@@ -66,7 +70,7 @@ def test_openai_error_event_is_queued_not_silent() -> None:
             call_id="call-1",
             tool_executor=lambda name, arguments: {},  # type: ignore[arg-type]
         )
-        await bridge._handle_event(  # noqa: SLF001
+        await bridge._handle_event(
             {
                 "type": "error",
                 "error": {
@@ -75,32 +79,83 @@ def test_openai_error_event_is_queued_not_silent() -> None:
                 },
             }
         )
-        assert await asyncio.wait_for(bridge.text_queue.get(), timeout=0.1) == "__OPENAI_ERROR__"
+        assert (
+            await asyncio.wait_for(bridge.text_queue.get(), timeout=0.1)
+            == "__OPENAI_ERROR__"
+        )
 
     asyncio.run(run())
 
 
-def test_session_update_shape_has_ga_audio_and_no_beta_fields() -> None:
-    external_tts = True
-    session: dict[str, Any] = {
-        "type": "realtime",
-        "instructions": "Instrucións",
-        "output_modalities": ["text"] if external_tts else ["text", "audio"],
-        "audio": {
-            "input": {
-                "format": {"type": "audio/pcm", "rate": 8000},
-                "turn_detection": {"type": "server_vad", "create_response": True},
+def test_openai_8000_rate_error_is_suppressed() -> None:
+    async def run() -> None:
+        bridge = OpenAIRealtimeBridge(
+            settings=GatewaySettings(openai_api_key="test-key"),
+            backend=SimpleNamespace(),
+            context=_context(),
+            call_id="call-1",
+            tool_executor=lambda name, arguments: {},  # type: ignore[arg-type]
+        )
+        await bridge._handle_event(
+            {
+                "type": "error",
+                "error": {
+                    "message": (
+                        "Invalid session.audio.input.format.rate: got 8000, "
+                        "expected >= 24000"
+                    ),
+                },
             }
-        },
-    }
+        )
+        assert (
+            await asyncio.wait_for(bridge.text_queue.get(), timeout=0.1)
+            == "__OPENAI_CONFIG_ERROR_SUPPRESSED__"
+        )
+
+    asyncio.run(run())
+
+
+def test_session_update_shape_has_ga_24k_audio_and_no_beta_fields() -> None:
+    session = build_realtime_session(_context())
     payload = {"type": "session.update", "session": session}
     encoded = json.dumps(payload)
 
     assert "OpenAI-Beta" not in encoded
+    assert "8000" not in encoded
     assert session["type"] == "realtime"
     assert "audio" in session
     assert "input" in session["audio"]
+    assert session["audio"]["input"]["format"]["rate"] == 24000
+    assert session["output_modalities"] == ["text"]
     assert "modalities" not in session
     assert "input_audio_format" not in session
     assert "output_audio_format" not in session
-    assert "voice" not in session
+    assert "output" not in session["audio"]
+
+
+def test_send_pcm16_resamples_8k_to_24k_before_openai() -> None:
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.messages: list[dict[str, str]] = []
+
+        async def send(self, raw: str) -> None:
+            self.messages.append(json.loads(raw))
+
+    async def run() -> None:
+        websocket = FakeWebSocket()
+        bridge = OpenAIRealtimeBridge(
+            settings=GatewaySettings(openai_api_key="test-key"),
+            backend=SimpleNamespace(),
+            context=_context(),
+            call_id="call-1",
+            tool_executor=lambda name, arguments: {},  # type: ignore[arg-type]
+        )
+        bridge._ws = websocket
+        await bridge.send_pcm16(b"\x00\x00" * 160)
+
+        assert websocket.messages[0]["type"] == "input_audio_buffer.append"
+        audio = base64.b64decode(websocket.messages[0]["audio"])
+        assert len(audio) > 320
+        assert len(audio) % 2 == 0
+
+    asyncio.run(run())

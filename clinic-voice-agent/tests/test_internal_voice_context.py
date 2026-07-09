@@ -10,7 +10,11 @@ from app.api.internal_voice import VoiceContextRequest, create_voice_context
 from app.models import AssistantConfig, Clinic, PhoneNumber, PhoneProvider
 
 
-def _assistant_config(clinic: Clinic, *, call_audio_mode: str = "vps_media_bridge") -> AssistantConfig:
+def _assistant_config(
+    clinic: Clinic,
+    *,
+    call_audio_mode: str = "vps_media_bridge",
+) -> AssistantConfig:
     """Create one complete active assistant configuration."""
     return AssistantConfig(
         clinic=clinic,
@@ -38,7 +42,9 @@ def _assistant_config(clinic: Clinic, *, call_audio_mode: str = "vps_media_bridg
     )
 
 
-def test_context_accepts_sip_metadata_and_returns_sabela_config(db_session: Session) -> None:
+def test_context_accepts_sip_metadata_and_returns_sabela_config(
+    db_session: Session,
+) -> None:
     """A bot route alias must still resolve the clinic from the real DID."""
     clinic = Clinic(
         name="Clínica Sabela",
@@ -85,7 +91,9 @@ def test_context_accepts_sip_metadata_and_returns_sabela_config(db_session: Sess
     assert response.tools
 
 
-def test_context_uses_single_clinic_fallback_only_when_safe(db_session: Session) -> None:
+def test_context_uses_single_clinic_fallback_only_when_safe(
+    db_session: Session,
+) -> None:
     """Fallback without DID is only allowed for a single active configured clinic."""
     clinic = Clinic(
         name="Clínica Única",
@@ -129,7 +137,9 @@ def test_context_rejects_unsafe_fallback_with_multiple_active_clinics(
         timezone="Europe/Madrid",
         phone_number="+34910005000",
     )
-    db_session.add_all([first, second, _assistant_config(first), _assistant_config(second)])
+    db_session.add_all(
+        [first, second, _assistant_config(first), _assistant_config(second)]
+    )
     db_session.commit()
 
     with pytest.raises(HTTPException) as exc_info:

@@ -133,6 +133,7 @@ Variables principales:
 - `SIP_ALLOWED_IPS`: allowlist opcional de IPs de VoIP Studio.
 - `BACKEND_INTERNAL_URL=http://app:8000` dentro de Docker.
 - `OPENAI_API_KEY` e `INTERNAL_API_KEY`.
+- `OPENAI_HOSTED_SIP_STRATEGY=blocked` evita cuelgues por 302 UDP -> TLS.
 
 En el firewall del VPS abre UDP `6060` y el rango UDP `10000-20000`. En VoIP
 Studio configura el destino como:
@@ -152,6 +153,8 @@ Notas importantes:
 
 - OpenAI Hosted SIP sigue igual para voces OpenAI.
 - Azure `gl-ES-SabelaNeural` requiere VPS Media Bridge.
+- Si VoIP Studio llama al gateway, Hosted SIP responde `488` claro por defecto
+  hasta tener B2BUA TLS completo.
 - soporta PCMU/8000 y PCMA/8000;
 - no actúa como relay SIP abierto, solo contesta llamadas entrantes;
 - si hay barge-in, cancela la respuesta/TTS en curso y vuelve a escuchar;

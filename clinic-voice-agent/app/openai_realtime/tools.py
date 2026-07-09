@@ -88,7 +88,14 @@ def _object_schema(
     return schema
 
 
-REALTIME_SCHEMA_FORBIDDEN_ROOT_KEYS = {"oneOf", "anyOf", "allOf", "enum", "const", "not"}
+REALTIME_SCHEMA_FORBIDDEN_ROOT_KEYS = {
+    "oneOf",
+    "anyOf",
+    "allOf",
+    "enum",
+    "const",
+    "not",
+}
 
 
 def _sanitize_realtime_parameters(parameters: dict[str, Any]) -> dict[str, Any]:

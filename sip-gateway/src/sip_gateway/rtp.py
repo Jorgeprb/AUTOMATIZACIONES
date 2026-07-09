@@ -164,8 +164,12 @@ class RtpIntervalStats:
         """Add one observed inter-packet interval."""
         self.count += 1
         self.total_ms += interval_ms
-        self.min_ms = interval_ms if self.min_ms is None else min(self.min_ms, interval_ms)
-        self.max_ms = interval_ms if self.max_ms is None else max(self.max_ms, interval_ms)
+        self.min_ms = (
+            interval_ms if self.min_ms is None else min(self.min_ms, interval_ms)
+        )
+        self.max_ms = (
+            interval_ms if self.max_ms is None else max(self.max_ms, interval_ms)
+        )
 
     def snapshot(self) -> dict[str, float | int | None]:
         """Return rounded stats and reset-friendly values."""

@@ -121,6 +121,7 @@ RTP_ADVERTISE_IP=51.210.180.115
 SIP_PORT=6060
 RTP_PORT_MIN=10000
 RTP_PORT_MAX=20000
+OPENAI_HOSTED_SIP_STRATEGY=blocked
 # Si VoIP Studio llama a un alias como sip:bot@sip.autogal.es:6060,
 # configura aquí el DID real de la clínica para que el gateway resuelva tenant.
 FALLBACK_CALLED_NUMBER=+34XXXXXXXXX
@@ -267,8 +268,12 @@ PY'
 
 Mantén el número en VoIP Studio. No hace falta portarlo.
 
-OpenAI Hosted SIP sigue igual para voces OpenAI. Solo cambia a VPS Media Bridge
-cuando el proveedor de voz sea Azure, Google, ElevenLabs u otro externo.
+OpenAI Hosted SIP directo sigue funcionando cuando VoIP Studio llama al SIP de
+OpenAI. Pero si VoIP Studio llama siempre al gateway `sip.autogal.es:6060`, no
+uses 302 por defecto: VoIP Studio puede colgar al pasar de UDP a TLS. Por eso
+`OPENAI_HOSTED_SIP_STRATEGY=blocked` devuelve error SIP claro `488` en lugar de
+dejar una llamada rota. El B2BUA TLS completo queda pendiente. Si quieres probar
+el comportamiento antiguo, cambia a `OPENAI_HOSTED_SIP_STRATEGY=redirect`.
 
 Si tienes IPs conocidas de VoIP Studio, limita:
 

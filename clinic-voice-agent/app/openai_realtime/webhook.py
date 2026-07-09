@@ -158,6 +158,15 @@ async def receive_realtime_webhook(
             "test_event": test_event,
         },
     )
+    logger.info(
+        "openai_hosted_sip_webhook_received",
+        extra={
+            "event_type": raw_event.get("type"),
+            "data_call_id_present": call_id_present,
+            "data_id_present": data_id_present,
+            "test_event": test_event,
+        },
+    )
     if test_event:
         return {"ok": True, "test_event": True}
 
@@ -366,6 +375,15 @@ async def receive_realtime_webhook(
 
     logger.info(
         "realtime_call_accepted",
+        extra={
+            "call_id": incoming.data.call_id,
+            "call_session_id": str(call_session.id),
+            "model": config.model,
+            "voice": config_voice,
+        },
+    )
+    logger.info(
+        "openai_hosted_sip_call_accepted",
         extra={
             "call_id": incoming.data.call_id,
             "call_session_id": str(call_session.id),

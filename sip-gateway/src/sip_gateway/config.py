@@ -42,6 +42,7 @@ class GatewaySettings(BaseSettings):
     openai_project_id: str = ""
     openai_hosted_sip_domain: str = "sip.api.openai.com"
     openai_hosted_sip_transport: str = "tls"
+    openai_hosted_sip_strategy: str = "blocked"
     telephony_codec: str = "pcmu"
     rtp_initial_buffer_ms: int = 240
     rtp_packet_log_every: int = 50
@@ -77,6 +78,15 @@ class GatewaySettings(BaseSettings):
             raise ValueError("TELEPHONY_CODEC must be pcma or pcmu")
         return normalized
 
+    @field_validator("openai_hosted_sip_strategy")
+    @classmethod
+    def normalize_hosted_sip_strategy(cls, value: str) -> str:
+        """Normalize hosted SIP behavior for providers that cannot follow 302."""
+        normalized = value.strip().casefold()
+        if normalized not in {"blocked", "redirect"}:
+            raise ValueError("OPENAI_HOSTED_SIP_STRATEGY must be blocked or redirect")
+        return normalized
+
     @field_validator("rtp_initial_buffer_ms")
     @classmethod
     def validate_initial_buffer(cls, value: int) -> int:
@@ -96,7 +106,11 @@ class GatewaySettings(BaseSettings):
     @cached_property
     def allowed_ip_set(self) -> set[str]:
         """Return configured SIP source allowlist."""
-        return {item.strip() for item in self.sip_allowed_ips.split(",") if item.strip()}
+        return {
+            item.strip()
+            for item in self.sip_allowed_ips.split(",")
+            if item.strip()
+        }
 
     @property
     def advertised_rtp_ip(self) -> str:

@@ -20,6 +20,7 @@ from sip_gateway.rtp import (
 )
 
 SAMPLE_RATE = 8000
+OPENAI_INPUT_SAMPLE_RATE = 24000
 SAMPLES_PER_20MS = RTP_SAMPLES_PER_PACKET
 BYTES_PER_20MS_PCM16 = SAMPLES_PER_20MS * 2
 G711_BYTES_PER_20MS = RTP_G711_PAYLOAD_BYTES
@@ -40,6 +41,37 @@ def wav_to_pcm16_8k(data: bytes) -> bytes:
     if frame_rate != SAMPLE_RATE:
         frames, _ = audioop.ratecv(frames, 2, 1, frame_rate, SAMPLE_RATE, None)
     return frames
+
+
+def resample_pcm16_mono(
+    data: bytes,
+    *,
+    source_rate: int,
+    target_rate: int,
+) -> bytes:
+    """Resample mono PCM16 little-endian audio."""
+    if source_rate == target_rate:
+        return data
+    converted, _ = audioop.ratecv(data, 2, 1, source_rate, target_rate, None)
+    return converted
+
+
+def pcm16_8k_to_24k(data: bytes) -> bytes:
+    """Convert telephony PCM16/8 kHz to OpenAI Realtime PCM16/24 kHz."""
+    return resample_pcm16_mono(
+        data,
+        source_rate=SAMPLE_RATE,
+        target_rate=OPENAI_INPUT_SAMPLE_RATE,
+    )
+
+
+def pcm16_24k_to_8k(data: bytes) -> bytes:
+    """Convert OpenAI Realtime PCM16/24 kHz output to telephony PCM16/8 kHz."""
+    return resample_pcm16_mono(
+        data,
+        source_rate=OPENAI_INPUT_SAMPLE_RATE,
+        target_rate=SAMPLE_RATE,
+    )
 
 
 def tts_audio_to_pcm16_8k(

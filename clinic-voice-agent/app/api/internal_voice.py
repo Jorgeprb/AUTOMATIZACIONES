@@ -18,6 +18,7 @@ from app.db import get_db, get_session_factory
 from app.models import AssistantConfig, CallSession, CallStatus, Clinic
 from app.openai_realtime.prompt_builder import (
     ActiveAssistantConfigMissing,
+    ClinicContext,
     UnknownCalledNumber,
     build_clinic_context,
     build_realtime_instructions,
@@ -164,7 +165,7 @@ def _normalize_phone_candidates(value: str | None) -> tuple[str, ...]:
     for candidate in [raw, *SIP_USER_RE.findall(raw), *PHONE_RE.findall(raw)]:
         candidate = candidate.strip().strip('"<>')
         digits = "".join(character for character in candidate if character.isdigit())
-        if not digits:
+        if len(digits) < 5:
             continue
         values.append(candidate)
         values.append(digits)
@@ -197,7 +198,7 @@ def _caller_phone(payload: VoiceContextRequest) -> str:
     return "unknown"
 
 
-def _single_active_clinic_fallback(session: Session):
+def _single_active_clinic_fallback(session: Session) -> ClinicContext:
     """Resolve only when fallback cannot cross tenant boundaries."""
     clinic_ids = list(
         session.scalars(
@@ -222,13 +223,17 @@ def _single_active_clinic_fallback(session: Session):
     )
 
 
-def _resolve_context_from_payload(payload: VoiceContextRequest, session: Session):
+def _resolve_context_from_payload(
+    payload: VoiceContextRequest,
+    session: Session,
+) -> tuple[ClinicContext, str | None]:
     """Resolve tenant context from called DID candidates or safe fallback."""
     candidates = _called_number_candidates(payload)
     last_config_error: ActiveAssistantConfigMissing | None = None
     for candidate in candidates:
         try:
-            return resolve_clinic_by_called_number(candidate, session=session), candidate
+            context = resolve_clinic_by_called_number(candidate, session=session)
+            return context, candidate
         except UnknownCalledNumber:
             continue
         except ActiveAssistantConfigMissing as exc:

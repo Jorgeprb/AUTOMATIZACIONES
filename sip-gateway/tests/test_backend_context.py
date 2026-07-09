@@ -10,15 +10,13 @@ from sip_gateway.sip import SipMessage
 
 def test_select_called_number_prefers_fallback_for_bot_alias() -> None:
     invite = SipMessage.parse(
-        (
-            "INVITE sip:bot@sip.autogal.es:6060 SIP/2.0\r\n"
-            "Via: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-test\r\n"
-            "From: <sip:+34600111222@voipstudio.example>;tag=abc\r\n"
-            "To: <sip:bot@sip.autogal.es>\r\n"
-            "Call-ID: call-123\r\n"
-            "CSeq: 1 INVITE\r\n"
-            "Content-Length: 0\r\n\r\n"
-        ).encode()
+        b"INVITE sip:bot@sip.autogal.es:6060 SIP/2.0\r\n"
+        b"Via: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-test\r\n"
+        b"From: <sip:+34600111222@voipstudio.example>;tag=abc\r\n"
+        b"To: <sip:bot@sip.autogal.es>\r\n"
+        b"Call-ID: call-123\r\n"
+        b"CSeq: 1 INVITE\r\n"
+        b"Content-Length: 0\r\n\r\n"
     )
 
     assert invite.callee == "bot"

@@ -14,6 +14,7 @@ from typing import Any
 
 from websockets.asyncio.client import connect
 
+from sip_gateway.audio import OPENAI_INPUT_SAMPLE_RATE, SAMPLE_RATE, pcm16_8k_to_24k
 from sip_gateway.backend import BackendClient, VoiceContext
 from sip_gateway.config import GatewaySettings
 
@@ -43,6 +44,39 @@ def _sanitize_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [_sanitize_tool_schema(tool) for tool in tools]
 
 
+def build_realtime_session(context: VoiceContext) -> dict[str, Any]:
+    """Build the Realtime GA session update payload for one bridge call."""
+    external_tts = context.voice_provider != "openai"
+    session: dict[str, Any] = {
+        "type": "realtime",
+        "instructions": context.instructions,
+        "output_modalities": ["text"] if external_tts else ["text", "audio"],
+        "audio": {
+            "input": {
+                "format": {
+                    "type": "audio/pcm",
+                    "rate": OPENAI_INPUT_SAMPLE_RATE,
+                },
+                "turn_detection": {
+                    "type": "server_vad",
+                    "create_response": True,
+                    "interrupt_response": context.allow_interruptions,
+                },
+            }
+        },
+    }
+    tools = _sanitize_tools(context.tools)
+    if tools:
+        session["tools"] = tools
+        session["tool_choice"] = "auto"
+    if not external_tts:
+        session["audio"]["output"] = {
+            "format": {"type": "audio/pcm", "rate": OPENAI_INPUT_SAMPLE_RATE},
+            "voice": context.realtime_voice,
+        }
+    return session
+
+
 class OpenAIRealtimeBridge:
     """Bidirectional audio/text bridge to OpenAI Realtime."""
 
@@ -67,6 +101,7 @@ class OpenAIRealtimeBridge:
         self._closed = asyncio.Event()
         self._first_audio_started_at: float | None = None
         self._started_at = 0.0
+        self._input_audio_frames_sent = 0
 
     @property
     def first_audio_latency_ms(self) -> float | None:
@@ -100,30 +135,10 @@ class OpenAIRealtimeBridge:
         logger.info("openai_ws_connected", extra={"call_id": self._call_id})
 
         external_tts = self._context.voice_provider != "openai"
-        session: dict[str, Any] = {
-            "type": "realtime",
-            "instructions": self._context.instructions,
-            "output_modalities": ["text"] if external_tts else ["text", "audio"],
-            "audio": {
-                "input": {
-                    "format": {"type": "audio/pcm", "rate": 8000},
-                    "turn_detection": {
-                        "type": "server_vad",
-                        "create_response": True,
-                        "interrupt_response": self._context.allow_interruptions,
-                    },
-                }
-            },
-        }
-        tools = _sanitize_tools(self._context.tools)
-        if tools:
-            session["tools"] = tools
-            session["tool_choice"] = "auto"
-        if not external_tts:
-            session["audio"]["output"] = {
-                "format": {"type": "audio/pcm", "rate": 8000},
-                "voice": self._context.realtime_voice,
-            }
+        session = build_realtime_session(self._context)
+        tools_count = (
+            len(session["tools"]) if isinstance(session.get("tools"), list) else 0
+        )
 
         await self._send({"type": "session.update", "session": session})
         logger.info(
@@ -131,7 +146,9 @@ class OpenAIRealtimeBridge:
             extra={
                 "call_id": self._call_id,
                 "external_tts": external_tts,
-                "tools_count": len(tools),
+                "tools_count": tools_count,
+                "input_rate": OPENAI_INPUT_SAMPLE_RATE,
+                "output_modalities": session["output_modalities"],
             },
         )
 
@@ -149,15 +166,43 @@ class OpenAIRealtimeBridge:
         logger.info("openai_bridge_started", extra={"call_id": self._call_id})
 
     async def send_pcm16(self, pcm16le: bytes) -> None:
-        """Append one PCM16 audio frame to Realtime input."""
+        """Resample telephony PCM16/8 kHz and append PCM16/24 kHz to Realtime."""
         if self._ws is None or self._closed.is_set():
             return
+        resampled = pcm16_8k_to_24k(pcm16le)
+        self._input_audio_frames_sent += 1
+        should_log_audio = (
+            self._input_audio_frames_sent == 1
+            or self._input_audio_frames_sent % 50 == 0
+        )
+        if should_log_audio:
+            logger.info(
+                "openai_audio_resampled",
+                extra={
+                    "call_id": self._call_id,
+                    "source_rate": SAMPLE_RATE,
+                    "target_rate": OPENAI_INPUT_SAMPLE_RATE,
+                    "input_bytes": len(pcm16le),
+                    "output_bytes": len(resampled),
+                    "frames_sent": self._input_audio_frames_sent,
+                },
+            )
         await self._send(
             {
                 "type": "input_audio_buffer.append",
-                "audio": base64.b64encode(pcm16le).decode("ascii"),
+                "audio": base64.b64encode(resampled).decode("ascii"),
             }
         )
+        if should_log_audio:
+            logger.info(
+                "openai_input_audio_sent",
+                extra={
+                    "call_id": self._call_id,
+                    "rate": OPENAI_INPUT_SAMPLE_RATE,
+                    "bytes": len(resampled),
+                    "frames_sent": self._input_audio_frames_sent,
+                },
+            )
 
     async def cancel_response(self) -> None:
         """Ask OpenAI to stop current response for barge-in."""
@@ -192,7 +237,10 @@ class OpenAIRealtimeBridge:
                 await self._handle_event(event)
         except Exception:
             if not self._closed.is_set():
-                logger.exception("openai_read_loop_failed", extra={"call_id": self._call_id})
+                logger.exception(
+                    "openai_read_loop_failed",
+                    extra={"call_id": self._call_id},
+                )
                 await self.text_queue.put("__OPENAI_ERROR__")
 
     async def _handle_event(self, event: dict[str, Any]) -> None:
@@ -205,6 +253,16 @@ class OpenAIRealtimeBridge:
                 "openai_error",
                 extra={"call_id": self._call_id, "error": event.get("error")},
             )
+            raw_error = event.get("error")
+            error = raw_error if isinstance(raw_error, dict) else {}
+            message = str(error.get("message") or "")
+            if "session.audio.input.format.rate" in message and "8000" in message:
+                logger.error(
+                    "openai_invalid_8000_rate_suppressed",
+                    extra={"call_id": self._call_id},
+                )
+                await self.text_queue.put("__OPENAI_CONFIG_ERROR_SUPPRESSED__")
+                return
             await self.text_queue.put("__OPENAI_ERROR__")
             return
         if event_type == "response.output_audio.delta":
