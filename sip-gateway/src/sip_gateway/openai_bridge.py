@@ -68,8 +68,48 @@ def build_external_greeting_item(context: VoiceContext) -> dict[str, Any] | None
     }
 
 
-def build_realtime_session(context: VoiceContext) -> dict[str, Any]:
-    """Build the Realtime GA session update payload for one bridge call."""
+def _supports_reasoning_model(model: str) -> bool:
+    return model.strip().casefold().startswith("gpt-realtime-2")
+
+
+def _build_turn_detection(
+    context: VoiceContext,
+    settings: GatewaySettings | None,
+) -> dict[str, Any]:
+    mode = settings.realtime_vad_mode if settings is not None else "server_vad"
+    common: dict[str, Any] = {
+        "type": mode,
+        "create_response": True,
+        "interrupt_response": context.allow_interruptions,
+    }
+    if mode == "semantic_vad":
+        common["eagerness"] = (
+            settings.realtime_vad_eagerness if settings is not None else "high"
+        )
+        return common
+    common.update(
+        {
+            "threshold": (
+                settings.realtime_vad_threshold if settings is not None else 0.50
+            ),
+            "prefix_padding_ms": (
+                settings.realtime_vad_prefix_padding_ms if settings is not None else 200
+            ),
+            "silence_duration_ms": (
+                settings.realtime_vad_silence_duration_ms
+                if settings is not None
+                else 300
+            ),
+        }
+    )
+    return common
+
+
+def build_realtime_session(
+    context: VoiceContext,
+    settings: GatewaySettings | None = None,
+) -> dict[str, Any]:
+    """Build a low-latency Realtime GA session for one bridge call."""
     external_tts = context.voice_provider != "openai"
     instructions = context.instructions
     if external_tts and context.first_message:
@@ -81,33 +121,51 @@ def build_realtime_session(context: VoiceContext) -> dict[str, Any]:
             "responde únicamente a lo que diga la persona usuaria. Si el "
             f"idioma configurado `{context.language}` no coincide con el saludo, "
             "prevalece el idioma del saludo. El locale de la voz TTS no "
-            "determina el idioma de respuesta."
+            "determina el idioma de respuesta. Para reducir la espera, responde "
+            "con una o dos frases cortas y formula una sola pregunta cada vez."
         )
+    telephony_codec = context.telephony_codec.strip().casefold()
+    if telephony_codec in {"pcma", "pcmu"}:
+        input_format: dict[str, Any] = {"type": f"audio/{telephony_codec}"}
+    else:
+        input_format = {
+            "type": "audio/pcm",
+            "rate": OPENAI_INPUT_SAMPLE_RATE,
+        }
+    input_audio: dict[str, Any] = {
+        "format": input_format,
+        "turn_detection": _build_turn_detection(context, settings),
+    }
+    noise_reduction = (
+        settings.realtime_noise_reduction if settings is not None else "near_field"
+    )
+    if noise_reduction != "off":
+        input_audio["noise_reduction"] = {"type": noise_reduction}
+
     session: dict[str, Any] = {
         "type": "realtime",
         "instructions": instructions,
         "output_modalities": ["text"] if external_tts else ["audio"],
-        "audio": {
-            "input": {
-                "format": {
-                    "type": "audio/pcm",
-                    "rate": OPENAI_INPUT_SAMPLE_RATE,
-                },
-                "turn_detection": {
-                    "type": "server_vad",
-                    "create_response": True,
-                    "interrupt_response": context.allow_interruptions,
-                },
-            }
-        },
+        "audio": {"input": input_audio},
     }
+    if _supports_reasoning_model(context.model):
+        session["reasoning"] = {
+            "effort": (
+                settings.realtime_reasoning_effort if settings is not None else "low"
+            )
+        }
     tools = _sanitize_tools(context.tools)
     if tools:
         session["tools"] = tools
         session["tool_choice"] = "auto"
     if not external_tts:
+        output_format: dict[str, Any]
+        if telephony_codec in {"pcma", "pcmu"}:
+            output_format = {"type": f"audio/{telephony_codec}"}
+        else:
+            output_format = {"type": "audio/pcm", "rate": OPENAI_INPUT_SAMPLE_RATE}
         session["audio"]["output"] = {
-            "format": {"type": "audio/pcm", "rate": OPENAI_INPUT_SAMPLE_RATE},
+            "format": output_format,
             "voice": context.realtime_voice,
         }
     return session
@@ -147,6 +205,10 @@ class OpenAIRealtimeBridge:
         self._continuation_after_tools = False
         self._response_lock = asyncio.Lock()
         self._handled_tool_call_ids: set[str] = set()
+        self._last_speech_started_at: float | None = None
+        self._last_speech_stopped_at: float | None = None
+        self._turn_first_delta_logged = False
+        self._turn_sequence = 0
         self._input_resampler = StatefulPcm16Resampler(
             SAMPLE_RATE, OPENAI_INPUT_SAMPLE_RATE
         )
@@ -154,6 +216,15 @@ class OpenAIRealtimeBridge:
         self._input_batch_bytes = int(
             OPENAI_INPUT_SAMPLE_RATE * 2 * settings.openai_input_batch_ms / 1000
         )
+        self._g711_input_buffer = bytearray()
+        self._g711_batch_bytes = int(
+            SAMPLE_RATE * settings.openai_input_batch_ms / 1000
+        )
+
+    @property
+    def last_speech_stopped_at(self) -> float | None:
+        """Monotonic timestamp of the latest server VAD speech stop."""
+        return self._last_speech_stopped_at
 
     @property
     def first_audio_latency_ms(self) -> float | None:
@@ -187,7 +258,7 @@ class OpenAIRealtimeBridge:
         logger.info("openai_ws_connected", extra={"call_id": self._call_id})
 
         external_tts = self._context.voice_provider != "openai"
-        session = build_realtime_session(self._context)
+        session = build_realtime_session(self._context, self._settings)
         tools_count = (
             len(session["tools"]) if isinstance(session.get("tools"), list) else 0
         )
@@ -229,6 +300,33 @@ class OpenAIRealtimeBridge:
             )
         self._reader_task = asyncio.create_task(self._read_loop())
         logger.info("openai_bridge_started", extra={"call_id": self._call_id})
+
+    async def send_g711(self, payload: bytes) -> None:
+        """Append native PCMA/PCMU audio without an unnecessary resample."""
+        if self._ws is None or self._closed.is_set() or not payload:
+            return
+        self._g711_input_buffer.extend(payload)
+        self._input_audio_frames_sent += 1
+        if len(self._g711_input_buffer) < self._g711_batch_bytes:
+            return
+        batch = bytes(self._g711_input_buffer)
+        self._g711_input_buffer.clear()
+        await self._send(
+            {
+                "type": "input_audio_buffer.append",
+                "audio": base64.b64encode(batch).decode("ascii"),
+            }
+        )
+        if self._input_audio_frames_sent <= 4 or self._input_audio_frames_sent % 50 == 0:
+            logger.info(
+                "openai_g711_input_audio_sent",
+                extra={
+                    "call_id": self._call_id,
+                    "codec": self._context.telephony_codec,
+                    "bytes": len(batch),
+                    "frames_sent": self._input_audio_frames_sent,
+                },
+            )
 
     async def send_pcm16(self, pcm16le: bytes) -> None:
         """Resample telephony PCM16/8 kHz and append PCM16/24 kHz to Realtime."""
@@ -328,6 +426,16 @@ class OpenAIRealtimeBridge:
             with suppress(asyncio.CancelledError):
                 await self._reader_task
         if self._ws is not None:
+            if self._g711_input_buffer:
+                await self._send(
+                    {
+                        "type": "input_audio_buffer.append",
+                        "audio": base64.b64encode(
+                            bytes(self._g711_input_buffer)
+                        ).decode("ascii"),
+                    }
+                )
+                self._g711_input_buffer.clear()
             if self._input_audio_buffer:
                 await self._send(
                     {
@@ -368,9 +476,37 @@ class OpenAIRealtimeBridge:
         if event_type == "session.created":
             logger.info("openai_session_created", extra={"call_id": self._call_id})
             return
+        if event_type == "input_audio_buffer.speech_started":
+            self._last_speech_started_at = time.perf_counter()
+            self._turn_first_delta_logged = False
+            self._turn_sequence += 1
+            logger.info(
+                "openai_speech_started",
+                extra={"call_id": self._call_id, "turn": self._turn_sequence},
+            )
+            return
+        if event_type == "input_audio_buffer.speech_stopped":
+            self._last_speech_stopped_at = time.perf_counter()
+            logger.info(
+                "openai_speech_stopped",
+                extra={"call_id": self._call_id, "turn": self._turn_sequence},
+            )
+            return
         if event_type == "response.created":
             self._response_create_pending = False
             self._response_active = True
+            if self._last_speech_stopped_at is not None:
+                logger.info(
+                    "openai_vad_to_response_created_ms",
+                    extra={
+                        "call_id": self._call_id,
+                        "turn": self._turn_sequence,
+                        "latency_ms": round(
+                            (time.perf_counter() - self._last_speech_stopped_at) * 1000,
+                            2,
+                        ),
+                    },
+                )
             return
         if event_type in {"response.cancelled", "response.failed"}:
             self._response_active = False
@@ -409,6 +545,26 @@ class OpenAIRealtimeBridge:
                 return
             await self.text_queue.put("__OPENAI_ERROR__")
             return
+        if event_type in {
+            "response.output_audio.delta",
+            "response.output_text.delta",
+            "response.output_audio_transcript.delta",
+        } and not self._turn_first_delta_logged:
+            self._turn_first_delta_logged = True
+            if self._last_speech_stopped_at is not None:
+                logger.info(
+                    "openai_turn_first_model_delta_ms",
+                    extra={
+                        "call_id": self._call_id,
+                        "turn": self._turn_sequence,
+                        "latency_ms": round(
+                            (time.perf_counter() - self._last_speech_stopped_at) * 1000,
+                            2,
+                        ),
+                        "event_type": event_type,
+                    },
+                )
+
         if event_type == "response.output_audio.delta":
             delta = event.get("delta")
             if isinstance(delta, str):
@@ -480,7 +636,17 @@ class OpenAIRealtimeBridge:
                 "tool_name": name,
             },
         )
+        tool_started = time.perf_counter()
         output = await self._tool_executor(name, arguments)
+        logger.info(
+            "openai_tool_execution_ms",
+            extra={
+                "call_id": self._call_id,
+                "tool_call_id": call_id,
+                "tool_name": name,
+                "latency_ms": round((time.perf_counter() - tool_started) * 1000, 2),
+            },
+        )
         await self._send(
             {
                 "type": "conversation.item.create",

@@ -47,40 +47,59 @@ class RealtimeSessionConfig:
     fallback_voice: str | None = None
     allow_interruptions: bool = True
     idle_timeout_ms: int | None = None
+    vad_mode: str = "server_vad"
+    vad_threshold: float = 0.50
+    vad_prefix_padding_ms: int = 200
+    vad_silence_duration_ms: int = 300
+    vad_eagerness: str = "high"
+    noise_reduction: str = "near_field"
+    reasoning_effort: str = "low"
+    transcription_delay: str = "minimal"
 
     def as_accept_payload(self) -> dict[str, Any]:
-        """Serialize the documented Realtime session payload."""
-        audio: dict[str, Any] = {
-            "output": {"voice": self.voice},
+        """Serialize a low-latency documented Realtime session payload."""
+        turn_detection: dict[str, Any] = {
+            "type": self.vad_mode,
+            "create_response": True,
+            "interrupt_response": self.allow_interruptions,
         }
-        input_audio: dict[str, Any] = {}
-        if self.idle_timeout_ms is not None or not self.allow_interruptions:
-            turn_detection: dict[str, Any] = {
-                "type": "server_vad",
-                "interrupt_response": self.allow_interruptions,
-            }
-            if self.idle_timeout_ms is not None:
-                turn_detection["idle_timeout_ms"] = self.idle_timeout_ms
-            input_audio["turn_detection"] = turn_detection
-        if self.transcription_enabled:
-            input_audio.update(
+        if self.vad_mode == "semantic_vad":
+            turn_detection["eagerness"] = self.vad_eagerness
+        else:
+            turn_detection.update(
                 {
-                "transcription": {
-                    "model": "gpt-realtime-whisper",
-                    "language": self.language.split("-", maxsplit=1)[0],
-                }
+                    "threshold": self.vad_threshold,
+                    "prefix_padding_ms": self.vad_prefix_padding_ms,
+                    "silence_duration_ms": self.vad_silence_duration_ms,
                 }
             )
-        if input_audio:
-            audio["input"] = input_audio
-        return {
+            if self.idle_timeout_ms is not None:
+                turn_detection["idle_timeout_ms"] = self.idle_timeout_ms
+
+        input_audio: dict[str, Any] = {"turn_detection": turn_detection}
+        if self.noise_reduction != "off":
+            input_audio["noise_reduction"] = {"type": self.noise_reduction}
+        if self.transcription_enabled:
+            input_audio["transcription"] = {
+                "model": "gpt-realtime-whisper",
+                "language": self.language.split("-", maxsplit=1)[0],
+                "delay": self.transcription_delay,
+            }
+
+        payload: dict[str, Any] = {
             "type": "realtime",
             "model": self.model,
-            "audio": audio,
+            "audio": {
+                "input": input_audio,
+                "output": {"voice": self.voice},
+            },
             "instructions": self.instructions,
             "tools": list(get_realtime_tools()),
             "tool_choice": "auto",
         }
+        if self.model.strip().casefold().startswith("gpt-realtime-2"):
+            payload["reasoning"] = {"effort": self.reasoning_effort}
+        return payload
 
 
 def build_session_config(
@@ -157,6 +176,14 @@ def build_session_config(
             if context is not None
             else None
         ),
+        vad_mode=settings.openai_realtime_vad_mode,
+        vad_threshold=settings.openai_realtime_vad_threshold,
+        vad_prefix_padding_ms=settings.openai_realtime_vad_prefix_padding_ms,
+        vad_silence_duration_ms=settings.openai_realtime_vad_silence_duration_ms,
+        vad_eagerness=settings.openai_realtime_vad_eagerness,
+        noise_reduction=settings.openai_realtime_noise_reduction,
+        reasoning_effort=settings.openai_realtime_reasoning_effort,
+        transcription_delay=settings.openai_realtime_transcription_delay,
     )
 
 

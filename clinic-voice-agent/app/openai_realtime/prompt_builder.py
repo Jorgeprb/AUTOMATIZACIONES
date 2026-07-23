@@ -512,6 +512,13 @@ Responde en ese idioma durante toda la llamada, salvo petición expresa del usua
 El locale o nombre técnico de la voz no cambia el idioma de conversación.
 Tono configurado: {tone}. Longitud de respuesta: {response_length}.
 Habla de forma natural, breve y comercial cuando encaje, adecuada para una llamada.
+Prioridad de latencia conversacional:
+- Empieza la respuesta directamente, sin reformular la pregunta ni usar preámbulos.
+- Responde normalmente en una o dos frases cortas y formula una sola pregunta.
+- Para confirmaciones simples usa menos de 12 palabras.
+- No enumeres información que la persona no haya solicitado.
+- Si necesitas una herramienta, ejecútala en cuanto tengas los datos mínimos; no
+  generes una frase previa salvo que la operación pueda tardar perceptiblemente.
 {"El gateway reproduce el saludo externamente. No lo repitas ni vuelvas a presentarte." if config.call_audio_mode == "vps_media_bridge" and config.voice_provider != "openai" else "Debes avisar al inicio de que eres un asistente virtual."}
 Primer mensaje configurado: "{_clean(config.first_message)}"
 

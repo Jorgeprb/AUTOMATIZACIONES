@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, fields
+import hashlib
+import json
 from typing import Any
 
 import httpx
@@ -108,9 +111,15 @@ class BackendClient:
     def __init__(self, settings: GatewaySettings) -> None:
         self._settings = settings
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(45.0, connect=10.0),
-            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+            timeout=httpx.Timeout(45.0, connect=5.0),
+            limits=httpx.Limits(
+                max_connections=100,
+                max_keepalive_connections=40,
+                keepalive_expiry=30.0,
+            ),
         )
+        self._tts_cache: OrderedDict[str, TTSAudio] = OrderedDict()
+        self._tts_cache_max_items = 32
 
     async def close(self) -> None:
         """Close the shared connection pool during gateway shutdown."""
@@ -195,6 +204,40 @@ class BackendClient:
         text: str,
     ) -> TTSAudio:
         """Generate one TTS chunk through backend provider layer."""
+        cache_key: str | None = None
+        cacheable = bool(
+            context.first_message.strip()
+            and text.strip() == context.first_message.strip()
+        )
+        if cacheable:
+            cache_material = {
+                "clinic_id": context.clinic_id,
+                "assistant_config_id": context.assistant_config_id,
+                "text": text,
+                "voice_provider": context.voice_provider,
+                "realtime_voice": context.realtime_voice,
+                "tts_model": context.tts_model,
+                "voice_id": context.voice_id,
+                "voice_locale": context.voice_locale,
+                "azure_speech_region": context.azure_speech_region,
+                "voice_style": context.voice_style,
+                "voice_speed": context.voice_speed,
+                "voice_pitch": context.voice_pitch,
+                "telephony_codec": context.telephony_codec,
+            }
+            cache_key = hashlib.sha256(
+                json.dumps(
+                    cache_material,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()
+            cached = self._tts_cache.get(cache_key)
+            if cached is not None:
+                self._tts_cache.move_to_end(cache_key)
+                return cached
+
         payload = {
             "clinic_id": context.clinic_id,
             "text": text,
@@ -223,13 +266,19 @@ class BackendClient:
             timeout=45.0,
         )
         response.raise_for_status()
-        return TTSAudio(
+        result = TTSAudio(
             audio=response.content,
             media_type=response.headers.get(
                 "content-type",
                 "application/octet-stream",
             ).split(";", maxsplit=1)[0],
         )
+        if cache_key is not None and result.audio:
+            self._tts_cache[cache_key] = result
+            self._tts_cache.move_to_end(cache_key)
+            while len(self._tts_cache) > self._tts_cache_max_items:
+                self._tts_cache.popitem(last=False)
+        return result
 
     async def execute_tool(
         self,

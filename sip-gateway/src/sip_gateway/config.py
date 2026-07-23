@@ -48,26 +48,33 @@ class GatewaySettings(BaseSettings):
     silence_energy_threshold: int = 900
     silence_timeout_ms: int = 900
     barge_in_min_frames: int = 8
-    barge_in_cooldown_ms: int = 1200
-    barge_in_start_guard_ms: int = 600
+    barge_in_cooldown_ms: int = 900
+    barge_in_start_guard_ms: int = 450
     external_tts_half_duplex: bool = True
-    initial_input_guard_ms: int = 1200
-    echo_suppression_tail_ms: int = 800
-    tts_text_flush_timeout_ms: int = 650
-    tts_min_flush_chars: int = 40
+    initial_input_guard_ms: int = 400
+    echo_suppression_tail_ms: int = 250
+    tts_text_flush_timeout_ms: int = 250
+    tts_min_flush_chars: int = 24
+    realtime_vad_mode: str = "server_vad"
+    realtime_vad_threshold: float = 0.50
+    realtime_vad_prefix_padding_ms: int = 200
+    realtime_vad_silence_duration_ms: int = 300
+    realtime_vad_eagerness: str = "high"
+    realtime_noise_reduction: str = "near_field"
+    realtime_reasoning_effort: str = "low"
     openai_realtime_ws_url: str = "wss://api.openai.com/v1/realtime"
     openai_project_id: str = ""
     openai_hosted_sip_domain: str = "sip.api.openai.com"
     openai_hosted_sip_transport: str = "tls"
     openai_hosted_sip_strategy: str = "blocked"
     telephony_codec: str = "pcmu"
-    rtp_initial_buffer_ms: int = 240
+    rtp_initial_buffer_ms: int = 120
     rtp_packet_log_every: int = 50
     outbound_audio_max_ms: int = 30000
-    jitter_buffer_depth: int = 3
-    jitter_flush_ms: int = 80
+    jitter_buffer_depth: int = 2
+    jitter_flush_ms: int = 40
     openai_queue_max_items: int = 500
-    openai_input_batch_ms: int = 80
+    openai_input_batch_ms: int = 40
 
     @field_validator("sip_port", "rtp_port_min", "rtp_port_max", "health_port")
     @classmethod
@@ -99,6 +106,45 @@ class GatewaySettings(BaseSettings):
         if normalized not in {"pcma", "pcmu"}:
             raise ValueError("TELEPHONY_CODEC must be pcma or pcmu")
         return normalized
+
+    @field_validator("realtime_vad_mode")
+    @classmethod
+    def normalize_realtime_vad_mode(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if normalized not in {"server_vad", "semantic_vad"}:
+            raise ValueError("REALTIME_VAD_MODE must be server_vad or semantic_vad")
+        return normalized
+
+    @field_validator("realtime_vad_eagerness")
+    @classmethod
+    def normalize_realtime_vad_eagerness(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if normalized not in {"low", "medium", "high", "auto"}:
+            raise ValueError("REALTIME_VAD_EAGERNESS must be low, medium, high or auto")
+        return normalized
+
+    @field_validator("realtime_noise_reduction")
+    @classmethod
+    def normalize_noise_reduction(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if normalized not in {"near_field", "far_field", "off"}:
+            raise ValueError("REALTIME_NOISE_REDUCTION must be near_field, far_field or off")
+        return normalized
+
+    @field_validator("realtime_reasoning_effort")
+    @classmethod
+    def normalize_reasoning_effort(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if normalized not in {"minimal", "low", "medium", "high", "xhigh"}:
+            raise ValueError("REALTIME_REASONING_EFFORT has an unsupported value")
+        return normalized
+
+    @field_validator("realtime_vad_threshold")
+    @classmethod
+    def validate_vad_threshold(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("REALTIME_VAD_THRESHOLD must be between 0 and 1")
+        return value
 
     @field_validator("openai_hosted_sip_strategy")
     @classmethod
@@ -135,6 +181,8 @@ class GatewaySettings(BaseSettings):
         "echo_suppression_tail_ms",
         "tts_text_flush_timeout_ms",
         "tts_min_flush_chars",
+        "realtime_vad_prefix_padding_ms",
+        "realtime_vad_silence_duration_ms",
     )
     @classmethod
     def validate_positive_runtime_limit(cls, value: int) -> int:

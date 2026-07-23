@@ -7,6 +7,7 @@ import copy
 import json
 import logging
 import re
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -43,6 +44,19 @@ TRANSCRIPT_EVENT_TYPES = frozenset(
     }
 )
 SUMMARY_TOOL_NAMES = frozenset({"transfer_to_human", "end_call"})
+# Delta events are high-frequency and do not justify one PostgreSQL write each.
+# Completed events remain persisted for audit/debugging.
+TRANSIENT_PERSISTENCE_EVENT_TYPES = frozenset(
+    {
+        "response.output_audio.delta",
+        "response.output_text.delta",
+        "response.output_audio_transcript.delta",
+        "conversation.item.input_audio_transcription.delta",
+        "rate_limits.updated",
+    }
+)
+PERSISTENCE_QUEUE_MAX_ITEMS = 2000
+PERSISTENCE_BATCH_MAX_ITEMS = 50
 
 
 class SIPHeader(BaseModel):
@@ -274,6 +288,16 @@ class RealtimeEventProcessor:
         self._server_event_count = 0
         self._client_event_count = 0
         self._last_error: str | None = None
+        self._persistence_queue: asyncio.Queue[
+            tuple[dict[str, Any], bool] | None
+        ] = asyncio.Queue(maxsize=PERSISTENCE_QUEUE_MAX_ITEMS)
+        self._persistence_task: asyncio.Task[None] | None = None
+        self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._dropped_persistence_events = 0
+        self._continuation_after_tools = False
+        self._last_speech_stopped_at: float | None = None
+        self._turn_first_delta_logged = False
+        self._turn_sequence = 0
 
     def _load_processed_tool_call_ids(self) -> set[str]:
         """Load persisted IDs so a reconnect does not repeat side effects."""
@@ -288,23 +312,89 @@ class RealtimeEventProcessor:
             return {str(value) for value in values if value}
 
     def _persist_event(self, event: dict[str, Any], *, client: bool) -> None:
-        """Store the full raw payload for later debugging."""
-        event_type = str(event.get("type", "unknown"))
-        stored_event = privacy_safe_event(
-            event,
-            transcription_enabled=self._transcription_enabled,
-        )
-        if client:
-            event_type = f"client.{event_type}"
+        """Backward-compatible single-event persistence helper."""
+        self._persist_events_batch(((event, client),))
+
+    def _persist_events_batch(
+        self,
+        events: tuple[tuple[dict[str, Any], bool], ...],
+    ) -> None:
+        """Persist multiple events in one transaction outside the hot path."""
         with self._session_factory() as session:
-            session.add(
-                CallEvent(
-                    call_session_id=self._call_session_id,
-                    event_type=event_type,
-                    payload_json=stored_event,
+            for event, client in events:
+                event_type = str(event.get("type", "unknown"))
+                stored_event = privacy_safe_event(
+                    event,
+                    transcription_enabled=self._transcription_enabled,
                 )
-            )
+                if client:
+                    event_type = f"client.{event_type}"
+                session.add(
+                    CallEvent(
+                        call_session_id=self._call_session_id,
+                        event_type=event_type,
+                        payload_json=stored_event,
+                    )
+                )
             session.commit()
+
+    def _track_background_task(self, task: asyncio.Task[Any]) -> None:
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _ensure_persistence_worker(self) -> None:
+        if self._persistence_task is None or self._persistence_task.done():
+            self._persistence_task = asyncio.create_task(self._persistence_worker())
+
+    async def _enqueue_persistence(
+        self,
+        event: dict[str, Any],
+        *,
+        client: bool,
+    ) -> None:
+        event_type = str(event.get("type", "unknown"))
+        if event_type in TRANSIENT_PERSISTENCE_EVENT_TYPES:
+            return
+        await self._ensure_persistence_worker()
+        try:
+            self._persistence_queue.put_nowait((copy.deepcopy(event), client))
+        except asyncio.QueueFull:
+            self._dropped_persistence_events += 1
+            if self._dropped_persistence_events == 1 or self._dropped_persistence_events % 100 == 0:
+                logger.warning(
+                    "realtime_event_persistence_queue_full",
+                    extra={
+                        "call_id": self._openai_call_id,
+                        "dropped": self._dropped_persistence_events,
+                    },
+                )
+
+    async def _persistence_worker(self) -> None:
+        while True:
+            first = await self._persistence_queue.get()
+            if first is None:
+                return
+            batch: list[tuple[dict[str, Any], bool]] = [first]
+            while len(batch) < PERSISTENCE_BATCH_MAX_ITEMS:
+                try:
+                    item = self._persistence_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if item is None:
+                    await asyncio.to_thread(
+                        self._persist_events_batch,
+                        tuple(batch),
+                    )
+                    return
+                batch.append(item)
+            await asyncio.to_thread(self._persist_events_batch, tuple(batch))
+
+    async def _stop_persistence_worker(self) -> None:
+        if self._persistence_task is None:
+            return
+        await self._persistence_queue.put(None)
+        await self._persistence_task
+        self._persistence_task = None
 
     def _persist_runtime_state(self) -> None:
         """Save reconnect-safe counters and processed tool IDs."""
@@ -362,10 +452,10 @@ class RealtimeEventProcessor:
         event: dict[str, Any],
         send_event: SendEvent,
     ) -> None:
-        """Persist and send one client event over the control socket."""
-        await asyncio.to_thread(self._persist_event, event, client=True)
-        self._client_event_count += 1
+        """Send immediately, then persist outside the latency-critical path."""
         await send_event(event)
+        self._client_event_count += 1
+        await self._enqueue_persistence(event, client=True)
 
     async def _handle_function_call(
         self,
@@ -399,11 +489,24 @@ class RealtimeEventProcessor:
                 clinic_id=self._clinic_id,
                 openai_call_id=self._openai_call_id,
             )
+            tool_started = asyncio.get_running_loop().time()
             output = await asyncio.to_thread(
                 execute_realtime_tool,
                 function_call.name,
                 arguments,
                 context,
+            )
+            logger.info(
+                "realtime_tool_execution_ms",
+                extra={
+                    "call_id": self._openai_call_id,
+                    "tool_name": function_call.name,
+                    "tool_call_id": function_call.call_id,
+                    "latency_ms": round(
+                        (asyncio.get_running_loop().time() - tool_started) * 1000,
+                        2,
+                    ),
+                },
             )
 
         await self.send_client_event(
@@ -411,7 +514,9 @@ class RealtimeEventProcessor:
             send_event,
         )
         self._processed_tool_call_ids.add(function_call.call_id)
-        await asyncio.to_thread(self._persist_runtime_state)
+        self._track_background_task(
+            asyncio.create_task(asyncio.to_thread(self._persist_runtime_state))
+        )
         logger.info(
             "realtime_tool_completed",
             extra={
@@ -428,12 +533,60 @@ class RealtimeEventProcessor:
         event: dict[str, Any],
         send_event: SendEvent,
     ) -> None:
-        """Store one server event and react to completed function calls."""
-        await asyncio.to_thread(self._persist_event, event, client=False)
+        """React immediately and persist server events asynchronously."""
         self._server_event_count += 1
+        await self._enqueue_persistence(event, client=False)
         self._capture_transcript(event)
+        event_type = str(event.get("type") or "")
+        if event_type == "input_audio_buffer.speech_started":
+            self._turn_sequence += 1
+            self._turn_first_delta_logged = False
+            logger.info(
+                "realtime_speech_started",
+                extra={"call_id": self._openai_call_id, "turn": self._turn_sequence},
+            )
+        elif event_type == "input_audio_buffer.speech_stopped":
+            self._last_speech_stopped_at = time.perf_counter()
+            logger.info(
+                "realtime_speech_stopped",
+                extra={"call_id": self._openai_call_id, "turn": self._turn_sequence},
+            )
+        elif event_type == "response.created" and self._last_speech_stopped_at is not None:
+            logger.info(
+                "realtime_vad_to_response_created_ms",
+                extra={
+                    "call_id": self._openai_call_id,
+                    "turn": self._turn_sequence,
+                    "latency_ms": round(
+                        (time.perf_counter() - self._last_speech_stopped_at) * 1000,
+                        2,
+                    ),
+                },
+            )
+        elif (
+            event_type in {
+                "response.output_audio.delta",
+                "response.output_text.delta",
+                "response.output_audio_transcript.delta",
+            }
+            and not self._turn_first_delta_logged
+            and self._last_speech_stopped_at is not None
+        ):
+            self._turn_first_delta_logged = True
+            logger.info(
+                "realtime_turn_first_delta_ms",
+                extra={
+                    "call_id": self._openai_call_id,
+                    "turn": self._turn_sequence,
+                    "event_type": event_type,
+                    "latency_ms": round(
+                        (time.perf_counter() - self._last_speech_stopped_at) * 1000,
+                        2,
+                    ),
+                },
+            )
 
-        if event.get("type") == "error":
+        if event_type == "error":
             error = event.get("error")
             self._last_error = (
                 json.dumps(error, ensure_ascii=False, default=str)
@@ -449,15 +602,23 @@ class RealtimeEventProcessor:
             )
 
         function_calls = function_calls_from_event(event)
-        if not function_calls:
-            return
         tool_output_sent = False
         for function_call in function_calls:
             tool_output_sent = (
                 await self._handle_function_call(function_call, send_event)
                 or tool_output_sent
             )
-        if tool_output_sent:
+
+        if tool_output_sent and event_type != FUNCTION_CALL_EVENT:
+            # Arguments can finish before the response that emitted the tool.
+            # Creating a continuation here causes active-response conflicts.
+            self._continuation_after_tools = True
+            return
+
+        if tool_output_sent or (
+            event_type == FUNCTION_CALL_EVENT and self._continuation_after_tools
+        ):
+            self._continuation_after_tools = False
             await self.send_client_event({"type": "response.create"}, send_event)
 
     def _finalize(
@@ -511,5 +672,8 @@ class RealtimeEventProcessor:
         status: CallStatus,
         summary: str | None = None,
     ) -> None:
-        """Move final blocking persistence away from the event loop."""
+        """Flush deferred persistence, then write the final call state."""
+        await self._stop_persistence_worker()
+        if self._background_tasks:
+            await asyncio.gather(*tuple(self._background_tasks), return_exceptions=True)
         await asyncio.to_thread(self._finalize, status=status, summary=summary)
