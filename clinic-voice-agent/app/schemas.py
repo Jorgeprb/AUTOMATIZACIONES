@@ -295,6 +295,7 @@ class AgentCreateAppointmentRequest(BaseModel):
     start_at: AwareDatetime
     end_at: AwareDatetime
     call_session_id: uuid.UUID | None = None
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=200)
 
     @field_validator("reason")
     @classmethod

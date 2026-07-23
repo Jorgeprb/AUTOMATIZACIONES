@@ -316,9 +316,9 @@ export const assistantConfigDefaults: AssistantConfigFormValues = {
   human_transfer_message:
     "Le paso con una persona del equipo si está disponible.",
   human_transfer_rules:
-    "Transfiere si el usuario lo pide, si hay queja o si la peticiÃ³n queda fuera del alcance.",
+    "Transfiere si el usuario lo pide, si hay queja o si la petición queda fuera del alcance.",
   commercial_call_message:
-    "Gracias, pero este nÃºmero es para pacientes y gestiÃ³n de citas. No atendemos llamadas comerciales por esta vÃ­a.",
+    "Gracias, pero este número es para pacientes y gestión de citas. No atendemos llamadas comerciales por esta vía.",
   conversation_extra_rules:
     "No repitas preguntas ya respondidas. Usa los horarios propuestos para entender 'la primera', 'esa' o 'a las 9'.",
   closing_message: "Gracias por llamar. Hasta luego.",

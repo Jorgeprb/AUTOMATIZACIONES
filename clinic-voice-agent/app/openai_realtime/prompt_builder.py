@@ -440,13 +440,13 @@ def build_realtime_instructions(context: ClinicContext) -> str:
     )
     human_transfer_rules = (
         _clean(config.human_transfer_rules)
-        or "Transfiere si el usuario lo pide o si la peticiÃ³n queda fuera de alcance."
+        or "Transfiere si el usuario lo pide o si la petición queda fuera de alcance."
     )
     commercial_call_message = (
         _clean(config.commercial_call_message)
         or (
-            "Gracias, pero este nÃºmero es para pacientes y gestiÃ³n de citas. "
-            "No podemos atender llamadas comerciales por esta vÃ­a."
+            "Gracias, pero este número es para pacientes y gestión de citas. "
+            "No podemos atender llamadas comerciales por esta vía."
         )
     )
     additional_instructions = _clean(config.additional_instructions)
@@ -552,23 +552,23 @@ sin vincular nunca equivale a disponibilidad.
 
 Estilo conversacional: {conversation_policy.style}.
 Nivel de iniciativa: {conversation_policy.initiative_level}.
-MÃ¡ximo de preguntas seguidas antes de resumir o proponer siguiente paso:
+Máximo de preguntas seguidas antes de resumir o proponer siguiente paso:
 {conversation_policy.max_consecutive_questions}.
-Reservas permitidas: {"sÃ­" if conversation_policy.allow_bookings else "no"}.
-Cancelaciones permitidas: {"sÃ­" if conversation_policy.allow_cancellations else "no"}.
-Cambios de cita permitidos: {"sÃ­" if conversation_policy.allow_reschedules else "no"}.
-Responder precios: {"sÃ­" if conversation_policy.allow_price_answers else "no"}.
+Reservas permitidas: {"sí" if conversation_policy.allow_bookings else "no"}.
+Cancelaciones permitidas: {"sí" if conversation_policy.allow_cancellations else "no"}.
+Cambios de cita permitidos: {"sí" if conversation_policy.allow_reschedules else "no"}.
+Responder precios: {"sí" if conversation_policy.allow_price_answers else "no"}.
 Pedir servicio como dato obligatorio:
-{"sÃ­" if conversation_policy.ask_service else "no"}.
+{"sí" if conversation_policy.ask_service else "no"}.
 Llamadas comerciales/spam: {conversation_policy.commercial_call_handling}.
 Mensaje para llamada comercial/spam: {commercial_call_message}
-CuÃ¡ndo transferir a humano: {human_transfer_rules}
-Reglas adicionales de conversaciÃ³n: {conversation_extra_rules or "No configuradas."}
-MantÃ©n estado interno con intent, service, worker, preferred_date/time,
+Cuándo transferir a humano: {human_transfer_rules}
+Reglas adicionales de conversación: {conversation_extra_rules or "No configuradas."}
+Mantén estado interno con intent, service, worker, preferred_date/time,
 pending_slots, selected_slot, patient_name, patient_phone, appointment_id,
 awaiting_confirmation y last_user_acceptance. No repitas preguntas si el dato
-ya estÃ¡ dado. Usa pending_slots para interpretar "a las 9", "la primera",
-"esa" o "me va bien". Gestiona naturalmente informaciÃ³n, precios, servicios,
+ya está dado. Usa pending_slots para interpretar "a las 9", "la primera",
+"esa" o "me va bien". Gestiona naturalmente información, precios, servicios,
 FAQs, reservas, cancelaciones, cambios, transferencia, spam, urgencias y cierre.
 
 {_clean(context.booking_rules.booking_policy)}

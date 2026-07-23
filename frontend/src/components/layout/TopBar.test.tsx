@@ -1,36 +1,32 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TopBar } from "@/components/layout/TopBar";
-import { isAuthenticated, loginWithPassword, logout } from "@/lib/auth";
+import { logout } from "@/lib/auth";
 
+vi.mock("@/lib/auth", () => ({ logout: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/hooks/useActiveClinic", () => ({
   useActiveClinic: () => ({
-    clinics: [],
-    activeClinic: null,
-    activeClinicId: null,
-    setActiveClinicId: () => undefined,
-    isLoading: false,
+    clinics: [], activeClinic: null, activeClinicId: null,
+    setActiveClinicId: () => undefined, isLoading: false,
   }),
 }));
 
 describe("TopBar", () => {
-  beforeEach(() => logout());
+  beforeEach(() => vi.clearAllMocks());
 
-  it("closes the local session from the layout", async () => {
+  it("revokes the server session from the layout", async () => {
     const user = userEvent.setup();
-    expect(loginWithPassword("admin", "Tatodobajocontrol")).toBe(true);
-
+    const client = new QueryClient();
     render(
-      <MemoryRouter>
-        <TopBar onOpenMenu={() => undefined} />
-      </MemoryRouter>,
+      <QueryClientProvider client={client}>
+        <MemoryRouter><TopBar onOpenMenu={() => undefined} /></MemoryRouter>
+      </QueryClientProvider>,
     );
-
     await user.click(screen.getByRole("button", { name: /cerrar sesión/i }));
-
-    expect(isAuthenticated()).toBe(false);
+    expect(logout).toHaveBeenCalledOnce();
   });
 });

@@ -319,3 +319,27 @@ def test_agent_routes_are_registered() -> None:
     assert "/api/agent/create_appointment" in paths
     assert "/api/agent/cancel_appointment" in paths
     assert "/api/agent/get_clinic_info" in paths
+
+
+def test_create_appointment_idempotency_returns_existing_without_second_google_event(
+    db_session: Session,
+) -> None:
+    clinic, worker, service = _domain(db_session)
+    client = _calendar_client()
+    kwargs = dict(
+        clinic_id=clinic.id,
+        worker_id=worker.id,
+        service_id=service.id,
+        patient_name="Paciente Uno",
+        patient_phone="+34 600 000 001",
+        reason="Revisión general",
+        start_at=START_AT,
+        end_at=END_AT,
+        call_session_id=None,
+        idempotency_key="test-call:tool-call:create-appointment",
+    )
+    first = create_appointment_transactional(db_session, client, **kwargs)
+    second = create_appointment_transactional(db_session, client, **kwargs)
+    assert second.id == first.id
+    assert second.patient_phone == "+34600000001"
+    assert client.events.return_value.insert.call_count == 1

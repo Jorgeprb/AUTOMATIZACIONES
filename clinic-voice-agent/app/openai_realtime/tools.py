@@ -1100,6 +1100,11 @@ def _execute_tool(
                 start_at=create_payload.start_at,
                 end_at=create_payload.end_at,
                 call_session_id=context.call_session_id,
+                idempotency_key=(
+                    create_payload.idempotency_key
+                    or f"voice:{context.call_session_id}:{create_payload.worker_id}:"
+                    f"{create_payload.start_at.isoformat()}"
+                ),
             )
             appointment_response = AgentAppointmentConfirmation(
                 status="confirmed",

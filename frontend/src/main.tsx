@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 import { Toaster } from "sonner";
 
 import App from "@/App";
+import { AppErrorBoundary } from "@/components/common/AppErrorBoundary";
 import { ActiveClinicProvider } from "@/hooks/useActiveClinic";
 import "@/styles/globals.css";
 
@@ -25,10 +26,12 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <ActiveClinicProvider>
-          <App />
-          <Toaster richColors position="top-right" />
-        </ActiveClinicProvider>
+        <AppErrorBoundary>
+          <ActiveClinicProvider>
+            <App />
+            <Toaster richColors position="top-right" />
+          </ActiveClinicProvider>
+        </AppErrorBoundary>
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,

@@ -8,7 +8,7 @@ import logging
 import time
 import uuid
 import zlib
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 
 from sip_gateway.backend import BackendClient, BackendRequestError
 from sip_gateway.config import GatewaySettings
@@ -33,18 +33,21 @@ def openai_hosted_sip_target(
 
 
 class SlidingWindowRateLimiter:
-    """Simple per-IP sliding-window limiter."""
+    """Bounded per-IP sliding-window limiter for new INVITE transactions."""
 
-    def __init__(self, limit_per_minute: int) -> None:
+    def __init__(self, limit_per_minute: int, *, max_keys: int = 10000) -> None:
         self.limit = limit_per_minute
-        self._events: dict[str, deque[float]] = defaultdict(deque)
+        self.max_keys = max_keys
+        self._events: OrderedDict[str, deque[float]] = OrderedDict()
 
     def allow(self, key: str) -> bool:
-        """Return whether one event is allowed."""
         now = time.monotonic()
-        events = self._events[key]
+        events = self._events.setdefault(key, deque())
+        self._events.move_to_end(key)
         while events and now - events[0] > 60:
             events.popleft()
+        while len(self._events) > self.max_keys:
+            self._events.popitem(last=False)
         if len(events) >= self.limit:
             return False
         events.append(now)
@@ -62,9 +65,8 @@ class SipProtocol(asyncio.DatagramProtocol):
         self.gateway.transport = transport  # type: ignore[assignment]
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        """Dispatch datagram asynchronously."""
-        task = asyncio.create_task(self.gateway.handle_datagram(data, addr))
-        self.gateway.track_task(task)
+        """Queue a datagram without creating an unbounded task per packet."""
+        self.gateway.enqueue_datagram(data, addr)
 
 
 class SipGateway:
@@ -75,12 +77,18 @@ class SipGateway:
         self.backend = BackendClient(settings)
         self.port_pool = RTPPortPool(settings.rtp_port_min, settings.rtp_port_max)
         self.rate_limiter = SlidingWindowRateLimiter(
-            settings.invite_rate_limit_per_minute
+            settings.invite_rate_limit_per_minute,
+            max_keys=settings.rate_limiter_max_keys,
         )
         self.transport: asyncio.DatagramTransport | None = None
         self.calls_by_id: dict[str, GatewayCallSession] = {}
         self.calls_by_branch: dict[str, GatewayCallSession] = {}
         self._tasks: set[asyncio.Task[None]] = set()
+        self._datagram_queue: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(
+            maxsize=settings.sip_datagram_queue_size
+        )
+        self._workers: list[asyncio.Task[None]] = []
+        self._accepting = True
         self._stopped = asyncio.Event()
         self._health_server: asyncio.Server | None = None
         self.invite_failures = 0
@@ -90,6 +98,24 @@ class SipGateway:
         """Keep background datagram tasks referenced until done."""
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    def enqueue_datagram(self, data: bytes, addr: tuple[str, int]) -> None:
+        if not self._accepting:
+            return
+        try:
+            self._datagram_queue.put_nowait((data, addr))
+        except asyncio.QueueFull:
+            logger.warning("sip_datagram_queue_full", extra={"source_ip": addr[0]})
+
+    async def _datagram_worker(self) -> None:
+        while True:
+            data, addr = await self._datagram_queue.get()
+            try:
+                await self.handle_datagram(data, addr)
+            except Exception:
+                logger.exception("sip_datagram_handler_failed", extra={"source_ip": addr[0]})
+            finally:
+                self._datagram_queue.task_done()
 
     async def serve_forever(self) -> None:
         """Bind SIP UDP socket and serve forever."""
@@ -103,6 +129,10 @@ class SipGateway:
             host=self.settings.health_bind_host,
             port=self.settings.health_port,
         )
+        self._workers = [
+            asyncio.create_task(self._datagram_worker(), name=f"sip-worker-{index}")
+            for index in range(self.settings.sip_worker_count)
+        ]
         logger.info(
             "sip_gateway_started",
             extra={
@@ -116,9 +146,14 @@ class SipGateway:
         await self._stopped.wait()
 
     async def shutdown(self) -> None:
-        """Close all calls and SIP transport."""
+        """Stop accepting new calls, drain resources, and close pools."""
+        self._accepting = False
         for call in list(self.calls_by_id.values()):
-            await call.close("gateway_shutdown")
+            await self._remove_call(call, "gateway_shutdown")
+        for worker in self._workers:
+            worker.cancel()
+        await asyncio.gather(*self._workers, return_exceptions=True)
+        await self.backend.close()
         if self.transport is not None:
             self.transport.close()
         if self._health_server is not None:
@@ -142,7 +177,9 @@ class SipGateway:
             if call.stats.first_audio_latency_ms is not None
         ]
         return {
-            "ok": True,
+            "ok": self._accepting,
+            "accepting_new_calls": self._accepting,
+            "sip_datagram_queue_depth": self._datagram_queue.qsize(),
             "active_calls": len(active_calls),
             "rtp_active": sum(call.rtp_transport is not None for call in active_calls),
             "sessions_orphaned": sum(
@@ -163,6 +200,28 @@ class SipGateway:
             "health_port": self.settings.health_port,
         }
 
+
+    def prometheus_metrics(self) -> str:
+        """Render dependency-free OpenMetrics counters and gauges."""
+        snapshot = self.metrics_snapshot()
+        lines = [
+            "# HELP sip_gateway_up Whether the gateway is accepting new calls.",
+            "# TYPE sip_gateway_up gauge",
+            f"sip_gateway_up {1 if snapshot['ok'] else 0}",
+            "# TYPE sip_gateway_active_calls gauge",
+            f"sip_gateway_active_calls {snapshot['active_calls']}",
+            "# TYPE sip_gateway_sip_datagram_queue_depth gauge",
+            f"sip_gateway_sip_datagram_queue_depth {snapshot['sip_datagram_queue_depth']}",
+            "# TYPE sip_gateway_rtp_ports_available gauge",
+            f"sip_gateway_rtp_ports_available {snapshot['rtp_ports_available']}",
+            "# TYPE sip_gateway_invite_failures_total counter",
+            f"sip_gateway_invite_failures_total {snapshot['invite_failures']}",
+            "# TYPE sip_gateway_provider_errors_total counter",
+            f"sip_gateway_provider_errors_total {snapshot['provider_errors']}",
+            "# EOF",
+        ]
+        return "\n".join(lines) + "\n"
+
     async def _handle_health_http(
         self,
         reader: asyncio.StreamReader,
@@ -177,17 +236,28 @@ class SipGateway:
                 line = await reader.readline()
                 if line in {b"\r\n", b"\n", b""}:
                     break
-            if path in {"/health/live", "/health/ready", "/metrics"}:
-                body = json.dumps(self.metrics_snapshot(), separators=(",", ":"))
+            if path == "/metrics":
+                body = self.prometheus_metrics()
                 status = "200 OK"
+                content_type = "application/openmetrics-text; version=1.0.0; charset=utf-8"
+            elif path in {"/health/live", "/health/ready"}:
+                snapshot = self.metrics_snapshot()
+                body = json.dumps(snapshot, separators=(",", ":"))
+                status = (
+                    "503 Service Unavailable"
+                    if path == "/health/ready" and not snapshot["ok"]
+                    else "200 OK"
+                )
+                content_type = "application/json"
             else:
                 body = json.dumps({"ok": False, "error": "not_found"})
                 status = "404 Not Found"
+                content_type = "application/json"
             payload = body.encode("utf-8")
             writer.write(
                 (
                     f"HTTP/1.1 {status}\r\n"
-                    "Content-Type: application/json\r\n"
+                    f"Content-Type: {content_type}\r\n"
                     f"Content-Length: {len(payload)}\r\n"
                     "Connection: close\r\n"
                     "\r\n"
@@ -202,11 +272,8 @@ class SipGateway:
     async def handle_datagram(self, data: bytes, addr: tuple[str, int]) -> None:
         """Parse and route one SIP UDP datagram."""
         ip = addr[0]
-        if self.settings.allowed_ip_set and ip not in self.settings.allowed_ip_set:
+        if not self.settings.sip_ip_allowed(ip):
             logger.warning("sip_rejected_ip", extra={"source_ip": ip})
-            return
-        if not self.rate_limiter.allow(ip):
-            logger.warning("sip_rate_limited", extra={"source_ip": ip})
             return
         try:
             message = SipMessage.parse(data)
@@ -217,9 +284,16 @@ class SipGateway:
             return
         method = message.method
         if method == "INVITE":
+            if not self._accepting:
+                self._send(message, 503, "Service Unavailable", addr, extra_headers={"Retry-After": "30"})
+                return
+            if not self.rate_limiter.allow(ip):
+                logger.warning("sip_rate_limited", extra={"source_ip": ip})
+                self._send(message, 503, "Service Unavailable", addr, extra_headers={"Retry-After": "60"})
+                return
             await self._handle_invite(message, addr)
         elif method == "ACK":
-            await self._handle_ack(message)
+            await self._handle_ack(message, addr)
         elif method in {"BYE", "CANCEL"}:
             await self._handle_teardown(message, method, addr)
         elif method == "OPTIONS":
@@ -242,6 +316,17 @@ class SipGateway:
         This prevents OpenAI Hosted SIP attempts from consuming local RTP ports
         and prevents leaked ports when prepare() fails after lease().
         """
+        existing = self.calls_by_id.get(message.call_id) or self.calls_by_branch.get(message.branch)
+        if existing is not None:
+            if existing.sip_addr != addr:
+                logger.warning("sip_dialog_source_mismatch", extra={"call_id": message.call_id, "source_ip": addr[0]})
+                return
+            if existing.last_invite_response is not None and self.transport is not None:
+                self.transport.sendto(existing.last_invite_response, addr)
+            else:
+                self._send(message, 100, "Trying", addr)
+            logger.info("sip_invite_retransmission", extra={"call_id": message.call_id})
+            return
         self._send(message, 100, "Trying", addr)
 
         caller = message.caller
@@ -428,7 +513,7 @@ class SipGateway:
             extra={"call_id": provider_call_id, "clinic_id": context.clinic_id},
         )
 
-        if len(self.calls_by_id) >= self.settings.max_concurrent_calls:
+        if sum(not call._closed.is_set() for call in self.calls_by_id.values()) >= self.settings.max_concurrent_calls:
             self._send(message, 486, "Busy Here", addr)
             return
 
@@ -448,6 +533,7 @@ class SipGateway:
                 offer=offer,
                 payload_type=payload_type,
                 rtp_port=rtp_port,
+                on_closed=self._on_call_closed,
             )
             # Avoid resolving /api/internal/voice/context twice. prepare() will
             # bind RTP and reuse this context when present.
@@ -485,7 +571,7 @@ class SipGateway:
             payload_type=payload_type,
             session_id=zlib.crc32(call.call_id.encode("utf-8")),
         )
-        self._send(
+        call.last_invite_response = self._send(
             message,
             200,
             "OK",
@@ -494,10 +580,14 @@ class SipGateway:
             to_tag=call.local_tag,
             contact=f"<sip:bot@{self.settings.advertised_sip_host}:{self.settings.sip_port};transport=udp>",
         )
+        self.track_task(asyncio.create_task(self._ack_timeout(call)))
 
-    async def _handle_ack(self, message: SipMessage) -> None:
+    async def _handle_ack(self, message: SipMessage, addr: tuple[str, int]) -> None:
         call = self.calls_by_id.get(message.call_id)
         if call is None:
+            return
+        if call.sip_addr != addr or (message.to_tag and message.to_tag != call.local_tag):
+            logger.warning("sip_ack_dialog_mismatch", extra={"call_id": message.call_id, "source_ip": addr[0]})
             return
         try:
             await call.start_media()
@@ -512,9 +602,27 @@ class SipGateway:
         addr: tuple[str, int],
     ) -> None:
         call = self.calls_by_id.get(message.call_id)
-        if call is not None:
-            await self._remove_call(call, method.lower())
+        if call is not None and call.sip_addr != addr:
+            logger.warning("sip_teardown_dialog_mismatch", extra={"call_id": message.call_id, "source_ip": addr[0]})
+            self._send(message, 481, "Call/Transaction Does Not Exist", addr)
+            return
         self._send(message, 200, "OK", addr)
+        if call is not None:
+            if method == "CANCEL" and not call.media_started:
+                self._send(call.invite, 487, "Request Terminated", call.sip_addr, to_tag=call.local_tag)
+            await self._remove_call(call, method.lower())
+
+    async def _ack_timeout(self, call: GatewayCallSession) -> None:
+        await asyncio.sleep(self.settings.ack_timeout_seconds)
+        if not call.media_started and not call._closed.is_set():
+            logger.warning("sip_ack_timeout", extra={"call_id": call.call_id})
+            await self._remove_call(call, "ack_timeout")
+
+    async def _on_call_closed(self, call: GatewayCallSession, reason: str) -> None:
+        del reason
+        self.calls_by_id.pop(call.call_id, None)
+        if call.invite.branch:
+            self.calls_by_branch.pop(call.invite.branch, None)
 
     async def _remove_call(self, call: GatewayCallSession, reason: str) -> None:
         self.calls_by_id.pop(call.call_id, None)
@@ -533,9 +641,9 @@ class SipGateway:
         to_tag: str | None = None,
         contact: str | None = None,
         extra_headers: dict[str, str] | None = None,
-    ) -> None:
+    ) -> bytes | None:
         if self.transport is None or addr[1] == 0:
-            return
+            return None
         response = build_response(
             request,
             status_code,
@@ -546,6 +654,7 @@ class SipGateway:
             extra_headers=extra_headers,
         )
         self.transport.sendto(response, addr)
+        return response
 
     @staticmethod
     def _allow() -> str:

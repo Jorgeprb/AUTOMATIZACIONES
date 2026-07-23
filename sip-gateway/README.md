@@ -48,7 +48,7 @@ tráfico SIP desde cualquier IP; en producción conviene limitarlo a VoIP Studio
 Abre en firewall/NAT del VPS:
 
 - UDP `6060` para SIP.
-- UDP `10000-20000` para RTP, o el rango que configures.
+- UDP `10000-10100` para RTP por defecto, o el rango mínimo que configures.
 
 En VoIP Studio apunta el forwarding a:
 

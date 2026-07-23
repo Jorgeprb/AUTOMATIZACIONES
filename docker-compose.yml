@@ -67,7 +67,7 @@ services:
       - ${ROOT_ENV_FILE:-.env}
     environment:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
-      VITE_ADMIN_API_KEY: ${VITE_ADMIN_API_KEY:-development-only-admin-api-key}
+      VITE_API_TIMEOUT_MS: ${VITE_API_TIMEOUT_MS:-20000}
       VITE_ENABLE_DEV_FALLBACKS: "false"
     command:
       - npm

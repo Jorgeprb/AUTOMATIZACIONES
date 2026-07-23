@@ -66,8 +66,9 @@ docker compose --env-file .env.production -f docker-compose.prod.yml ps
 
 1. En OpenAI crea el webhook:
    `https://voice.example.com/webhooks/openai/realtime`.
-2. Configura `OPENAI_PROJECT_ID` y reenvía VoIP Studio a:
-   `sip:${OPENAI_PROJECT_ID}@sip.api.openai.com;transport=tls`.
+2. Configura `OPENAI_PROJECT_ID`. VoIP Studio debe permanecer siempre en:
+   `sip:bot@sip.autogal.es:6060;transport=udp`.
+   El edge SIP del VPS selecciona la ruta interna según la clínica.
 3. En Google Cloud usa como redirect URI:
    `https://voice.example.com/auth/google/callback`.
 4. Abre el panel en `https://admin.voice.example.com`.
@@ -75,8 +76,9 @@ docker compose --env-file .env.production -f docker-compose.prod.yml ps
 6. Completa la consola simulada.
 7. Haz una llamada real y revisa el dashboard y la checklist.
 
-El panel MVP incluye `ADMIN_API_KEY` en el bundle del navegador. Debe
-reemplazarse por autenticación de usuario antes de abrir el panel a terceros.
+El panel utiliza autenticación persistente del backend, cookies HttpOnly,
+CSRF, RBAC por clínica y auditoría. `ADMIN_API_KEY` queda reservada para
+integraciones servidor-servidor y no llega al navegador.
 
 Si Google OAuth está mal configurado, el panel no lanza OAuth: muestra el
 diagnóstico del backend y la variable exacta que falta o está mal, incluida una

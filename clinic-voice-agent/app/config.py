@@ -59,11 +59,28 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     internal_api_key: SecretStr | None = None
     admin_api_key: SecretStr | None = None
+    admin_bootstrap_username: str = "admin"
+    admin_bootstrap_password: SecretStr = SecretStr("Tatodobajocontrol")
+    admin_bootstrap_force_password_change: bool = False
+    admin_session_cookie_name: str = "autogal_admin_session"
+    admin_csrf_cookie_name: str = "autogal_admin_csrf"
+    admin_session_ttl_hours: int = 12
+    admin_login_max_attempts: int = 5
+    admin_login_lock_minutes: int = 15
+    admin_secure_cookies: bool = False
+    retention_job_interval_seconds: int = 86_400
+    database_pool_size: int = 10
+    database_max_overflow: int = 20
+    database_pool_timeout_seconds: int = 30
+    database_pool_recycle_seconds: int = 1_800
+    database_statement_timeout_ms: int = 30_000
     enable_call_transcription: bool = False
     public_rate_limit_per_minute: int = 60
     webhook_rate_limit_per_minute: int = 120
+    rate_limit_max_buckets: int = 10_000
     max_webhook_body_bytes: int = 1_000_000
     cors_origins: str = "http://localhost:5173"
+    trusted_proxy_ips: str = "127.0.0.1,::1"
 
     openai_api_key: SecretStr
     openai_webhook_secret: SecretStr
@@ -112,6 +129,8 @@ class Settings(BaseSettings):
             raise ValueError("INTERNAL_API_KEY is required in production")
         if self.admin_api_key is None:
             raise ValueError("ADMIN_API_KEY is required in production")
+        if len(self.admin_bootstrap_password.get_secret_value()) < 10:
+            raise ValueError("ADMIN_BOOTSTRAP_PASSWORD must contain at least 10 characters")
         internal_key = self.internal_api_key.get_secret_value()
         admin_key = self.admin_api_key.get_secret_value()
         if len(internal_key) < 32:
@@ -184,12 +203,42 @@ class Settings(BaseSettings):
     @field_validator(
         "public_rate_limit_per_minute",
         "webhook_rate_limit_per_minute",
+        "rate_limit_max_buckets",
     )
     @classmethod
     def validate_rate_limit(cls, value: int) -> int:
         """Require useful positive rate limits."""
         if not 1 <= value <= 10_000:
             raise ValueError("must be between 1 and 10000")
+        return value
+
+    @field_validator("admin_login_max_attempts", "admin_login_lock_minutes")
+    @classmethod
+    def validate_admin_login_limits(cls, value: int) -> int:
+        if not 1 <= value <= 1440:
+            raise ValueError("must be between 1 and 1440")
+        return value
+
+    @field_validator("admin_session_ttl_hours")
+    @classmethod
+    def validate_admin_session_ttl(cls, value: int) -> int:
+        """Keep browser sessions bounded and revocable."""
+        if not 1 <= value <= 168:
+            raise ValueError("must be between 1 and 168 hours")
+        return value
+
+    @field_validator(
+        "retention_job_interval_seconds",
+        "database_pool_size",
+        "database_max_overflow",
+        "database_pool_timeout_seconds",
+        "database_pool_recycle_seconds",
+        "database_statement_timeout_ms",
+    )
+    @classmethod
+    def validate_positive_operational_setting(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("must be non-negative")
         return value
 
     @field_validator("max_webhook_body_bytes")

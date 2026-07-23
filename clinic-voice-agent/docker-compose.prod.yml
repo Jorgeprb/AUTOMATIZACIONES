@@ -5,6 +5,16 @@ x-logging: &default-logging
     max-file: "5"
 
 services:
+  migrate:
+    build:
+      context: .
+      args:
+        INSTALL_DEV: "false"
+    env_file:
+      - ${PRODUCTION_ENV_FILE:-.env.production}
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
   app:
     build:
       context: .
@@ -32,6 +42,8 @@ services:
     tmpfs:
       - /tmp:size=64m,mode=1777
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     healthcheck:
@@ -76,10 +88,9 @@ services:
       target: production
       args:
         VITE_API_BASE_URL: https://${APP_DOMAIN}
-        VITE_ADMIN_API_KEY: ${ADMIN_API_KEY}
         VITE_ENABLE_DEV_FALLBACKS: "false"
     expose:
-      - "80"
+      - "8080"
     restart: unless-stopped
     depends_on:
       app:
@@ -89,7 +100,7 @@ services:
         - CMD
         - wget
         - -qO-
-        - http://127.0.0.1/
+        - http://127.0.0.1:8080/
       interval: 30s
       timeout: 5s
       retries: 3

@@ -8,8 +8,11 @@
 		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
-		Referrer-Policy "no-referrer"
-		Permissions-Policy "microphone=(self), camera=(), geolocation=()"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "microphone=(self), camera=(), geolocation=(), payment=()"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://voice.autogal.es wss://voice.autogal.es; media-src 'self' blob:; upgrade-insecure-requests"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-site"
 		-Server
 	}
 }
@@ -17,16 +20,13 @@
 {$APP_DOMAIN} {
 	encode zstd gzip
 	import secure_headers
-
 	log {
 		output stdout
 		format json
 	}
-
 	handle /api/admin* {
 		respond "not found" 404
 	}
-
 	handle {
 		reverse_proxy api:10000 {
 			health_uri /health/ready
@@ -39,17 +39,9 @@
 {$APP_ADMIN_DOMAIN} {
 	encode zstd gzip
 	import secure_headers
-
 	log {
 		output stdout
 		format json
-	}
-
-	@adminApi path /api/admin*
-	handle @adminApi {
-		reverse_proxy api:10000 {
-			header_up X-Admin-API-Key {$ADMIN_API_KEY}
-		}
 	}
 
 	@api path /api/* /auth/* /health/*
@@ -57,7 +49,10 @@
 		reverse_proxy api:10000
 	}
 
+	@immutable path_regexp immutable \.(?:js|css|woff2|png|jpg|jpeg|svg|webp)$
+	header @immutable Cache-Control "public, max-age=31536000, immutable"
+
 	handle {
-		reverse_proxy frontend:80
+		reverse_proxy frontend:8080
 	}
 }

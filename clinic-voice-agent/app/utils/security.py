@@ -1,20 +1,28 @@
-"""Security primitives shared by external integrations."""
+"""Security primitives shared by browser and internal integrations."""
 
 from __future__ import annotations
 
 import hmac
+import uuid
 from typing import Annotated
 
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import Depends, Header, HTTPException, Security, status
+from fastapi import Depends, Header, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader
+from sqlalchemy.orm import Session
 
+from app.auth import AdminPrincipal, principal_from_session, validate_csrf
 from app.config import Settings, get_settings
+from app.db import get_db
+from app.models import AdminRole
 
 admin_api_key_header = APIKeyHeader(
     name="X-Admin-API-Key",
     scheme_name="AdminApiKey",
-    description="API key used by the multi-clinic administration backend.",
+    description=(
+        "Server-to-server administrative API key. Browser clients use the "
+        "HttpOnly administrator session cookie instead."
+    ),
     auto_error=False,
 )
 
@@ -30,11 +38,7 @@ class TokenCipher:
         return self._fernet.encrypt(plaintext.encode("utf-8")).decode("utf-8")
 
     def decrypt(self, ciphertext: str, *, ttl_seconds: int | None = None) -> str:
-        """Decrypt a stored token.
-
-        `InvalidToken` is intentionally allowed to propagate so callers cannot
-        mistake corrupt or incorrectly keyed data for a valid credential.
-        """
+        """Decrypt a stored token."""
         try:
             return self._fernet.decrypt(
                 ciphertext.encode("utf-8"),
@@ -51,7 +55,7 @@ def require_internal_api_key(
         Header(alias="X-Internal-API-Key"),
     ] = None,
 ) -> None:
-    """Protect administrative and agent-tool endpoints."""
+    """Protect private gateway, agent-tool, and Calendar endpoints."""
     configured = settings.internal_api_key
     if configured is None:
         if settings.app_environment in {"development", "test"}:
@@ -69,24 +73,78 @@ def require_internal_api_key(
         )
 
 
-def require_admin_api_key(
-    settings: Annotated[Settings, Depends(get_settings)],
-    supplied_key: Annotated[
-        str | None,
-        Security(admin_api_key_header),
-    ] = None,
-) -> None:
-    """Protect every multi-clinic administration endpoint."""
-    configured = settings.admin_api_key
-    if configured is None:
+def _api_key_principal() -> AdminPrincipal:
+    return AdminPrincipal(
+        user_id=None,
+        username="server-api-key",
+        role=AdminRole.SUPER_ADMIN,
+        clinic_ids=frozenset(),
+        clinic_roles={},
+        via_api_key=True,
+    )
+
+
+def _enforce_principal_permissions(request: Request, principal: AdminPrincipal) -> None:
+    unsafe = request.method.upper() not in {"GET", "HEAD", "OPTIONS"}
+    raw_clinic_id = request.path_params.get("clinic_id")
+    if unsafe and not principal.can_write:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Admin API authentication is not configured.",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This administrator has read-only access.",
         )
-    expected = configured.get_secret_value()
-    if supplied_key is None or not hmac.compare_digest(supplied_key, expected):
+    if raw_clinic_id and not principal.is_super_admin:
+        try:
+            clinic_id = uuid.UUID(str(raw_clinic_id))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Clinic not found.",
+            ) from exc
+        if not principal.can_access_clinic(clinic_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this clinic.",
+            )
+        if unsafe and not principal.can_write_clinic(clinic_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You have read-only access to this clinic.",
+            )
+
+
+def require_admin_access(
+    request: Request,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    supplied_key: Annotated[str | None, Security(admin_api_key_header)] = None,
+) -> AdminPrincipal:
+    """Authenticate browser sessions, retaining API-key support for automation."""
+    configured = settings.admin_api_key
+    if supplied_key and configured is not None and hmac.compare_digest(
+        supplied_key,
+        configured.get_secret_value(),
+    ):
+        principal = _api_key_principal()
+        request.state.admin_principal = principal
+        return principal
+
+    raw_token = request.cookies.get(settings.admin_session_cookie_name)
+    resolved = principal_from_session(session, raw_token=raw_token or "") if raw_token else None
+    if resolved is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing admin API key.",
-            headers={"WWW-Authenticate": "ApiKey"},
+            detail="Authentication required.",
+            headers={"WWW-Authenticate": "Session"},
         )
+    principal, record = resolved
+    validate_csrf(request, record, settings)
+    _enforce_principal_permissions(request, principal)
+    request.state.admin_principal = principal
+    return principal
+
+
+def require_admin_api_key(
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
+) -> None:
+    """Backward-compatible dependency name used by existing routes/tests."""
+    _ = principal

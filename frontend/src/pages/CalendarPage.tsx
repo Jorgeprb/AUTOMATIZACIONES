@@ -329,7 +329,7 @@ export function CalendarPage() {
               disabled={!canStartOAuth || startOAuthMutation.isPending}
               onClick={() => {
                 if (!canStartOAuth) {
-                  toast.error("Corrige la configuraciÃ³n OAuth antes de conectar.");
+                  toast.error("Corrige la configuración OAuth antes de conectar.");
                   return;
                 }
                 startOAuthMutation.mutate();

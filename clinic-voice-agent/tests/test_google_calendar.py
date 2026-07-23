@@ -520,7 +520,7 @@ async def test_google_oauth_callback_uses_configured_public_redirect_uri(
     """Callback token exchange should use GOOGLE_REDIRECT_URI, not local HTTP."""
     settings = _valid_oauth_settings()
     clinic = Clinic(
-        name="ClÃ­nica OAuth Callback URI",
+        name="Clínica OAuth Callback URI",
         timezone="Europe/Madrid",
         phone_number="+34910000192",
     )
@@ -568,7 +568,7 @@ async def test_google_oauth_callback_google_failure_redirects_with_reason(
     """Google token exchange failures should redirect instead of returning 500."""
     settings = _valid_oauth_settings()
     clinic = Clinic(
-        name="ClÃ­nica OAuth Google Fail",
+        name="Clínica OAuth Google Fail",
         timezone="Europe/Madrid",
         phone_number="+34910000193",
     )
@@ -606,7 +606,7 @@ async def test_google_oauth_callback_db_failure_redirects_with_reason(
     """DB persistence failures should redirect instead of returning 500."""
     settings = _valid_oauth_settings()
     clinic = Clinic(
-        name="ClÃ­nica OAuth DB Fail",
+        name="Clínica OAuth DB Fail",
         timezone="Europe/Madrid",
         phone_number="+34910000194",
     )

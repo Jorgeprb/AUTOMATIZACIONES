@@ -1002,7 +1002,9 @@ class CallSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """A telephone call handled by OpenAI Realtime."""
 
     __tablename__ = "call_sessions"
-    __table_args__ = (Index("ix_call_sessions_openai_call_id", "openai_call_id"),)
+    __table_args__ = (
+        UniqueConstraint("openai_call_id", name="uq_call_sessions_openai_call_id"),
+    )
 
     clinic_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("clinics.id", ondelete="SET NULL"),
@@ -1124,6 +1126,11 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "google_event_id",
             name="uq_appointments_google_event",
         ),
+        UniqueConstraint(
+            "clinic_id",
+            "idempotency_key",
+            name="uq_appointments_clinic_idempotency",
+        ),
     )
 
     clinic_id: Mapped[uuid.UUID] = mapped_column(
@@ -1138,6 +1145,9 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     service_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("services.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(200), nullable=True
     )
     google_calendar_id: Mapped[str] = mapped_column(
         String(320),
@@ -1245,3 +1255,203 @@ class GoogleCredential(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     token_json_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
 
     clinic: Mapped[Clinic] = relationship(back_populates="google_credentials")
+
+
+class AdminRole(StrEnum):
+    """Administrative authorization levels."""
+
+    SUPER_ADMIN = "super_admin"
+    CLINIC_ADMIN = "clinic_admin"
+    OPERATOR = "operator"
+    READ_ONLY = "read_only"
+
+
+class AdminUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Database-backed administrator account."""
+
+    __tablename__ = "admin_users"
+    __table_args__ = (
+        UniqueConstraint("username", name="uq_admin_users_username"),
+    )
+
+    username: Mapped[str] = mapped_column(String(160), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
+    role: Mapped[AdminRole] = mapped_column(
+        Enum(
+            AdminRole,
+            name="admin_role",
+            native_enum=False,
+            create_constraint=True,
+            validate_strings=True,
+            values_callable=enum_values,
+        ),
+        default=AdminRole.SUPER_ADMIN,
+        server_default=AdminRole.SUPER_ADMIN.value,
+        nullable=False,
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), default=True, nullable=False
+    )
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), default=False, nullable=False
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    failed_login_count: Mapped[int] = mapped_column(
+        Integer, server_default=text("0"), default=0, nullable=False
+    )
+    locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    sessions: Mapped[list[AdminSession]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    memberships: Mapped[list[AdminMembership]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class AdminMembership(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Clinic-level membership for non-global administrators."""
+
+    __tablename__ = "admin_memberships"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "clinic_id", name="uq_admin_memberships_user_clinic"
+        ),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    role: Mapped[AdminRole] = mapped_column(
+        Enum(
+            AdminRole,
+            name="admin_membership_role",
+            native_enum=False,
+            create_constraint=True,
+            validate_strings=True,
+            values_callable=enum_values,
+        ),
+        default=AdminRole.CLINIC_ADMIN,
+        server_default=AdminRole.CLINIC_ADMIN.value,
+        nullable=False,
+    )
+
+    user: Mapped[AdminUser] = relationship(back_populates="memberships")
+
+
+class AdminSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Revocable server-side browser session."""
+
+    __tablename__ = "admin_sessions"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_admin_sessions_token_hash"),
+        Index("ix_admin_sessions_expiry", "expires_at"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    csrf_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    user: Mapped[AdminUser] = relationship(back_populates="sessions")
+
+
+class AdminAuditLog(UUIDPrimaryKeyMixin, Base):
+    """Immutable audit trail for administrative actions."""
+
+    __tablename__ = "admin_audit_logs"
+    __table_args__ = (
+        Index("ix_admin_audit_created", "created_at"),
+        Index("ix_admin_audit_user", "user_id", "created_at"),
+        Index("ix_admin_audit_clinic", "clinic_id", "created_at"),
+    )
+
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
+    )
+    clinic_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("clinics.id", ondelete="SET NULL"), nullable=True
+    )
+    action: Mapped[str] = mapped_column(String(160), nullable=False)
+    method: Mapped[str] = mapped_column(String(16), nullable=False)
+    path: Mapped[str] = mapped_column(String(1000), nullable=False)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    details_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, server_default=text("'{}'"), default=dict, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class WebhookReceipt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Durable idempotency record for externally delivered webhooks."""
+
+    __tablename__ = "webhook_receipts"
+    __table_args__ = (
+        UniqueConstraint("provider", "event_id", name="uq_webhook_provider_event"),
+        Index("ix_webhook_receipts_status_created", "status", "created_at"),
+    )
+
+    provider: Mapped[str] = mapped_column(String(80), nullable=False)
+    event_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    event_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), server_default="processing", default="processing", nullable=False
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, server_default=text("1"), default=1, nullable=False
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class IntegrationOutbox(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Durable retry queue for cross-system compensation and reconciliation."""
+
+    __tablename__ = "integration_outbox"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uq_integration_outbox_dedupe"),
+        Index("ix_integration_outbox_pending", "status", "next_attempt_at"),
+    )
+
+    kind: Mapped[str] = mapped_column(String(120), nullable=False)
+    dedupe_key: Mapped[str] = mapped_column(String(240), nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, server_default=text("'{}'"), default=dict, nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), server_default="pending", default="pending", nullable=False
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, server_default=text("0"), default=0, nullable=False
+    )
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

@@ -26,6 +26,23 @@ BYTES_PER_20MS_PCM16 = SAMPLES_PER_20MS * 2
 G711_BYTES_PER_20MS = RTP_G711_PAYLOAD_BYTES
 
 
+class StatefulPcm16Resampler:
+    """Stateful mono PCM16 resampler avoiding discontinuities between RTP frames."""
+
+    def __init__(self, source_rate: int, target_rate: int) -> None:
+        self.source_rate = source_rate
+        self.target_rate = target_rate
+        self._state: object | None = None
+
+    def convert(self, data: bytes) -> bytes:
+        if self.source_rate == self.target_rate:
+            return data
+        converted, self._state = audioop.ratecv(
+            data, 2, 1, self.source_rate, self.target_rate, self._state
+        )
+        return converted
+
+
 def wav_to_pcm16_8k(data: bytes) -> bytes:
     """Decode WAV PCM to mono 8 kHz PCM16 little-endian."""
     with wave.open(io.BytesIO(data), "rb") as wav_file:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -11,11 +13,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from openai import InvalidWebhookSignatureError, OpenAI
 from pydantic import ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db import get_db
-from app.models import CallEvent, CallSession, CallStatus
+from app.models import CallEvent, CallSession, CallStatus, WebhookReceipt
 from app.openai_realtime.events import (
     RealtimeIncomingCallEvent,
     extract_sip_phone,
@@ -34,6 +37,54 @@ from app.openai_realtime.session import (
 
 router = APIRouter(prefix="/webhooks/openai", tags=["openai-realtime"])
 logger = logging.getLogger(__name__)
+
+
+
+
+def _payload_hash(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _claim_webhook(
+    session: Session, *, event_id: str, event_type: str | None, payload: dict[str, Any]
+) -> tuple[WebhookReceipt | None, bool]:
+    """Claim a provider event once; return (receipt, duplicate)."""
+    existing = session.scalar(
+        select(WebhookReceipt).where(
+            WebhookReceipt.provider == "openai", WebhookReceipt.event_id == event_id
+        )
+    )
+    if existing is not None:
+        existing.attempts += 1
+        session.commit()
+        return existing, True
+    receipt = WebhookReceipt(
+        provider="openai",
+        event_id=event_id[:200],
+        event_type=(event_type or "")[:160] or None,
+        payload_hash=_payload_hash(payload),
+        status="processing",
+    )
+    session.add(receipt)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        return None, True
+    session.refresh(receipt)
+    return receipt, False
+
+
+def _finish_webhook(
+    session: Session, receipt: WebhookReceipt | None, *, error: str | None = None
+) -> None:
+    if receipt is None:
+        return
+    receipt.status = "failed" if error else "completed"
+    receipt.last_error = error[:2000] if error else None
+    receipt.processed_at = datetime.now(UTC)
+    session.commit()
 
 
 class OpenAIWebhookVerificationError(ValueError):
@@ -145,6 +196,25 @@ async def receive_realtime_webhook(
         )
         return {"status": "ignored"}
 
+    provider_event_id = str(
+        raw_event.get("id") or request.headers.get("webhook-id") or ""
+    ).strip()
+    if not provider_event_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Webhook event ID missing."
+        )
+    receipt, duplicate_delivery = _claim_webhook(
+        session,
+        event_id=provider_event_id,
+        event_type=str(raw_event.get("type") or ""),
+        payload=raw_event,
+    )
+    if duplicate_delivery:
+        logger.info(
+            "openai_webhook_duplicate", extra={"provider_event_id": provider_event_id}
+        )
+        return {"status": "already_received"}
+
     event_data = _incoming_event_data(raw_event)
     call_id_present = bool(event_data.get("call_id"))
     data_id_present = bool(event_data.get("id"))
@@ -168,6 +238,7 @@ async def receive_realtime_webhook(
         },
     )
     if test_event:
+        _finish_webhook(session, receipt)
         return {"ok": True, "test_event": True}
 
     try:
@@ -191,6 +262,7 @@ async def receive_realtime_webhook(
                 "call_session_id": str(existing.id),
             },
         )
+        _finish_webhook(session, receipt)
         return {
             "status": "already_received",
             "call_session_id": str(existing.id),
@@ -391,6 +463,7 @@ async def receive_realtime_webhook(
             "voice": config_voice,
         },
     )
+    _finish_webhook(session, receipt)
     return {
         "status": "accepted",
         "call_session_id": str(call_session.id),

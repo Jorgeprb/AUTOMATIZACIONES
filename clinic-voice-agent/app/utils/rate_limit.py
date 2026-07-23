@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from fastapi import Request
@@ -28,23 +30,38 @@ class PublicRateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: object, settings: Settings) -> None:
         super().__init__(app)  # type: ignore[arg-type]
         self._settings = settings
-        self._buckets: dict[tuple[str, str], RateBucket] = {}
+        self._buckets: OrderedDict[tuple[str, str], RateBucket] = OrderedDict()
         self._lock = asyncio.Lock()
+        self._trusted_proxies = tuple(
+            ipaddress.ip_network(item.strip(), strict=False)
+            for item in settings.trusted_proxy_ips.split(",")
+            if item.strip()
+        )
 
-    @staticmethod
-    def _client_ip(request: Request) -> str:
-        """Read the first Caddy-forwarded IP or the direct peer."""
+    def _client_ip(self, request: Request) -> str:
+        """Use forwarded IP only when the direct peer is an approved proxy."""
+        direct = request.client.host if request.client is not None else "unknown"
+        try:
+            direct_address = ipaddress.ip_address(direct)
+            trusted = any(direct_address in network for network in self._trusted_proxies)
+        except ValueError:
+            trusted = False
         forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",", maxsplit=1)[0].strip()
-        if request.client is not None:
-            return request.client.host
-        return "unknown"
+        if trusted and forwarded:
+            candidate = forwarded.split(",", maxsplit=1)[0].strip()
+            try:
+                ipaddress.ip_address(candidate)
+            except ValueError:
+                return direct
+            return candidate
+        return direct
 
     def _route_limit(self, path: str) -> int | None:
         """Return a limit only for public mutable/integration routes."""
         if path == "/webhooks/openai/realtime":
             return self._settings.webhook_rate_limit_per_minute
+        if path == "/auth/login":
+            return min(20, self._settings.public_rate_limit_per_minute)
         if path.startswith("/auth/google/"):
             return self._settings.public_rate_limit_per_minute
         return None
@@ -66,6 +83,9 @@ class PublicRateLimitMiddleware(BaseHTTPMiddleware):
             if bucket is None or now - bucket.window_started_at >= 60:
                 bucket = RateBucket(window_started_at=now, count=0)
                 self._buckets[key] = bucket
+            self._buckets.move_to_end(key)
+            while len(self._buckets) > self._settings.rate_limit_max_buckets:
+                self._buckets.popitem(last=False)
             bucket.count += 1
             if bucket.count > limit:
                 retry_after = max(

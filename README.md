@@ -37,7 +37,7 @@ Invoke-RestMethod http://localhost:8000/health/ready
 
 Copia [.env.example](./.env.example). Las variables principales son:
 
-- `ADMIN_API_KEY` y `VITE_ADMIN_API_KEY`: deben coincidir.
+- `ADMIN_API_KEY`: solo para automatizaciones servidor-servidor; el panel usa sesión HttpOnly.
 - `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET`, `OPENAI_PROJECT_ID`.
 - `OPENAI_TTS_MODEL`: modelo usado para escuchar la voz del bot en consola.
 - `PUBLIC_BASE_URL`: dominio HTTPS público de la API.
@@ -46,7 +46,7 @@ Copia [.env.example](./.env.example). Las variables principales son:
 - `GOOGLE_TOKEN_ENCRYPTION_KEY`: clave Fernet para tokens OAuth.
 - `DATABASE_URL` es reemplazada por Docker en local.
 
-No guardes `.env` ni secretos reales en Git.
+No guardes `.env` ni secretos reales en Git. El navegador nunca recibe claves administrativas.
 
 ## Puesta en marcha de una clínica
 
@@ -61,9 +61,11 @@ No guardes `.env` ni secretos reales en Git.
    “Escuchar voz del bot”.
 9. Configura el webhook OpenAI:
    `https://TU_DOMINIO/webhooks/openai/realtime`.
-10. Configura VoIP Studio para reenviar a:
-   `sip:${OPENAI_PROJECT_ID}@sip.api.openai.com;transport=tls`.
-11. Haz una llamada real y comprueba el dashboard.
+10. Configura VoIP Studio una sola vez contra el edge SIP público:
+   `sip:bot@sip.autogal.es:6060;transport=udp`.
+11. El VPS resolverá la clínica y seleccionará Media Bridge u Hosted SIP sin
+    exponer destinos internos al cliente.
+12. Haz una llamada real y comprueba el dashboard.
 
 El dashboard muestra estadísticas y una checklist automática con enlaces a
 cada pantalla pendiente.
@@ -129,13 +131,13 @@ Variables principales:
 - `SIP_PUBLIC_IP=51.210.180.115`: IP pública del VPS.
 - `RTP_ADVERTISE_IP`: normalmente la misma IP pública.
 - `SIP_PORT=6060`.
-- `RTP_PORT_MIN=10000` y `RTP_PORT_MAX=20000`.
+- `RTP_PORT_MIN=10000` y `RTP_PORT_MAX=10100` por defecto.
 - `SIP_ALLOWED_IPS`: allowlist opcional de IPs de VoIP Studio.
 - `BACKEND_INTERNAL_URL=http://app:8000` dentro de Docker.
 - `OPENAI_API_KEY` e `INTERNAL_API_KEY`.
 - `OPENAI_HOSTED_SIP_STRATEGY=blocked` evita cuelgues por 302 UDP -> TLS.
 
-En el firewall del VPS abre UDP `6060` y el rango UDP `10000-20000`. En VoIP
+En el firewall del VPS abre UDP `6060` y únicamente el rango RTP configurado, `10000-10100` por defecto. En VoIP
 Studio configura el destino como:
 
 ```text
@@ -151,7 +153,7 @@ docker compose logs -f sip-gateway
 
 Notas importantes:
 
-- OpenAI Hosted SIP sigue igual para voces OpenAI.
+- OpenAI Hosted SIP nunca inicia el WebSocket local; queda aislado tras el edge SIP y se bloquea con un error explícito hasta disponer de B2BUA TLS o un redirect compatible.
 - Azure `gl-ES-SabelaNeural` requiere VPS Media Bridge.
 - Si VoIP Studio llama al gateway, Hosted SIP responde `488` claro por defecto
   hasta tener B2BUA TLS completo.
@@ -238,9 +240,9 @@ npm run test
 npm run build
 ```
 
-## Seguridad del MVP
+## Seguridad administrativa
 
-El panel V1 tiene login simple en navegador, pero sigue enviando
-`ADMIN_API_KEY` desde el bundle. Es suficiente para una instalación privada
-controlada, pero no para una plataforma pública con usuarios externos. La
-siguiente fase debe incorporar autenticación real de backend, sesiones y roles.
+El panel usa usuarios persistentes, sesiones opacas en cookie HttpOnly,
+protección CSRF, bloqueo de intentos, permisos por clínica y auditoría. La
+`ADMIN_API_KEY` se conserva exclusivamente para automatizaciones
+servidor-servidor y nunca se integra en el bundle del navegador.

@@ -14,7 +14,11 @@ from typing import Any
 
 from websockets.asyncio.client import connect
 
-from sip_gateway.audio import OPENAI_INPUT_SAMPLE_RATE, SAMPLE_RATE, pcm16_8k_to_24k
+from sip_gateway.audio import (
+    OPENAI_INPUT_SAMPLE_RATE,
+    SAMPLE_RATE,
+    StatefulPcm16Resampler,
+)
 from sip_gateway.backend import BackendClient, VoiceContext
 from sip_gateway.config import GatewaySettings
 
@@ -50,7 +54,7 @@ def build_realtime_session(context: VoiceContext) -> dict[str, Any]:
     session: dict[str, Any] = {
         "type": "realtime",
         "instructions": context.instructions,
-        "output_modalities": ["text"] if external_tts else ["text", "audio"],
+        "output_modalities": ["text"] if external_tts else ["audio"],
         "audio": {
             "input": {
                 "format": {
@@ -94,14 +98,25 @@ class OpenAIRealtimeBridge:
         self._context = context
         self._call_id = call_id
         self._tool_executor = tool_executor
-        self.text_queue: asyncio.Queue[str] = asyncio.Queue()
-        self.audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self.text_queue: asyncio.Queue[str] = asyncio.Queue(
+            maxsize=settings.openai_queue_max_items
+        )
+        self.audio_queue: asyncio.Queue[bytes] = asyncio.Queue(
+            maxsize=settings.openai_queue_max_items
+        )
         self._ws: Any | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._closed = asyncio.Event()
         self._first_audio_started_at: float | None = None
         self._started_at = 0.0
         self._input_audio_frames_sent = 0
+        self._input_resampler = StatefulPcm16Resampler(
+            SAMPLE_RATE, OPENAI_INPUT_SAMPLE_RATE
+        )
+        self._input_audio_buffer = bytearray()
+        self._input_batch_bytes = int(
+            OPENAI_INPUT_SAMPLE_RATE * 2 * settings.openai_input_batch_ms / 1000
+        )
 
     @property
     def first_audio_latency_ms(self) -> float | None:
@@ -157,7 +172,7 @@ class OpenAIRealtimeBridge:
                 {
                     "type": "response.create",
                     "response": {
-                        "output_modalities": ["text", "audio"],
+                        "output_modalities": ["audio"],
                         "instructions": self._context.first_message,
                     },
                 }
@@ -169,10 +184,15 @@ class OpenAIRealtimeBridge:
         """Resample telephony PCM16/8 kHz and append PCM16/24 kHz to Realtime."""
         if self._ws is None or self._closed.is_set():
             return
-        resampled = pcm16_8k_to_24k(pcm16le)
+        resampled = self._input_resampler.convert(pcm16le)
+        self._input_audio_buffer.extend(resampled)
         self._input_audio_frames_sent += 1
+        if len(self._input_audio_buffer) < self._input_batch_bytes:
+            return
+        batch = bytes(self._input_audio_buffer)
+        self._input_audio_buffer.clear()
         should_log_audio = (
-            self._input_audio_frames_sent == 1
+            self._input_audio_frames_sent <= 4
             or self._input_audio_frames_sent % 50 == 0
         )
         if should_log_audio:
@@ -183,14 +203,14 @@ class OpenAIRealtimeBridge:
                     "source_rate": SAMPLE_RATE,
                     "target_rate": OPENAI_INPUT_SAMPLE_RATE,
                     "input_bytes": len(pcm16le),
-                    "output_bytes": len(resampled),
+                    "output_bytes": len(batch),
                     "frames_sent": self._input_audio_frames_sent,
                 },
             )
         await self._send(
             {
                 "type": "input_audio_buffer.append",
-                "audio": base64.b64encode(resampled).decode("ascii"),
+                "audio": base64.b64encode(batch).decode("ascii"),
             }
         )
         if should_log_audio:
@@ -199,7 +219,7 @@ class OpenAIRealtimeBridge:
                 extra={
                     "call_id": self._call_id,
                     "rate": OPENAI_INPUT_SAMPLE_RATE,
-                    "bytes": len(resampled),
+                    "bytes": len(batch),
                     "frames_sent": self._input_audio_frames_sent,
                 },
             )
@@ -218,6 +238,16 @@ class OpenAIRealtimeBridge:
             with suppress(asyncio.CancelledError):
                 await self._reader_task
         if self._ws is not None:
+            if self._input_audio_buffer:
+                await self._send(
+                    {
+                        "type": "input_audio_buffer.append",
+                        "audio": base64.b64encode(
+                            bytes(self._input_audio_buffer)
+                        ).decode("ascii"),
+                    }
+                )
+                self._input_audio_buffer.clear()
             await self._ws.close()
         logger.info("openai_bridge_closed", extra={"call_id": self._call_id})
 

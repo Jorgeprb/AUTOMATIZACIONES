@@ -178,6 +178,7 @@ def create_agent_appointment(
             start_at=payload.start_at,
             end_at=payload.end_at,
             call_session_id=payload.call_session_id,
+            idempotency_key=payload.idempotency_key,
         )
     except (
         AgentAppointmentError,

@@ -7,13 +7,15 @@ import logging
 import re
 import time
 import uuid
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
 from sip_gateway.audio import (
-    pcm16_24k_to_8k,
+    OPENAI_INPUT_SAMPLE_RATE,
+    SAMPLE_RATE,
+    StatefulPcm16Resampler,
     sentence_chunks,
     tts_audio_to_g711_8k,
 )
@@ -95,6 +97,7 @@ class GatewayCallSession:
         offer: SdpOffer,
         payload_type: int,
         rtp_port: int,
+        on_closed: Callable[["GatewayCallSession", str], Awaitable[None] | None] | None = None,
     ) -> None:
         self.settings = settings
         self.backend = backend
@@ -104,24 +107,37 @@ class GatewayCallSession:
         self.offer = offer
         self.payload_type = payload_type
         self.rtp_port = rtp_port
+        self._on_closed = on_closed
         self.call_id = invite.call_id or str(uuid.uuid4())
         self.local_tag = uuid.uuid4().hex[:12]
         self.openai_call_id = f"vps-{self.call_id}"
         self.remote_rtp_addr = (offer.connection_ip, offer.audio_port)
+        self._remote_rtp_locked = False
+        self._remote_ssrc: int | None = None
+        self._jitter_flush_handle: asyncio.TimerHandle | None = None
         self.context: VoiceContext | None = None
         self.rtp_transport: asyncio.DatagramTransport | None = None
         self.bridge: OpenAIRealtimeBridge | None = None
-        self.jitter = JitterBuffer(depth=3)
+        self._openai_output_resampler = StatefulPcm16Resampler(
+            OPENAI_INPUT_SAMPLE_RATE, SAMPLE_RATE
+        )
+        self.jitter = JitterBuffer(depth=settings.jitter_buffer_depth)
         self.sequencer = RTPSequencer(payload_type=payload_type)
         self.inbound_queue: asyncio.Queue[RTPPacket] = asyncio.Queue(maxsize=200)
-        self.outbound_audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=200)
+        self.outbound_audio_queue: asyncio.Queue[bytes] = asyncio.Queue(
+            maxsize=max(10, settings.outbound_audio_max_ms // 20)
+        )
         self._tasks: set[asyncio.Task[Any]] = set()
         self._closed = asyncio.Event()
         self._bot_speaking = False
         self._stop_tts = asyncio.Event()
         self._rtp_sender_started = False
+        self._media_started = asyncio.Event()
+        self._media_start_lock = asyncio.Lock()
+        self._tts_generation = 0
         self.stats = CallStats()
         self.started_at = time.perf_counter()
+        self.last_invite_response: bytes | None = None
 
     async def prepare(self) -> None:
         """Bind RTP and resolve backend context before answering INVITE."""
@@ -160,52 +176,108 @@ class GatewayCallSession:
         )
 
     async def start_media(self) -> None:
-        """Start RTP sender, initial greeting, OpenAI bridge and media tasks."""
-        if self.context is None:
-            raise RuntimeError("call context not prepared")
-        context = self.context
+        """Start media exactly once, even when ACK is retransmitted."""
+        async with self._media_start_lock:
+            if self._media_started.is_set() or self._closed.is_set():
+                return
+            if self.context is None:
+                raise RuntimeError("call context not prepared")
+            context = self.context
+            if context.call_audio_mode != "vps_media_bridge":
+                raise RuntimeError("local media cannot start for a non-bridge route")
 
-        async def tool_executor(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-            return await self.backend.execute_tool(
-                clinic_id=context.clinic_id,
-                call_session_id=context.call_session_id,
-                openai_call_id=self.openai_call_id,
-                name=name,
-                arguments=arguments,
+            async def tool_executor(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+                return await self.backend.execute_tool(
+                    clinic_id=context.clinic_id,
+                    call_session_id=context.call_session_id,
+                    openai_call_id=self.openai_call_id,
+                    name=name,
+                    arguments=arguments,
+                )
+
+            self.bridge = OpenAIRealtimeBridge(
+                settings=self.settings,
+                backend=self.backend,
+                context=context,
+                call_id=self.call_id,
+                tool_executor=tool_executor,
             )
-
-        self.bridge = OpenAIRealtimeBridge(
-            settings=self.settings,
-            backend=self.backend,
-            context=context,
-            call_id=self.call_id,
-            tool_executor=tool_executor,
-        )
-        self._spawn(self._rtp_sender_loop())
-        if context.voice_provider != "openai":
-            self._spawn(self._speak_text(INITIAL_GREETING, reason="initial_greeting"))
-        self._spawn(self._start_openai_bridge_and_media())
-        self._spawn(self._max_duration_watchdog())
+            self._media_started.set()
+            self._spawn(self._rtp_sender_loop())
+            if context.voice_provider != "openai":
+                greeting = (context.first_message or INITIAL_GREETING).strip()
+                self._spawn(self._speak_text(greeting, reason="initial_greeting"))
+            self._spawn(self._start_openai_bridge_and_media())
+            self._spawn(self._max_duration_watchdog())
 
     def on_rtp(self, data: bytes, addr: tuple[str, int]) -> None:
-        """Process one RTP datagram from UDP protocol."""
+        """Validate, pin, reorder, and queue one RTP datagram."""
         try:
             packet = RTPPacket.parse(data)
         except ValueError:
             return
-        self.remote_rtp_addr = addr
-        for ready in self.jitter.push(packet):
+        if packet.payload_type != self.payload_type:
+            return
+        allowed_source = (
+            addr[0] == self.offer.connection_ip
+            or self.settings.rtp_ip_explicitly_allowed(addr[0])
+        )
+        if not allowed_source:
+            logger.warning(
+                "rtp_rejected_source",
+                extra={"call_id": self.call_id, "source_ip": addr[0]},
+            )
+            return
+        if self._remote_rtp_locked and addr != self.remote_rtp_addr:
+            logger.warning(
+                "rtp_source_change_rejected",
+                extra={"call_id": self.call_id, "source_ip": addr[0]},
+            )
+            return
+        if not self._remote_rtp_locked:
+            self.remote_rtp_addr = addr
+            self._remote_rtp_locked = True
+            self._remote_ssrc = packet.ssrc
+            logger.info(
+                "rtp_source_locked",
+                extra={"call_id": self.call_id, "source_ip": addr[0], "ssrc": packet.ssrc},
+            )
+        elif self._remote_ssrc != packet.ssrc:
+            logger.warning(
+                "rtp_ssrc_change_rejected",
+                extra={"call_id": self.call_id, "ssrc": packet.ssrc},
+            )
+            return
+        self._queue_ready_packets(self.jitter.push(packet))
+        if self._jitter_flush_handle is not None:
+            self._jitter_flush_handle.cancel()
+        loop = asyncio.get_running_loop()
+        self._jitter_flush_handle = loop.call_later(
+            self.settings.jitter_flush_ms / 1000.0,
+            self._flush_jitter_tail,
+        )
+
+    def _queue_ready_packets(self, packets: list[RTPPacket]) -> None:
+        for ready in packets:
             try:
                 self.inbound_queue.put_nowait(ready)
             except asyncio.QueueFull:
                 _ = self.inbound_queue.get_nowait()
                 self.inbound_queue.put_nowait(ready)
 
+    def _flush_jitter_tail(self) -> None:
+        self._jitter_flush_handle = None
+        self._queue_ready_packets(self.jitter.flush())
+
     async def close(self, reason: str = "normal") -> None:
         """Close bridge, cancel tasks, close RTP, and release port."""
         if self._closed.is_set():
             return
         self._closed.set()
+        if self._jitter_flush_handle is not None:
+            self._jitter_flush_handle.cancel()
+            self._jitter_flush_handle = None
+        self._queue_ready_packets(self.jitter.flush())
         current_task = asyncio.current_task()
         for task in list(self._tasks):
             if task is not current_task:
@@ -239,6 +311,14 @@ class GatewayCallSession:
                 "outbound_overruns": self.stats.outbound_overruns,
             },
         )
+        if self._on_closed is not None:
+            result = self._on_closed(self, reason)
+            if asyncio.iscoroutine(result):
+                await result
+
+    @property
+    def media_started(self) -> bool:
+        return self._media_started.is_set()
 
     def _spawn(self, coro: Coroutine[Any, Any, Any]) -> None:
         task = asyncio.create_task(coro)
@@ -279,6 +359,7 @@ class GatewayCallSession:
             pcm16 = decode_g711(packet.payload_type, packet.payload)
             energy = pcm16_energy(pcm16)
             if self._bot_speaking and energy >= self.settings.silence_energy_threshold:
+                self._tts_generation += 1
                 self._stop_tts.set()
                 await self.bridge.cancel_response()
                 logger.info("barge_in_detected", extra={"call_id": self.call_id})
@@ -288,7 +369,7 @@ class GatewayCallSession:
         assert self.bridge is not None
         while not self._closed.is_set():
             pcm16 = await self.bridge.audio_queue.get()
-            pcm16_8k = pcm16_24k_to_8k(pcm16)
+            pcm16_8k = self._openai_output_resampler.convert(pcm16)
             raw_g711 = encode_g711(self.payload_type, pcm16_8k)
             await self._queue_g711_audio(raw_g711, source="openai_audio")
 
@@ -335,6 +416,7 @@ class GatewayCallSession:
         cleaned = text.strip()
         if not cleaned:
             return
+        generation = self._tts_generation
         if self.context.voice_provider == "azure":
             logger.info(
                 "azure_tts_started",
@@ -363,6 +445,12 @@ class GatewayCallSession:
             )
             return
         self.stats.tts_latency_ms = round((time.perf_counter() - started) * 1000, 2)
+        if generation != self._tts_generation or self._closed.is_set():
+            logger.info(
+                "tts_generation_discarded",
+                extra={"call_id": self.call_id, "reason": reason},
+            )
+            return
         if self.context.voice_provider == "azure":
             logger.info(
                 "azure_tts_first_chunk",
@@ -392,7 +480,12 @@ class GatewayCallSession:
                 "buffered_ms": buffered_ms,
             },
         )
-        await self.outbound_audio_queue.put(raw_g711)
+        silence_byte = comfort_silence_payload(self.payload_type)[:1]
+        for offset in range(0, len(raw_g711), RTP_G711_PAYLOAD_BYTES):
+            frame = raw_g711[offset : offset + RTP_G711_PAYLOAD_BYTES]
+            if len(frame) < RTP_G711_PAYLOAD_BYTES:
+                frame += silence_byte * (RTP_G711_PAYLOAD_BYTES - len(frame))
+            await self.outbound_audio_queue.put(frame)
 
     async def _rtp_sender_loop(self) -> None:
         if self.rtp_transport is None:

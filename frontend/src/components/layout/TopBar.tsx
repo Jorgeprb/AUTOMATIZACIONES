@@ -1,4 +1,5 @@
 import { ChevronDown, LogOut, Menu } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ export function TopBar({ onOpenMenu }: { onOpenMenu: () => void }) {
   } = useActiveClinic();
   const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const handleClinicChange = (clinicId: string) => {
     setActiveClinicId(clinicId || null);
@@ -25,9 +27,13 @@ export function TopBar({ onOpenMenu }: { onOpenMenu: () => void }) {
     }
   };
 
-  const handleLogout = () => {
-    logout();
-    navigate("/login", { replace: true });
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } finally {
+      queryClient.removeQueries({ queryKey: ["auth"] });
+      navigate("/login", { replace: true });
+    }
   };
 
   return (

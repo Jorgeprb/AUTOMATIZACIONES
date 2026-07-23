@@ -1,3 +1,11 @@
+> **DOCUMENTO HISTÓRICO / NO USAR PARA CONFIGURAR CLIENTES**
+>
+> La arquitectura actual mantiene VoIP Studio siempre en
+> `sip:bot@sip.autogal.es:6060;transport=udp`. El destino de OpenAI Hosted SIP
+> es interno al edge/router y nunca debe configurarse en la cuenta del cliente.
+> Este documento se conserva únicamente como referencia de la integración
+> anterior directa. Consulta `deployment-vps-sip.md`.
+
 # Migración de VoIP Studio a OpenAI Realtime SIP
 
 ## Objetivo

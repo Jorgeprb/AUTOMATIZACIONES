@@ -1,10 +1,10 @@
 # Despliegue en Render
 
-> Nota: esta guÃ­a describe la alternativa de ejecutar backend, frontend y
-> PostgreSQL dentro de Render. La opciÃ³n gratuita actual usa Render solo para
+> Nota: esta guía describe la alternativa de ejecutar backend, frontend y
+> PostgreSQL dentro de Render. La opción gratuita actual usa Render solo para
 > el backend, Cloudflare Pages para el frontend y Supabase Free para
 > PostgreSQL. Sigue [deployment-free-tier.md](deployment-free-tier.md) para esa
-> configuraciÃ³n. El `render.yaml` actual de la raÃ­z no crea Postgres de Render
+> configuración. El `render.yaml` actual de la raíz no crea Postgres de Render
 > ni Static Site de Render.
 
 Este proyecto se despliega en Render como monorepo:
@@ -71,13 +71,11 @@ En el Static Site `clinic-voice-agent-admin`, configura:
 
 ```env
 VITE_API_BASE_URL=https://BACKEND_RENDER_URL
-VITE_ADMIN_API_KEY=misma-clave-que-ADMIN_API_KEY
 VITE_ENABLE_DEV_FALLBACKS=false
 ```
 
-El valor de `VITE_ADMIN_API_KEY` queda dentro del bundle del navegador. Es
-aceptable solo para el MVP; antes de abrir el panel a terceros hay que añadir
-login real y una capa servidor.
+El panel usa `/auth/login` y cookies HttpOnly. No configures claves administrativas
+en variables `VITE_*`, porque todo valor de Vite es público.
 
 ## 4. Migraciones
 
@@ -128,11 +126,14 @@ En OpenAI configura el webhook:
 https://BACKEND_RENDER_URL/webhooks/openai/realtime
 ```
 
-El SIP target sigue siendo:
+Render aloja API/panel, pero no sustituye al edge SIP UDP del VPS. VoIP
+Studio debe apuntar siempre a:
 
 ```text
-sip:${OPENAI_PROJECT_ID}@sip.api.openai.com;transport=tls
+sip:bot@sip.autogal.es:6060;transport=udp
 ```
+
+El destino Hosted SIP de OpenAI es interno y no se entrega al cliente.
 
 ## 7. Comprobaciones
 

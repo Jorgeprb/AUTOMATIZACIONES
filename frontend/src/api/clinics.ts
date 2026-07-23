@@ -16,6 +16,17 @@ export function listClinics(params: {
   );
 }
 
+export async function listAllClinics(): Promise<Clinic[]> {
+  const first = await listClinics({ page: 1, pageSize: 100 });
+  if (first.pages <= 1) return first.items;
+  const remaining = await Promise.all(
+    Array.from({ length: first.pages - 1 }, (_, index) =>
+      listClinics({ page: index + 2, pageSize: 100 }),
+    ),
+  );
+  return [first, ...remaining].flatMap((page) => page.items);
+}
+
 export function getClinic(clinicId: string): Promise<Clinic> {
   return apiRequest(`/api/admin/clinics/${clinicId}`);
 }

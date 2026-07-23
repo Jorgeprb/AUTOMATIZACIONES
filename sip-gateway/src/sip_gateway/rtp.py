@@ -41,16 +41,31 @@ class RTPPacket:
         if version != 2:
             raise ValueError("unsupported RTP version")
         csrc_count = first & 0x0F
+        has_padding = bool(first & 0x20)
+        has_extension = bool(first & 0x10)
         header_len = 12 + csrc_count * 4
         if len(data) < header_len:
             raise ValueError("RTP CSRC header truncated")
+        if has_extension:
+            if len(data) < header_len + 4:
+                raise ValueError("RTP extension header truncated")
+            _, extension_words = struct.unpack("!HH", data[header_len : header_len + 4])
+            header_len += 4 + extension_words * 4
+            if len(data) < header_len:
+                raise ValueError("RTP extension data truncated")
+        payload_end = len(data)
+        if has_padding:
+            padding_length = data[-1]
+            if padding_length == 0 or padding_length > payload_end - header_len:
+                raise ValueError("invalid RTP padding")
+            payload_end -= padding_length
         return cls(
             payload_type=second & 0x7F,
             marker=bool(second & 0x80),
             sequence_number=sequence,
             timestamp=timestamp,
             ssrc=ssrc,
-            payload=data[header_len:],
+            payload=data[header_len:payload_end],
         )
 
     def serialize(self) -> bytes:
@@ -190,23 +205,59 @@ class RtpIntervalStats:
 
 
 class JitterBuffer:
-    """Tiny packet-ordering jitter buffer keyed by RTP sequence number."""
+    """Packet-ordering buffer with 16-bit sequence wrap and duplicate handling."""
 
     def __init__(self, depth: int = 4) -> None:
+        if depth < 0:
+            raise ValueError("jitter buffer depth must be non-negative")
         self.depth = depth
-        self._heap: list[tuple[int, RTPPacket]] = []
+        self._heap: list[tuple[int, int, RTPPacket]] = []
+        self._seen: set[int] = set()
+        self._reference_extended: int | None = None
+        self._counter = 0
+
+    def _extend(self, sequence: int) -> int:
+        if self._reference_extended is None:
+            self._reference_extended = sequence
+            return sequence
+        reference_seq = self._reference_extended & 0xFFFF
+        forward = (sequence - reference_seq) & 0xFFFF
+        if forward < 0x8000:
+            extended = self._reference_extended + forward
+        else:
+            extended = self._reference_extended - ((reference_seq - sequence) & 0xFFFF)
+        if extended > self._reference_extended:
+            self._reference_extended = extended
+        return extended
 
     def push(self, packet: RTPPacket) -> list[RTPPacket]:
         """Push a packet and return packets ready for playout."""
-        heapq.heappush(self._heap, (packet.sequence_number, packet))
+        extended = self._extend(packet.sequence_number)
+        if extended in self._seen:
+            return []
+        self._seen.add(extended)
+        self._counter += 1
+        heapq.heappush(self._heap, (extended, self._counter, packet))
         ready: list[RTPPacket] = []
         while len(self._heap) > self.depth:
-            ready.append(heapq.heappop(self._heap)[1])
+            sequence, _, current = heapq.heappop(self._heap)
+            self._seen.discard(sequence)
+            ready.append(current)
         return ready
 
-    def flush(self) -> list[RTPPacket]:
-        """Return all buffered packets ordered by sequence."""
-        return [heapq.heappop(self._heap)[1] for _ in range(len(self._heap))]
+    def flush(self, *, max_packets: int | None = None) -> list[RTPPacket]:
+        """Return buffered packets in extended-sequence order."""
+        count = len(self._heap) if max_packets is None else min(max_packets, len(self._heap))
+        ready: list[RTPPacket] = []
+        for _ in range(count):
+            sequence, _, packet = heapq.heappop(self._heap)
+            self._seen.discard(sequence)
+            ready.append(packet)
+        return ready
+
+    @property
+    def pending_count(self) -> int:
+        return len(self._heap)
 
 
 class RTPPortPool:

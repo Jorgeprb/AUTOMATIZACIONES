@@ -34,7 +34,7 @@ OpenAI Realtime SIP
 4. Si la direct connection falla por red IPv4/IPv6 o hay muchas conexiones,
    usa **Session pooler**.
 5. Evita **Transaction pooler** para este MVP salvo que se pruebe bien con
-   SQLAlchemy/Alembic, porque puede ser mÃ¡s delicado con sesiones y
+   SQLAlchemy/Alembic, porque puede ser más delicado con sesiones y
    transacciones largas.
 
 Ejemplo direct connection:
@@ -49,8 +49,8 @@ Ejemplo pooler:
 postgresql://postgres.PROJECT:PASSWORD@aws-0-eu-west-1.pooler.supabase.com:6543/postgres
 ```
 
-La aplicaciÃ³n acepta `postgresql://` y `postgres://`, los convierte a
-`postgresql+psycopg://` y, si detecta host de Supabase sin `sslmode`, aÃ±ade:
+La aplicación acepta `postgresql://` y `postgres://`, los convierte a
+`postgresql+psycopg://` y, si detecta host de Supabase sin `sslmode`, añade:
 
 ```text
 sslmode=require
@@ -58,9 +58,9 @@ sslmode=require
 
 ## Render Free: backend FastAPI
 
-El `render.yaml` de la raÃ­z crea solo un Web Service:
+El `render.yaml` de la raíz crea solo un Web Service:
 
-- root del repo: raÃ­z del monorepo;
+- root del repo: raíz del monorepo;
 - Dockerfile: `clinic-voice-agent/Dockerfile`;
 - Docker context: `clinic-voice-agent`;
 - plan: `free`;
@@ -121,7 +121,6 @@ Variables de entorno frontend:
 
 ```dotenv
 VITE_API_BASE_URL=https://BACKEND_RENDER_URL
-VITE_ADMIN_API_KEY=misma-clave-que-ADMIN_API_KEY
 VITE_ENABLE_DEV_FALLBACKS=false
 ```
 
@@ -141,7 +140,7 @@ FRONTEND_BASE_URL=https://FRONTEND_CLOUDFLARE_URL
 CORS_ORIGINS=https://FRONTEND_CLOUDFLARE_URL
 ```
 
-`FRONTEND_BASE_URL` tambiÃ©n se aÃ±ade automÃ¡ticamente a la lista CORS.
+`FRONTEND_BASE_URL` también se añade automáticamente a la lista CORS.
 
 ## Google OAuth
 
@@ -175,10 +174,11 @@ Webhook de OpenAI:
 https://BACKEND_RENDER_URL/webhooks/openai/realtime
 ```
 
-Destino SIP:
+La opción gratuita aloja API y panel, pero la entrada telefónica requiere un
+edge SIP con UDP público. VoIP Studio permanece configurado contra:
 
 ```text
-sip:${OPENAI_PROJECT_ID}@sip.api.openai.com;transport=tls
+sip:bot@sip.autogal.es:6060;transport=udp
 ```
 
 ## Orden recomendado
@@ -196,16 +196,16 @@ sip:${OPENAI_PROJECT_ID}@sip.api.openai.com;transport=tls
 5. Despliega frontend en Cloudflare Pages.
 6. Rellena variables frontend en Cloudflare.
 7. Actualiza `FRONTEND_BASE_URL` y `CORS_ORIGINS` en Render.
-8. Configura Google OAuth con URLs pÃºblicas.
+8. Configura Google OAuth con URLs públicas.
 9. Configura webhook OpenAI.
 10. Entra al panel, conecta Google y prueba la consola.
 
 ## Notas del plan gratis
 
 - Render Free puede dormir tras inactividad; la primera llamada puede tardar.
-- Supabase Free tambiÃ©n puede pausar o tener lÃ­mites.
-- El login del frontend es solo barrera MVP en navegador.
-- `ADMIN_API_KEY` sigue llegando al navegador; no es arquitectura final segura.
+- Supabase Free también puede pausar o tener límites.
+- El panel usa sesiones HttpOnly y CSRF; `ADMIN_API_KEY` no llega al navegador.
+- El plan gratuito no proporciona el edge SIP/RTP requerido para llamadas reales.
 
 ## Referencias oficiales
 

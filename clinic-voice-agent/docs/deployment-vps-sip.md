@@ -326,10 +326,11 @@ docker compose -f docker-compose.prod.yml --env-file .env.production up -d --for
 
 ## Seguridad
 
-- No pongas `ADMIN_API_KEY` en `VITE_ADMIN_API_KEY` en VPS.
-- Caddy inyecta `X-Admin-API-Key` server-side para `/api/admin*`.
-- El login frontend sigue siendo MVP; para producción real añade Cloudflare
-  Access, VPN o autenticación backend con sesiones y roles.
+- No pongas ninguna clave administrativa en variables `VITE_*`; el panel usa sesión HttpOnly.
+- Caddy no inyecta claves administrativas. El navegador usa sesiones HttpOnly,
+  CSRF y permisos persistentes por clínica.
+- Puedes añadir Cloudflare Access o VPN como segunda barrera, no como sustituto
+  de la autenticación del backend.
 - Usa `SIP_ALLOWED_IPS` cuando tengas IPs de VoIP Studio.
 - Configura límites por clínica desde el panel y límites globales:
   `MAX_CONCURRENT_CALLS`, `MAX_CALL_SECONDS`, `INVITE_RATE_LIMIT_PER_MINUTE`.
@@ -358,7 +359,7 @@ Si no ves paquetes, el problema está en VoIP Studio, firewall cloud o UFW.
 ### Llega SIP pero no hay audio
 
 ```bash
-sudo tcpdump -ni any udp portrange 10000-20000
+sudo tcpdump -ni any udp portrange 10000-10100
 docker compose -f docker-compose.prod.yml --env-file .env.production logs -f sip-gateway
 ```
 

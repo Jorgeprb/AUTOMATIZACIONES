@@ -100,6 +100,14 @@ class BackendClient:
 
     def __init__(self, settings: GatewaySettings) -> None:
         self._settings = settings
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(45.0, connect=10.0),
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        )
+
+    async def close(self) -> None:
+        """Close the shared connection pool during gateway shutdown."""
+        await self._client.aclose()
 
     def _headers(self) -> dict[str, str]:
         headers: dict[str, str] = {}
@@ -157,12 +165,12 @@ class BackendClient:
             provider_call_id=provider_call_id,
         )
         endpoint = f"{self._settings.backend_internal_url}/api/internal/voice/context"
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.post(
-                endpoint,
-                json=payload,
-                headers=self._headers(),
-            )
+        response = await self._client.post(
+            endpoint,
+            json=payload,
+            headers=self._headers(),
+            timeout=20.0,
+        )
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -201,12 +209,12 @@ class BackendClient:
             "preview_audio_format": _preview_format_for_call(context),
             "call_audio_mode": context.call_audio_mode,
         }
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            response = await client.post(
-                f"{self._settings.backend_internal_url}/api/internal/voice/tts",
-                json=payload,
-                headers=self._headers(),
-            )
+        response = await self._client.post(
+            f"{self._settings.backend_internal_url}/api/internal/voice/tts",
+            json=payload,
+            headers=self._headers(),
+            timeout=45.0,
+        )
         response.raise_for_status()
         return TTSAudio(
             audio=response.content,
@@ -233,11 +241,11 @@ class BackendClient:
             "name": name,
             "arguments": arguments,
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{self._settings.backend_internal_url}/api/internal/voice/tool",
-                json=payload,
-                headers=self._headers(),
-            )
+        response = await self._client.post(
+            f"{self._settings.backend_internal_url}/api/internal/voice/tool",
+            json=payload,
+            headers=self._headers(),
+            timeout=30.0,
+        )
         response.raise_for_status()
         return response.json()

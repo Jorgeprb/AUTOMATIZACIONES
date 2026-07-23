@@ -1,85 +1,95 @@
-import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "@/api/client";
 import { RequireAuth } from "@/components/layout/RequireAuth";
-import { isAuthenticated, loginWithPassword, logout } from "@/lib/auth";
+import { getCurrentAdmin, loginWithPassword } from "@/lib/auth";
 import { LoginPage } from "@/pages/LoginPage";
 
+vi.mock("@/lib/auth", () => ({
+  getCurrentAdmin: vi.fn(),
+  loginWithPassword: vi.fn(),
+  logout: vi.fn(),
+}));
+
+const identity = { username: "admin", role: "super_admin" as const, clinic_ids: [] };
+
+function renderWithProviders(ui: React.ReactNode, initialEntries = ["/"]) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
 describe("LoginPage", () => {
-  beforeEach(() => logout());
-
-  it("redirects private routes to login when no session exists", () => {
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <Routes>
-          <Route path="/login" element={<div>Login requerido</div>} />
-          <Route element={<RequireAuth />}>
-            <Route path="/" element={<div>Panel privado</div>} />
-          </Route>
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText("Login requerido")).toBeInTheDocument();
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getCurrentAdmin).mockRejectedValue(new ApiError("Unauthorized", 401));
   });
 
-  it("shows an error when credentials are wrong", async () => {
-    const user = userEvent.setup();
-    render(
-      <MemoryRouter initialEntries={["/login"]}>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-        </Routes>
-      </MemoryRouter>,
+  it("redirects private routes to login when no server session exists", async () => {
+    renderWithProviders(
+      <Routes>
+        <Route path="/login" element={<div>Login requerido</div>} />
+        <Route element={<RequireAuth />}>
+          <Route path="/" element={<div>Panel privado</div>} />
+        </Route>
+      </Routes>,
     );
+    expect(await screen.findByText("Login requerido")).toBeInTheDocument();
+  });
 
+  it("shows the backend error when credentials are wrong", async () => {
+    vi.mocked(loginWithPassword).mockRejectedValue(
+      new ApiError("Usuario o contraseña incorrectos.", 401),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(
+      <Routes><Route path="/login" element={<LoginPage />} /></Routes>,
+      ["/login"],
+    );
     await user.type(screen.getByLabelText("Usuario"), "admin");
     await user.type(screen.getByLabelText("Contraseña"), "mal");
     await user.click(screen.getByRole("button", { name: "Entrar" }));
-
-    expect(
-      screen.getByText("Usuario o contraseña incorrectos."),
-    ).toBeInTheDocument();
-    expect(isAuthenticated()).toBe(false);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Usuario o contraseña incorrectos.",
+    );
   });
 
-  it("logs in with fixed credentials and keeps the session", async () => {
+  it("stores the authenticated identity in React Query and redirects", async () => {
+    vi.mocked(loginWithPassword).mockResolvedValue(identity);
     const user = userEvent.setup();
-    render(
-      <MemoryRouter
-        initialEntries={[{ pathname: "/login", state: { from: "/settings" } }]}
-      >
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/settings" element={<div>Panel privado</div>} />
-        </Routes>
-      </MemoryRouter>,
+    renderWithProviders(
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/" element={<div>Panel privado</div>} />
+      </Routes>,
+      ["/login"],
     );
-
     await user.type(screen.getByLabelText("Usuario"), "admin");
     await user.type(screen.getByLabelText("Contraseña"), "Tatodobajocontrol");
     await user.click(screen.getByRole("button", { name: "Entrar" }));
-
-    expect(screen.getByText("Panel privado")).toBeInTheDocument();
-    expect(isAuthenticated()).toBe(true);
+    expect(await screen.findByText("Panel privado")).toBeInTheDocument();
+    expect(loginWithPassword).toHaveBeenCalledWith("admin", "Tatodobajocontrol");
   });
 
-  it("allows private routes after refreshing with an active local session", () => {
-    expect(loginWithPassword("admin", "Tatodobajocontrol")).toBe(true);
-
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <Routes>
-          <Route path="/login" element={<div>Login requerido</div>} />
-          <Route element={<RequireAuth />}>
-            <Route path="/" element={<div>Panel privado</div>} />
-          </Route>
-        </Routes>
-      </MemoryRouter>,
+  it("allows private routes when the server session is active", async () => {
+    vi.mocked(getCurrentAdmin).mockResolvedValue(identity);
+    renderWithProviders(
+      <Routes>
+        <Route path="/login" element={<div>Login requerido</div>} />
+        <Route element={<RequireAuth />}>
+          <Route path="/" element={<div>Panel privado</div>} />
+        </Route>
+      </Routes>,
     );
-
-    expect(screen.getByText("Panel privado")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Panel privado")).toBeInTheDocument());
   });
 });

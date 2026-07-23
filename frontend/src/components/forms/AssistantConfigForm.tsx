@@ -521,7 +521,7 @@ export function AssistantConfigForm({
         JSON.stringify({
           type: "response.create",
           ...(realtimeExternalTtsRef.current
-            ? { response: { modalities: ["text"] } }
+            ? { response: { output_modalities: ["text"] } }
             : {}),
         }),
       );
@@ -603,8 +603,7 @@ export function AssistantConfigForm({
       if (
         realtimeExternalTtsRef.current &&
         (type === "response.output_text.delta" ||
-          type === "response.text.delta" ||
-          type === "response.audio_transcript.delta")
+          type === "response.output_audio_transcript.delta")
       ) {
         realtimeTextBufferRef.current += String(payload.delta ?? "");
       }
@@ -775,7 +774,7 @@ export function AssistantConfigForm({
             type: "response.create",
             response: {
               instructions: preview.initial_message,
-              ...(preview.external_tts_required ? { modalities: ["text"] } : {}),
+              ...(preview.external_tts_required ? { output_modalities: ["text"] } : {}),
             },
           }),
         );
@@ -1003,7 +1002,7 @@ export function AssistantConfigForm({
       </div>
       <div
         role="tablist"
-        aria-label="Secciones de configuraciÃ³n del asistente"
+        aria-label="Secciones de configuración del asistente"
         className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
       >
         {assistantConfigTabs.map((tab) => {
@@ -1323,11 +1322,11 @@ export function AssistantConfigForm({
                   </div>
                   <p className="mt-1 text-xs leading-5 text-[#6f7c92]">
                     Genera audio corto con la voz seleccionada. Usa los valores
-                    actuales del formulario, aunque todavÃ­a no hayas guardado.
+                    actuales del formulario, aunque todavía no hayas guardado.
                   </p>
                 </div>
                 <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-[#526078]">
-                  {realtimeVoice} Â· {realtimeModel}
+                  {realtimeVoice} · {realtimeModel}
                 </span>
               </div>
               <div className="mt-3">
@@ -1341,7 +1340,7 @@ export function AssistantConfigForm({
                 />
                 <p className="mt-1 text-xs text-[#7d8899]">
                   {voicePreviewText.length}/500 caracteres. Esta prueba no crea
-                  conversaciÃ³n ni se guarda.
+                  conversación ni se guarda.
                 </p>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1523,7 +1522,7 @@ export function AssistantConfigForm({
               />
             </div>
             <div>
-              <Label htmlFor="assistant-voice-gender">GÃ©nero/estilo</Label>
+              <Label htmlFor="assistant-voice-gender">Género/estilo</Label>
               <Input
                 id="assistant-voice-gender"
                 className="mt-1.5"
@@ -1577,12 +1576,12 @@ export function AssistantConfigForm({
                 ))}
               </Select>
               <p className="mt-1 text-xs text-[#7d8899]">
-                Formato intermedio antes de codificar para telefonÃ­a.
+                Formato intermedio antes de codificar para telefonía.
               </p>
             </div>
             <div>
               <Label htmlFor="assistant-telephony-codec">
-                Codec telefonÃ­a
+                Codec telefonía
               </Label>
               <Select
                 id="assistant-telephony-codec"
@@ -2376,7 +2375,7 @@ export function AssistantConfigForm({
                   Primer mensaje
                 </p>
                 <p className="mt-2 text-sm leading-6 text-[#47546a]">
-                  {firstMessage || "El saludo aparecerÃ¡ aquÃ­."}
+                  {firstMessage || "El saludo aparecerá aquí."}
                 </p>
               </div>
               <div className="rounded-xl border bg-white p-3">
@@ -2384,7 +2383,7 @@ export function AssistantConfigForm({
                   Prompt general actual
                 </p>
                 <p className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs leading-5 text-[#47546a]">
-                  {systemPrompt || "El prompt general aparecerÃ¡ aquÃ­."}
+                  {systemPrompt || "El prompt general aparecerá aquí."}
                 </p>
               </div>
             </div>

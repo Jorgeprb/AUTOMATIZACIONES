@@ -1,30 +1,26 @@
-const AUTH_STORAGE_KEY = "clinic_voice_agent_admin_session";
+import { apiRequest } from "@/api/client";
 
-const FIXED_USERNAME = "admin";
-const FIXED_PASSWORD = "Tatodobajocontrol";
+export type AdminIdentity = {
+  username: string;
+  role: "super_admin" | "clinic_admin" | "operator" | "read_only";
+  clinic_ids: string[];
+  must_change_password?: boolean;
+};
 
-function getStorage(): Storage | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  return window.localStorage;
+export function getCurrentAdmin(): Promise<AdminIdentity> {
+  return apiRequest<AdminIdentity>("/auth/me");
 }
 
-export function isAuthenticated(): boolean {
-  return getStorage()?.getItem(AUTH_STORAGE_KEY) === "authenticated";
+export function loginWithPassword(
+  username: string,
+  password: string,
+): Promise<AdminIdentity> {
+  return apiRequest<AdminIdentity>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
 }
 
-export function loginWithPassword(username: string, password: string): boolean {
-  const isValid =
-    username.trim() === FIXED_USERNAME && password === FIXED_PASSWORD;
-  if (!isValid) {
-    return false;
-  }
-
-  getStorage()?.setItem(AUTH_STORAGE_KEY, "authenticated");
-  return true;
-}
-
-export function logout(): void {
-  getStorage()?.removeItem(AUTH_STORAGE_KEY);
+export async function logout(): Promise<void> {
+  await apiRequest<void>("/auth/logout", { method: "POST" });
 }

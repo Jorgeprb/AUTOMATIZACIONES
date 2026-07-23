@@ -3,44 +3,29 @@
 	admin off
 }
 
-{$APP_DOMAIN} {
-	encode zstd gzip
-
-	log {
-		output stdout
-		format json
-	}
-
+(secure_headers) {
 	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
-		Referrer-Policy "no-referrer"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "microphone=(self), camera=(), geolocation=()"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://voice.autogal.es wss://voice.autogal.es; media-src 'self' blob:"
 		-Server
 	}
+}
 
-	reverse_proxy app:8000 {
-		health_uri /health/ready
-		health_interval 30s
-		health_timeout 5s
-	}
+{$APP_DOMAIN} {
+	encode zstd gzip
+	import secure_headers
+	handle /api/admin* { respond "not found" 404 }
+	reverse_proxy app:8000
 }
 
 {$APP_ADMIN_DOMAIN} {
 	encode zstd gzip
-
-	log {
-		output stdout
-		format json
-	}
-
-	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
-		Referrer-Policy "no-referrer"
-		-Server
-	}
-
-	reverse_proxy frontend:80
+	import secure_headers
+	@api path /api/* /auth/* /health/*
+	handle @api { reverse_proxy app:8000 }
+	handle { reverse_proxy frontend:8080 }
 }

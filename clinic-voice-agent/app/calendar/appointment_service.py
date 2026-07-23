@@ -26,7 +26,10 @@ from app.models import (
     Clinic,
     Service,
     Worker,
+    IntegrationOutbox,
 )
+
+from app.utils.phone import normalize_phone
 
 logger = logging.getLogger(__name__)
 
@@ -223,14 +226,15 @@ def _compensate_google_event(
     *,
     calendar_id: str,
     event_id: str,
-) -> None:
-    """Best-effort deletion after PostgreSQL fails."""
+) -> bool:
+    """Best-effort deletion after PostgreSQL fails; report success."""
     try:
         client.events().delete(
             calendarId=calendar_id,
             eventId=event_id,
             sendUpdates="none",
         ).execute()
+        return True
     except Exception:
         logger.exception(
             "google_event_compensation_failed",
@@ -239,6 +243,30 @@ def _compensate_google_event(
                 "google_event_id": event_id,
             },
         )
+        return False
+
+
+def _enqueue_google_delete_compensation(
+    session: Session, *, clinic_id: uuid.UUID, calendar_id: str, event_id: str
+) -> None:
+    """Persist a retryable compensation command without duplicating work."""
+    dedupe_key = f"google-delete:{calendar_id}:{event_id}"
+    existing = session.scalar(
+        select(IntegrationOutbox).where(IntegrationOutbox.dedupe_key == dedupe_key)
+    )
+    if existing is None:
+        session.add(
+            IntegrationOutbox(
+                kind="google_calendar.delete_event",
+                dedupe_key=dedupe_key,
+                payload_json={
+                    "clinic_id": str(clinic_id),
+                    "calendar_id": calendar_id,
+                    "event_id": event_id,
+                },
+            )
+        )
+        session.commit()
 
 
 def create_appointment_transactional(
@@ -254,8 +282,26 @@ def create_appointment_transactional(
     start_at: datetime,
     end_at: datetime,
     call_session_id: uuid.UUID | None,
+    idempotency_key: str | None = None,
 ) -> Appointment:
     """Lock, recheck, create in Google, and persist one appointment."""
+    normalized_phone = normalize_phone(patient_phone)
+    normalized_idempotency = (idempotency_key or "").strip()[:200] or None
+    if normalized_idempotency:
+        existing = session.scalar(
+            select(Appointment)
+            .options(joinedload(Appointment.worker), joinedload(Appointment.service))
+            .where(
+                Appointment.clinic_id == clinic_id,
+                Appointment.idempotency_key == normalized_idempotency,
+            )
+        )
+        if existing is not None:
+            logger.info(
+                "appointment_idempotency_hit",
+                extra={"appointment_id": str(existing.id), "clinic_id": str(clinic_id)},
+            )
+            return existing
     _reset_request_transaction(session)
     appointment_id = uuid.uuid4()
     google_calendar_id: str | None = None
@@ -328,7 +374,7 @@ def create_appointment_transactional(
 
         description = (
             "Reserva creada por asistente telefónico. "
-            f"Teléfono: {patient_phone} "
+            f"Teléfono: {normalized_phone} "
             f"Motivo general: {reason or 'No especificado'}"
         )
         event_body = build_worker_event_body(
@@ -371,7 +417,8 @@ def create_appointment_transactional(
             google_calendar_id=google_calendar_id,
             google_event_id=google_event_id,
             patient_name=patient_name,
-            patient_phone=patient_phone,
+            patient_phone=normalized_phone,
+            idempotency_key=normalized_idempotency,
             reason=reason,
             start_at=start_at,
             end_at=end_at,
@@ -393,11 +440,18 @@ def create_appointment_transactional(
     except Exception as exc:
         session.rollback()
         if google_event_created and google_calendar_id and google_event_id:
-            _compensate_google_event(
+            compensated = _compensate_google_event(
                 client,
                 calendar_id=google_calendar_id,
                 event_id=google_event_id,
             )
+            if not compensated:
+                _enqueue_google_delete_compensation(
+                    session,
+                    clinic_id=clinic_id,
+                    calendar_id=google_calendar_id,
+                    event_id=google_event_id,
+                )
         raise AppointmentPersistenceFailed(
             "Appointment could not be persisted."
         ) from exc
@@ -476,6 +530,7 @@ def cancel_appointment_transactional(
     approximate_date: date | None,
 ) -> tuple[Appointment, bool]:
     """Delete the Google event and soft-cancel the local appointment."""
+    patient_phone = normalize_phone(patient_phone) if patient_phone else None
     _reset_request_transaction(session)
     session.begin()
     try:

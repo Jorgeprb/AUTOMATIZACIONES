@@ -63,6 +63,7 @@ from app.call_audio import (
     normalize_call_audio_mode,
     requires_external_voice_legal_confirmation,
 )
+from app.auth import AdminPrincipal
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import (
@@ -91,6 +92,7 @@ from app.schemas import (
     WorkerFreeBusyTestRequest,
     WorkerFreeBusyTestResponse,
 )
+from app.utils.security import require_admin_access
 from app.voice_profile import (
     build_voice_instruction_block,
     effective_preview_voice,
@@ -251,12 +253,15 @@ def _enforce_assistant_voice_policy(
 )
 def list_clinics(
     session: Annotated[Session, Depends(get_db)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     is_active: bool | None = Query(default=None),
 ) -> Page[ClinicRead]:
     """List clinics with simple pagination and active-state filtering."""
     statement = select(Clinic)
+    if not principal.is_super_admin:
+        statement = statement.where(Clinic.id.in_(principal.clinic_ids))
     if is_active is not None:
         statement = statement.where(Clinic.is_active.is_(is_active))
     return paginate(
@@ -277,8 +282,14 @@ def list_clinics(
 def create_clinic(
     payload: ClinicCreate,
     session: Annotated[Session, Depends(get_db)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> Clinic:
     """Create one tenant clinic."""
+    if not principal.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a global administrator can create clinics.",
+        )
     clinic = Clinic(**payload.model_dump())
     session.add(clinic)
     commit_or_conflict(session, detail="The main phone number is already in use.")
@@ -1062,11 +1073,11 @@ def get_recommended_assistant_template() -> AssistantRecommendedTemplateResponse
         human_transfer_message="Le paso con una persona si está disponible.",
         human_transfer_rules=(
             "Transfiere a humano si el usuario lo pide, si hay queja, si falta "
-            "informaciÃ³n crÃ­tica o si la peticiÃ³n queda fuera de alcance."
+            "información crítica o si la petición queda fuera de alcance."
         ),
         commercial_call_message=(
-            "Gracias, pero este nÃºmero es para pacientes y gestiÃ³n de citas. "
-            "No podemos atender llamadas comerciales por esta vÃ­a."
+            "Gracias, pero este número es para pacientes y gestión de citas. "
+            "No podemos atender llamadas comerciales por esta vía."
         ),
         conversation_extra_rules=(
             "No repitas preguntas ya respondidas. Usa pending_slots para "

@@ -151,8 +151,10 @@ def test_send_pcm16_resamples_8k_to_24k_before_openai() -> None:
             tool_executor=lambda name, arguments: {},  # type: ignore[arg-type]
         )
         bridge._ws = websocket
-        await bridge.send_pcm16(b"\x00\x00" * 160)
+        for _ in range(5):
+            await bridge.send_pcm16(b"\x00\x00" * 160)
 
+        assert len(websocket.messages) == 1
         assert websocket.messages[0]["type"] == "input_audio_buffer.append"
         audio = base64.b64decode(websocket.messages[0]["audio"])
         assert len(audio) > 320

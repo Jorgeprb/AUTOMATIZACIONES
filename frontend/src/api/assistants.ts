@@ -1,4 +1,4 @@
-import { apiBlobRequest, apiConfig, apiRequest, toQuery } from "@/api/client";
+import { apiBlobRequest, apiConfig, apiRequest, cookieValue, toQuery } from "@/api/client";
 import type { Page } from "@/schemas/api";
 import type {
   AssistantConfig,
@@ -212,12 +212,14 @@ export function closeRealtimePreviewSession(sessionId: string): Promise<void> {
 
 export function closeRealtimePreviewSessionKeepalive(sessionId: string): void {
   const headers: Record<string, string> = {};
-  if (apiConfig.adminApiKey) headers["X-Admin-API-Key"] = apiConfig.adminApiKey;
+  const csrfToken = cookieValue("autogal_admin_csrf");
+  if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
   void fetch(
     `${apiConfig.baseUrl}/api/admin/realtime-preview-sessions/${sessionId}`,
     {
       method: "DELETE",
       headers,
+      credentials: "include",
       keepalive: true,
     },
   ).catch(() => undefined);

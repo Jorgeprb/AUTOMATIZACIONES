@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import { listClinics } from "@/api/clinics";
+import { listAllClinics } from "@/api/clinics";
 import type { Clinic } from "@/schemas/clinic";
 
 const STORAGE_KEY = "clinic-voice-active-clinic";
@@ -30,9 +30,9 @@ export function ActiveClinicProvider({ children }: { children: ReactNode }) {
   );
   const clinicsQuery = useQuery({
     queryKey: ["clinics", "selector"],
-    queryFn: () => listClinics({ pageSize: 100 }),
+    queryFn: listAllClinics,
   });
-  const clinics = clinicsQuery.data?.items ?? [];
+  const clinics = clinicsQuery.data ?? [];
 
   useEffect(() => {
     if (!clinics.length) return;

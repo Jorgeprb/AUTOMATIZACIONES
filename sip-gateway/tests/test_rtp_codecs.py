@@ -90,3 +90,20 @@ def test_rtp_port_pool_leases_even_ports_and_releases() -> None:
     assert second == 10004
     pool.release(first)
     assert pool.lease() == 10002
+
+
+def test_rtp_parser_handles_extension_padding_and_sequence_wrap() -> None:
+    import struct
+
+    payload = b"voice"
+    header = struct.pack("!BBHII", 0xB0, 8, 65535, 1234, 99)  # V2 + P + X
+    extension = struct.pack("!HHI", 0xBEDE, 1, 0x01020304)
+    padded = header + extension + payload + b"\x00\x00\x00\x04"
+    parsed = RTPPacket.parse(padded)
+    assert parsed.payload == payload
+
+    buffer = JitterBuffer(depth=1)
+    assert buffer.push(RTPPacket(8, 65535, 0, 99, b"a")) == []
+    released = buffer.push(RTPPacket(8, 0, 160, 99, b"b"))
+    assert [packet.sequence_number for packet in released] == [65535]
+    assert [packet.sequence_number for packet in buffer.flush()] == [0]

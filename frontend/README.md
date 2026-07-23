@@ -20,7 +20,6 @@ Copy-Item .env.example .env
 
 ```dotenv
 VITE_API_BASE_URL=http://localhost:8000
-VITE_ADMIN_API_KEY=la-misma-clave-que-ADMIN_API_KEY
 VITE_ENABLE_DEV_FALLBACKS=false
 ```
 
@@ -31,16 +30,10 @@ CORS_ORIGINS=http://localhost:5173
 FRONTEND_BASE_URL=http://localhost:5173
 ```
 
-La API key se inyecta en el build de Vite. Esto solo es aceptable para el MVP.
-El panel tiene una barrera visual simple en `/login`, pero no sustituye una
-autenticaciÃ³n real de backend.
-
-Credenciales del MVP:
-
-```text
-usuario: admin
-contraseÃ±a: Tatodobajocontrol
-```
+El panel inicia sesión contra `/auth/login`. El backend guarda una sesión opaca
+revocable en PostgreSQL mediante cookie HttpOnly y protege las escrituras con CSRF.
+Las credenciales iniciales se leen exclusivamente de `ADMIN_BOOTSTRAP_USERNAME` y
+`ADMIN_BOOTSTRAP_PASSWORD` en el servidor.
 
 ## Arranque
 
@@ -70,7 +63,6 @@ Variables del proyecto Pages:
 
 ```dotenv
 VITE_API_BASE_URL=https://BACKEND_RENDER_URL
-VITE_ADMIN_API_KEY=misma-clave-que-ADMIN_API_KEY
 VITE_ENABLE_DEV_FALLBACKS=false
 ```
 
