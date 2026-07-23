@@ -89,6 +89,7 @@ class VoiceContextResponse(BaseModel):
     allow_interruptions: bool
     idle_timeout_ms: int | None
     transcript_enabled: bool
+    language: str
     first_message: str
     instructions: str
     prompt: str
@@ -320,6 +321,19 @@ def create_voice_context(
     session.refresh(call_session)
 
     instructions = build_realtime_instructions(context)
+    if config.call_audio_mode == "vps_media_bridge" and config.voice_provider != "openai":
+        instructions = (
+            f"{instructions}\n\n# Estado real de esta llamada\n"
+            f"El gateway ya ha reproducido externamente este saludo: "
+            f"{config.first_message!r}. No lo repitas ni vuelvas a presentarte "
+            "salvo que la persona lo pida expresamente. Espera a que la persona "
+            "hable y responde a su petición concreta.\n"
+            "Continúa exactamente en el mismo idioma del saludo inicial. "
+            f"Si el idioma configurado `{config.language}` no coincide con ese "
+            "saludo, prevalece el idioma del saludo para evitar cambios de idioma "
+            "durante la llamada. El locale o el nombre de la voz TTS son solo "
+            "metadatos de síntesis y nunca deben cambiar el idioma."
+        )
     instructions = (
         f"{instructions}\n\n# Contexto técnico\n"
         f"clinic_id técnico de esta llamada: {context.clinic.id}. "
@@ -354,6 +368,7 @@ def create_voice_context(
         allow_interruptions=config.allow_interruptions,
         idle_timeout_ms=config.idle_timeout_ms,
         transcript_enabled=config.transcript_enabled,
+        language=config.language,
         first_message=config.first_message,
         instructions=instructions,
         prompt=instructions,

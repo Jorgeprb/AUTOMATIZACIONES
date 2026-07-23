@@ -173,6 +173,8 @@ class GatewayCallSession:
         self._barge_in_voice_frames = 0
         self._last_barge_in_at = 0.0
         self._bot_speaking_since: float | None = None
+        self._input_suppressed_until = 0.0
+        self._scheduled_playout_end = 0.0
         self._tts_jobs_inflight = 0
         self.stats = CallStats()
         self.started_at = time.perf_counter()
@@ -242,6 +244,14 @@ class GatewayCallSession:
                 tool_executor=tool_executor,
             )
             self._media_started.set()
+            if (
+                context.voice_provider != "openai"
+                and self.settings.external_tts_half_duplex
+            ):
+                self._input_suppressed_until = (
+                    time.monotonic()
+                    + self.settings.initial_input_guard_ms / 1000.0
+                )
             self._spawn(self._rtp_sender_loop())
             if context.voice_provider != "openai":
                 greeting = (context.first_message or INITIAL_GREETING).strip()
@@ -388,6 +398,20 @@ class GatewayCallSession:
         else:
             self._spawn(self._external_tts_output_loop())
 
+    def _should_suppress_openai_input(self, now: float) -> bool:
+        """Prevent external TTS and its echo from creating phantom user turns."""
+        return bool(
+            self.context is not None
+            and self.context.voice_provider != "openai"
+            and self.settings.external_tts_half_duplex
+            and (
+                self._bot_speaking
+                or self._tts_jobs_inflight > 0
+                or not self.outbound_audio_queue.empty()
+                or now < self._input_suppressed_until
+            )
+        )
+
     async def _inbound_audio_loop(self) -> None:
         assert self.bridge is not None
         while not self._closed.is_set():
@@ -403,6 +427,10 @@ class GatewayCallSession:
                 if self._bot_speaking_since is not None
                 else 0.0
             )
+            if self._should_suppress_openai_input(now):
+                self._barge_in_voice_frames = 0
+                continue
+
             if (
                 self.context is not None
                 and self.context.allow_interruptions
@@ -426,6 +454,8 @@ class GatewayCallSession:
                 self._last_barge_in_at = now
                 self._tts_generation += 1
                 self._stop_tts.set()
+                self._scheduled_playout_end = now
+                self._input_suppressed_until = now
                 response_cancelled = await self.bridge.cancel_response()
                 logger.info(
                     "barge_in_detected",
@@ -559,6 +589,30 @@ class GatewayCallSession:
         if not raw_g711:
             return
         buffered_ms = round(len(raw_g711) / 8.0, 2)
+        if (
+            self.context is not None
+            and self.context.voice_provider != "openai"
+            and self.settings.external_tts_half_duplex
+        ):
+            now = time.monotonic()
+            duration_seconds = len(raw_g711) / 8000.0
+            self._scheduled_playout_end = (
+                max(now, self._scheduled_playout_end) + duration_seconds
+            )
+            self._input_suppressed_until = max(
+                self._input_suppressed_until,
+                self._scheduled_playout_end
+                + self.settings.echo_suppression_tail_ms / 1000.0,
+            )
+            logger.info(
+                "openai_input_suppressed_for_playout",
+                extra={
+                    "call_id": self.call_id,
+                    "source": source,
+                    "audio_ms": buffered_ms,
+                    "echo_tail_ms": self.settings.echo_suppression_tail_ms,
+                },
+            )
         logger.info(
             "tts_audio_bytes",
             extra={"call_id": self.call_id, "source": source, "bytes": len(raw_g711)},
@@ -648,6 +702,9 @@ class GatewayCallSession:
                     if self._stop_tts.is_set():
                         payload_buffer.clear()
                         self._drain_outbound_audio_queue()
+                        now = time.monotonic()
+                        self._scheduled_playout_end = now
+                        self._input_suppressed_until = now
                         self._stop_tts.clear()
 
                     self._drain_outbound_audio_queue_into(payload_buffer)
@@ -663,6 +720,12 @@ class GatewayCallSession:
                         payload = silence
                         self._bot_speaking = False
                         self._bot_speaking_since = None
+                        if was_bot_speaking:
+                            self._input_suppressed_until = max(
+                                self._input_suppressed_until,
+                                time.monotonic()
+                                + self.settings.echo_suppression_tail_ms / 1000.0,
+                            )
                         if was_bot_speaking and self._tts_jobs_inflight > 0:
                             underruns += 1
                             self.stats.outbound_underruns += 1

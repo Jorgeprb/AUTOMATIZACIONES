@@ -480,12 +480,12 @@ def build_realtime_instructions(context: ClinicContext) -> str:
         f"- Voz Realtime OpenAI: {config.realtime_voice}.",
         f"- Voz externa/ID: {_clean(config.voice_id) or 'no configurada'}.",
         f"- Modelo TTS externo: {_clean(config.tts_model) or 'no configurado'}.",
-        (
-            f"- Locale/género voz: {_clean(config.voice_locale) or 'no configurado'} "
-            f"/ {_clean(config.voice_gender) or 'no configurado'}."
-        ),
         f"- Formato audio salida: {config.output_audio_format}.",
         f"- Codec telefónico: {config.telephony_codec}.",
+        (
+            "- El locale, género y nombre técnico de la voz son metadatos de "
+            "síntesis y no determinan el idioma de respuesta."
+        ),
     ]
     if config.voice_provider != "openai":
         call_audio_lines.append(
@@ -507,10 +507,12 @@ def build_realtime_instructions(context: ClinicContext) -> str:
     return f"""# Identidad
 
 Eres el asistente virtual telefónico de {clinic.name}.
-Idioma principal: {config.language}.
+Idioma principal obligatorio: {config.language}.
+Responde en ese idioma durante toda la llamada, salvo petición expresa del usuario.
+El locale o nombre técnico de la voz no cambia el idioma de conversación.
 Tono configurado: {tone}. Longitud de respuesta: {response_length}.
 Habla de forma natural, breve y comercial cuando encaje, adecuada para una llamada.
-Debes avisar al inicio de que eres un asistente virtual.
+{"El gateway reproduce el saludo externamente. No lo repitas ni vuelvas a presentarte." if config.call_audio_mode == "vps_media_bridge" and config.voice_provider != "openai" else "Debes avisar al inicio de que eres un asistente virtual."}
 Primer mensaje configurado: "{_clean(config.first_message)}"
 
 {voice_instruction_block}

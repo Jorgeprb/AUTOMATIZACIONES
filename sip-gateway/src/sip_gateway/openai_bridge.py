@@ -48,12 +48,44 @@ def _sanitize_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [_sanitize_tool_schema(tool) for tool in tools]
 
 
+def build_external_greeting_item(context: VoiceContext) -> dict[str, Any] | None:
+    """Represent an externally played greeting in the Realtime conversation."""
+    if context.voice_provider == "openai" or not context.first_message.strip():
+        return None
+    return {
+        "type": "conversation.item.create",
+        "item": {
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": context.first_message,
+                }
+            ],
+        },
+    }
+
+
 def build_realtime_session(context: VoiceContext) -> dict[str, Any]:
     """Build the Realtime GA session update payload for one bridge call."""
     external_tts = context.voice_provider != "openai"
+    instructions = context.instructions
+    if external_tts and context.first_message:
+        instructions = (
+            f"{instructions}\n\n# Estado de reproducción externo\n"
+            f"El saludo inicial ya fue reproducido por el gateway: "
+            f"{context.first_message!r}. No lo repitas ni vuelvas a presentarte. "
+            "Continúa exactamente en el mismo idioma del saludo inicial y "
+            "responde únicamente a lo que diga la persona usuaria. Si el "
+            f"idioma configurado `{context.language}` no coincide con el saludo, "
+            "prevalece el idioma del saludo. El locale de la voz TTS no "
+            "determina el idioma de respuesta."
+        )
     session: dict[str, Any] = {
         "type": "realtime",
-        "instructions": context.instructions,
+        "instructions": instructions,
         "output_modalities": ["text"] if external_tts else ["audio"],
         "audio": {
             "input": {
@@ -111,6 +143,10 @@ class OpenAIRealtimeBridge:
         self._started_at = 0.0
         self._input_audio_frames_sent = 0
         self._response_active = False
+        self._response_create_pending = False
+        self._continuation_after_tools = False
+        self._response_lock = asyncio.Lock()
+        self._handled_tool_call_ids: set[str] = set()
         self._input_resampler = StatefulPcm16Resampler(
             SAMPLE_RATE, OPENAI_INPUT_SAMPLE_RATE
         )
@@ -165,8 +201,21 @@ class OpenAIRealtimeBridge:
                 "tools_count": tools_count,
                 "input_rate": OPENAI_INPUT_SAMPLE_RATE,
                 "output_modalities": session["output_modalities"],
+                "language": self._context.language,
             },
         )
+
+        greeting_item = build_external_greeting_item(self._context)
+        if greeting_item is not None:
+            await self._send(greeting_item)
+            logger.info(
+                "openai_external_greeting_recorded",
+                extra={
+                    "call_id": self._call_id,
+                    "chars": len(self._context.first_message),
+                    "language": self._context.language,
+                },
+            )
 
         if self._context.first_message and not external_tts:
             await self._send(
@@ -240,6 +289,37 @@ class OpenAIRealtimeBridge:
         )
         return True
 
+    async def _request_response(self, *, reason: str) -> bool:
+        """Create one response, deferring safely while another is active."""
+        async with self._response_lock:
+            if self._ws is None or self._closed.is_set():
+                return False
+            if self._response_active or self._response_create_pending:
+                self._continuation_after_tools = True
+                logger.info(
+                    "openai_response_create_deferred",
+                    extra={
+                        "call_id": self._call_id,
+                        "reason": reason,
+                        "response_active": self._response_active,
+                        "create_pending": self._response_create_pending,
+                    },
+                )
+                return False
+            self._response_create_pending = True
+            await self._send(
+                {
+                    "event_id": f"evt_{uuid.uuid4().hex}",
+                    "type": "response.create",
+                    "response": {"output_modalities": ["text"]},
+                }
+            )
+            logger.info(
+                "openai_response_create_sent",
+                extra={"call_id": self._call_id, "reason": reason},
+            )
+            return True
+
     async def close(self) -> None:
         """Close WebSocket and stop reader task."""
         self._closed.set()
@@ -289,10 +369,12 @@ class OpenAIRealtimeBridge:
             logger.info("openai_session_created", extra={"call_id": self._call_id})
             return
         if event_type == "response.created":
+            self._response_create_pending = False
             self._response_active = True
             return
         if event_type in {"response.cancelled", "response.failed"}:
             self._response_active = False
+            self._response_create_pending = False
         if event_type == "error":
             raw_error = event.get("error")
             error = raw_error if isinstance(raw_error, dict) else {}
@@ -300,8 +382,17 @@ class OpenAIRealtimeBridge:
             message = str(error.get("message") or "")
             if code == "response_cancel_not_active":
                 self._response_active = False
+                self._response_create_pending = False
                 logger.warning(
                     "openai_cancel_not_active_ignored",
+                    extra={"call_id": self._call_id},
+                )
+                return
+            if code == "conversation_already_has_active_response":
+                self._response_create_pending = False
+                self._continuation_after_tools = True
+                logger.warning(
+                    "openai_active_response_conflict_ignored",
                     extra={"call_id": self._call_id},
                 )
                 return
@@ -339,8 +430,12 @@ class OpenAIRealtimeBridge:
             return
         if event_type == "response.done":
             self._response_active = False
+            self._response_create_pending = False
             logger.info("openai_response_done", extra={"call_id": self._call_id})
             await self.text_queue.put("\n")
+            if self._continuation_after_tools:
+                self._continuation_after_tools = False
+                await self._request_response(reason="tool_output")
             return
         if event_type in {
             "response.output_item.done",
@@ -349,14 +444,26 @@ class OpenAIRealtimeBridge:
             await self._maybe_handle_tool_call(event)
 
     async def _maybe_handle_tool_call(self, event: dict[str, Any]) -> None:
+        """Execute each function call once and continue only after response.done."""
         item = event.get("item") if isinstance(event.get("item"), dict) else event
         if not isinstance(item, dict):
             return
         name = item.get("name")
-        call_id = item.get("call_id") or item.get("id") or str(uuid.uuid4())
+        call_id = item.get("call_id") or item.get("id")
         arguments_raw = item.get("arguments") or item.get("arguments_json") or "{}"
-        if not isinstance(name, str) or not name:
+        if not isinstance(name, str) or not name or not isinstance(call_id, str):
             return
+        if call_id in self._handled_tool_call_ids:
+            logger.info(
+                "openai_tool_call_duplicate_ignored",
+                extra={
+                    "call_id": self._call_id,
+                    "tool_call_id": call_id,
+                    "tool_name": name,
+                },
+            )
+            return
+        self._handled_tool_call_ids.add(call_id)
         try:
             arguments = (
                 json.loads(arguments_raw)
@@ -365,6 +472,14 @@ class OpenAIRealtimeBridge:
             )
         except (TypeError, ValueError):
             arguments = {}
+        logger.info(
+            "openai_tool_call_started",
+            extra={
+                "call_id": self._call_id,
+                "tool_call_id": call_id,
+                "tool_name": name,
+            },
+        )
         output = await self._tool_executor(name, arguments)
         await self._send(
             {
@@ -376,9 +491,16 @@ class OpenAIRealtimeBridge:
                 },
             }
         )
-        await self._send(
-            {
-                "type": "response.create",
-                "response": {"output_modalities": ["text"]},
-            }
+        self._continuation_after_tools = True
+        logger.info(
+            "openai_tool_output_submitted",
+            extra={
+                "call_id": self._call_id,
+                "tool_call_id": call_id,
+                "tool_name": name,
+            },
         )
+        if not self._response_active and not self._response_create_pending:
+            self._continuation_after_tools = False
+            await self._request_response(reason="tool_output")
+

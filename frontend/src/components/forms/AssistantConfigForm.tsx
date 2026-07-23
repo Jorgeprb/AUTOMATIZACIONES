@@ -348,10 +348,6 @@ export function AssistantConfigForm({
       shouldDirty: true,
       shouldValidate: true,
     });
-    setValue("language", "gl-ES", {
-      shouldDirty: true,
-      shouldValidate: true,
-    });
     setValue("telephony_codec", "pcma", {
       shouldDirty: true,
       shouldValidate: true,
@@ -364,7 +360,7 @@ export function AssistantConfigForm({
       shouldDirty: true,
       shouldValidate: true,
     });
-    toast.success("Sabela lista: Azure, gallego y VPS Media Bridge.");
+    toast.success("Sabela lista: Azure y VPS Media Bridge. Se mantiene el idioma configurado.");
   }, [setValue]);
 
   const clearVoiceSamples = useCallback(() => {
@@ -1265,10 +1261,10 @@ export function AssistantConfigForm({
                 className="mt-3"
                 onClick={applySabelaVoice}
               >
-                Usar Sabela galego
+                Usar voz Sabela
               </Button>
               <p className="mt-1 text-xs text-[#7d8899]">
-                Aplica Azure, gl-ES-SabelaNeural, gl-ES, PCMA y VPS Media Bridge.
+                Aplica Azure, gl-ES-SabelaNeural, PCMA y VPS Media Bridge sin cambiar el idioma del asistente.
               </p>
             </div>
             <div className="sm:col-span-2 rounded-xl border border-[#dce4ff] bg-[#f8faff] p-4 text-sm leading-6 text-[#526078]">

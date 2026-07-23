@@ -50,6 +50,9 @@ class GatewaySettings(BaseSettings):
     barge_in_min_frames: int = 8
     barge_in_cooldown_ms: int = 1200
     barge_in_start_guard_ms: int = 600
+    external_tts_half_duplex: bool = True
+    initial_input_guard_ms: int = 1200
+    echo_suppression_tail_ms: int = 800
     tts_text_flush_timeout_ms: int = 650
     tts_min_flush_chars: int = 40
     openai_realtime_ws_url: str = "wss://api.openai.com/v1/realtime"
@@ -128,6 +131,8 @@ class GatewaySettings(BaseSettings):
         "barge_in_min_frames",
         "barge_in_cooldown_ms",
         "barge_in_start_guard_ms",
+        "initial_input_guard_ms",
+        "echo_suppression_tail_ms",
         "tts_text_flush_timeout_ms",
         "tts_min_flush_chars",
     )

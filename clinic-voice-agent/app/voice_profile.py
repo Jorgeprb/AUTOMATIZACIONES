@@ -220,8 +220,8 @@ def build_voice_instruction_block(profile: VoiceProfileLike) -> str:
         f"- Region Azure: {_clean(profile.azure_speech_region) or 'global/env'}.",
         f"- Estilo de voz: {_clean(profile.voice_style) or 'neutro'}.",
         (
-            f"- Locale/genero: {_clean(profile.voice_locale) or 'no configurado'} "
-            f"/ {_clean(profile.voice_gender) or 'no configurado'}."
+            "- Locale, género y nombre de voz: metadatos exclusivos de "
+            "síntesis; no determinan ni cambian el idioma de respuesta."
         ),
         f"- Velocidad numérica de voz: {profile.voice_speed}.",
         f"- Pitch: {profile.voice_pitch}.",
@@ -247,10 +247,19 @@ def build_voice_instruction_block(profile: VoiceProfileLike) -> str:
         f"- Timeout de inactividad: {timeout_rule}",
     ]
     if profile.ai_disclosure_enabled:
-        lines.append(
-            "- Disclosure IA: al inicio informa de forma natural: "
-            f"\"{effective_disclosure_message(profile)}\""
-        )
+        if (
+            profile.call_audio_mode == "vps_media_bridge"
+            and profile.voice_provider != "openai"
+        ):
+            lines.append(
+                "- Disclosure IA: ya fue incluido en el saludo reproducido "
+                "externamente. No lo repitas ni vuelvas a presentarte."
+            )
+        else:
+            lines.append(
+                "- Disclosure IA: al inicio informa de forma natural: "
+                f"\"{effective_disclosure_message(profile)}\""
+            )
     else:
         lines.append("- Disclosure IA: desactivado por configuracion.")
     custom = _clean(profile.voice_instructions)

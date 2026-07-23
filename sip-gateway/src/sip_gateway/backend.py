@@ -41,6 +41,7 @@ class VoiceContext:
     first_message: str
     instructions: str
     tools: list[dict[str, Any]]
+    language: str = "es"
     call_audio_mode: str = "vps_media_bridge"
     openai_project_id: str | None = None
     prompt: str | None = None
@@ -56,6 +57,12 @@ class VoiceContext:
         filtered = {key: value for key, value in data.items() if key in allowed}
         if not filtered.get("prompt"):
             filtered["prompt"] = filtered.get("instructions")
+        clinic = data.get("clinic") if isinstance(data.get("clinic"), dict) else {}
+        filtered["language"] = str(
+            filtered.get("language")
+            or clinic.get("default_language")
+            or "es"
+        ).strip()
         filtered["telephony_codec"] = str(
             filtered.get("telephony_codec") or "pcmu"
         ).casefold()
