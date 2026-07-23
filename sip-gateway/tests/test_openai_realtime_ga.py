@@ -161,3 +161,50 @@ def test_send_pcm16_resamples_8k_to_24k_before_openai() -> None:
         assert len(audio) % 2 == 0
 
     asyncio.run(run())
+
+
+def test_cancel_not_active_error_is_nonfatal() -> None:
+    async def run() -> None:
+        bridge = OpenAIRealtimeBridge(
+            settings=GatewaySettings(openai_api_key="test-key"),
+            backend=SimpleNamespace(),
+            context=_context(),
+            call_id="call-1",
+            tool_executor=lambda name, arguments: {},  # type: ignore[arg-type]
+        )
+        await bridge._handle_event(
+            {
+                "type": "error",
+                "error": {
+                    "code": "response_cancel_not_active",
+                    "message": "Cancellation failed: no active response found",
+                },
+            }
+        )
+        assert bridge.text_queue.empty()
+
+    asyncio.run(run())
+
+
+def test_cancel_response_is_not_sent_when_no_response_is_active() -> None:
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.messages: list[str] = []
+
+        async def send(self, raw: str) -> None:
+            self.messages.append(raw)
+
+    async def run() -> None:
+        websocket = FakeWebSocket()
+        bridge = OpenAIRealtimeBridge(
+            settings=GatewaySettings(openai_api_key="test-key"),
+            backend=SimpleNamespace(),
+            context=_context(),
+            call_id="call-1",
+            tool_executor=lambda name, arguments: {},  # type: ignore[arg-type]
+        )
+        bridge._ws = websocket
+        assert await bridge.cancel_response() is False
+        assert websocket.messages == []
+
+    asyncio.run(run())

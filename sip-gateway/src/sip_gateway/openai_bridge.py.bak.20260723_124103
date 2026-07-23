@@ -110,7 +110,6 @@ class OpenAIRealtimeBridge:
         self._first_audio_started_at: float | None = None
         self._started_at = 0.0
         self._input_audio_frames_sent = 0
-        self._response_active = False
         self._input_resampler = StatefulPcm16Resampler(
             SAMPLE_RATE, OPENAI_INPUT_SAMPLE_RATE
         )
@@ -225,20 +224,11 @@ class OpenAIRealtimeBridge:
                 },
             )
 
-    async def cancel_response(self) -> bool:
-        """Stop the active OpenAI response, avoiding invalid cancel requests."""
-        if self._ws is None or self._closed.is_set() or not self._response_active:
-            logger.debug(
-                "openai_cancel_skipped_no_active_response",
-                extra={"call_id": self._call_id},
-            )
-            return False
+    async def cancel_response(self) -> None:
+        """Ask OpenAI to stop current response for barge-in."""
+        if self._ws is None or self._closed.is_set():
+            return
         await self._send({"type": "response.cancel"})
-        logger.info(
-            "openai_response_cancel_sent",
-            extra={"call_id": self._call_id},
-        )
-        return True
 
     async def close(self) -> None:
         """Close WebSocket and stop reader task."""
@@ -288,27 +278,14 @@ class OpenAIRealtimeBridge:
         if event_type == "session.created":
             logger.info("openai_session_created", extra={"call_id": self._call_id})
             return
-        if event_type == "response.created":
-            self._response_active = True
-            return
-        if event_type in {"response.cancelled", "response.failed"}:
-            self._response_active = False
         if event_type == "error":
-            raw_error = event.get("error")
-            error = raw_error if isinstance(raw_error, dict) else {}
-            code = str(error.get("code") or "")
-            message = str(error.get("message") or "")
-            if code == "response_cancel_not_active":
-                self._response_active = False
-                logger.warning(
-                    "openai_cancel_not_active_ignored",
-                    extra={"call_id": self._call_id},
-                )
-                return
             logger.error(
                 "openai_error",
-                extra={"call_id": self._call_id, "error": raw_error},
+                extra={"call_id": self._call_id, "error": event.get("error")},
             )
+            raw_error = event.get("error")
+            error = raw_error if isinstance(raw_error, dict) else {}
+            message = str(error.get("message") or "")
             if "session.audio.input.format.rate" in message and "8000" in message:
                 logger.error(
                     "openai_invalid_8000_rate_suppressed",
@@ -338,7 +315,6 @@ class OpenAIRealtimeBridge:
                 await self.text_queue.put(delta)
             return
         if event_type == "response.done":
-            self._response_active = False
             logger.info("openai_response_done", extra={"call_id": self._call_id})
             await self.text_queue.put("\n")
             return

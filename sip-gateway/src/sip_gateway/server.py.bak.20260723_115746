@@ -582,71 +582,13 @@ class SipGateway:
         )
         self.track_task(asyncio.create_task(self._ack_timeout(call)))
 
-    def _dialog_matches(
-        self,
-        call: GatewayCallSession,
-        message: SipMessage,
-    ) -> bool:
-        """Validate an in-dialog request without requiring the same SBC IP.
-
-        VoIP providers may send the initial INVITE and subsequent ACK/BYE
-        through different signalling nodes. Source access is already checked
-        against SIP_ALLOWED_IPS in handle_datagram().
-        """
-        if message.call_id != call.call_id:
-            return False
-
-        invite_from_tag = call.invite.from_tag
-        if (
-            invite_from_tag
-            and message.from_tag
-            and message.from_tag != invite_from_tag
-        ):
-            return False
-
-        if message.to_tag and message.to_tag != call.local_tag:
-            return False
-
-        cseq_parts = message.cseq.split()
-        if (
-            len(cseq_parts) >= 2
-            and message.method
-            and cseq_parts[1].upper() != message.method
-        ):
-            return False
-
-        return True
-
     async def _handle_ack(self, message: SipMessage, addr: tuple[str, int]) -> None:
         call = self.calls_by_id.get(message.call_id)
         if call is None:
-            logger.warning(
-                "sip_ack_unknown_call",
-                extra={"call_id": message.call_id, "source_ip": addr[0]},
-            )
             return
-
-        if not self._dialog_matches(call, message):
-            logger.warning(
-                "sip_ack_dialog_mismatch",
-                extra={
-                    "call_id": message.call_id,
-                    "source_ip": addr[0],
-                    "from_tag": message.from_tag,
-                    "to_tag": message.to_tag,
-                },
-            )
+        if call.sip_addr != addr or (message.to_tag and message.to_tag != call.local_tag):
+            logger.warning("sip_ack_dialog_mismatch", extra={"call_id": message.call_id, "source_ip": addr[0]})
             return
-
-        logger.info(
-            "sip_ack_accepted",
-            extra={
-                "call_id": message.call_id,
-                "source_ip": addr[0],
-                "invite_source_ip": call.sip_addr[0],
-            },
-        )
-
         try:
             await call.start_media()
         except Exception:
@@ -660,33 +602,11 @@ class SipGateway:
         addr: tuple[str, int],
     ) -> None:
         call = self.calls_by_id.get(message.call_id)
-
-        if call is not None and not self._dialog_matches(call, message):
-            logger.warning(
-                "sip_teardown_dialog_mismatch",
-                extra={
-                    "call_id": message.call_id,
-                    "source_ip": addr[0],
-                    "method": method,
-                    "from_tag": message.from_tag,
-                    "to_tag": message.to_tag,
-                },
-            )
+        if call is not None and call.sip_addr != addr:
+            logger.warning("sip_teardown_dialog_mismatch", extra={"call_id": message.call_id, "source_ip": addr[0]})
             self._send(message, 481, "Call/Transaction Does Not Exist", addr)
             return
-
         self._send(message, 200, "OK", addr)
-
-        if call is not None:
-            logger.info(
-                "sip_teardown_accepted",
-                extra={
-                    "call_id": message.call_id,
-                    "source_ip": addr[0],
-                    "method": method,
-                    "invite_source_ip": call.sip_addr[0],
-                },
-            )
         if call is not None:
             if method == "CANCEL" and not call.media_started:
                 self._send(call.invite, 487, "Request Terminated", call.sip_addr, to_tag=call.local_tag)

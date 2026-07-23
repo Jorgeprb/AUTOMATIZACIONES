@@ -10,14 +10,8 @@ from typing import Any, ClassVar
 
 _SECRET_KEYS = ("password", "secret", "token", "authorization", "api_key", "cookie")
 _TEXT_KEYS = ("transcript", "instructions", "prompt", "body", "payload")
-_PHONE_KEYS = ("phone", "caller", "callee", "called_number", "sip_to", "sip_from")
 _PHONE_RE = re.compile(r"(?<!\w)(\+?\d[\d .()\-]{7,}\d)(?!\w)")
 _SIP_USER_RE = re.compile(r"(sip:)([^@;>\s]+)", flags=re.IGNORECASE)
-
-
-def _mask_phone(match: re.Match[str]) -> str:
-    digits = re.sub(r"\D", "", match.group(1))
-    return "***" + digits[-3:]
 
 
 def _redact(key: str, value: Any) -> Any:
@@ -28,9 +22,7 @@ def _redact(key: str, value: Any) -> Any:
         return "[REDACTED_CONTENT]"
     if isinstance(value, str):
         value = _SIP_USER_RE.sub(r"\1***", value)
-        if any(marker in lowered for marker in _PHONE_KEYS):
-            value = _PHONE_RE.sub(_mask_phone, value)
-        return value
+        return _PHONE_RE.sub(lambda m: f"***{re.sub(r'\\D', '', m.group(1))[-3:]}", value)
     if isinstance(value, dict):
         return {str(k): _redact(str(k), v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):

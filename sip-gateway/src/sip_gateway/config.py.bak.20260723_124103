@@ -45,13 +45,8 @@ class GatewaySettings(BaseSettings):
     max_call_seconds: int = 1800
     invite_rate_limit_per_minute: int = 60
     fallback_called_number: str | None = None
-    silence_energy_threshold: int = 900
+    silence_energy_threshold: int = 350
     silence_timeout_ms: int = 900
-    barge_in_min_frames: int = 8
-    barge_in_cooldown_ms: int = 1200
-    barge_in_start_guard_ms: int = 600
-    tts_text_flush_timeout_ms: int = 650
-    tts_min_flush_chars: int = 40
     openai_realtime_ws_url: str = "wss://api.openai.com/v1/realtime"
     openai_project_id: str = ""
     openai_hosted_sip_domain: str = "sip.api.openai.com"
@@ -125,11 +120,6 @@ class GatewaySettings(BaseSettings):
         "jitter_flush_ms",
         "openai_queue_max_items",
         "openai_input_batch_ms",
-        "barge_in_min_frames",
-        "barge_in_cooldown_ms",
-        "barge_in_start_guard_ms",
-        "tts_text_flush_timeout_ms",
-        "tts_min_flush_chars",
     )
     @classmethod
     def validate_positive_runtime_limit(cls, value: int) -> int:
