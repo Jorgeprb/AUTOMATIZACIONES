@@ -147,10 +147,12 @@ def get_realtime_tools() -> tuple[dict[str, Any], ...]:
         _function_tool(
             "propose_slots",
             (
-                "Busca huecos reales en Google Calendar y devuelve opciones "
-                "ordenadas. Úsala después de conocer el servicio o duración y "
-                "la preferencia del paciente. Si conoces el servicio, envía "
-                "service_id y no duration_minutes. Comunica como máximo tres."
+                "Busca huecos reales en Google Calendar. Si la persona ha dado "
+                "una hora concreta y no ha elegido profesional, limita la búsqueda "
+                "a esa franja y usa max_slots=1: si aparece libre, confirma ese "
+                "horario sin ofrecer alternativas. Usa varias opciones solo cuando "
+                "la preferencia sea amplia o el horario pedido no esté disponible. "
+                "Si conoces el servicio, envía service_id y no duration_minutes."
             ),
             {
                 **_object_schema(
@@ -254,9 +256,10 @@ def get_realtime_tools() -> tuple[dict[str, Any], ...]:
         _function_tool(
             "check_availability",
             (
-                "Vuelve a comprobar un hueco exacto para un trabajador justo "
-                "antes de reservar o cuando haya pasado tiempo desde la "
-                "propuesta. No confirma ni crea la cita."
+                "Comprueba un hueco exacto para un profesional. Úsala primero "
+                "cuando la persona proponga una fecha y hora concretas. Si devuelve "
+                "available=true, afirma directamente que hay sitio y no propongas "
+                "alternativas. No confirma ni crea la cita."
             ),
             _object_schema(
                 {
@@ -1002,7 +1005,23 @@ def _execute_tool(
                 selected_slot=None,
                 awaiting_confirmation=bool(propose_response.slots),
             )
-            return {"ok": True, **propose_response.model_dump(mode="json")}
+            exact_request = propose_payload.max_slots == 1
+            return {
+                "ok": True,
+                **propose_response.model_dump(mode="json"),
+                "exact_time_request": exact_request,
+                "assistant_guidance": (
+                    "El horario solicitado está disponible. Confírmalo de forma "
+                    "directa y no ofrezcas alternativas."
+                    if exact_request and propose_response.slots
+                    else (
+                        "El horario solicitado no está disponible. Indícalo "
+                        "brevemente antes de proponer alternativas cercanas."
+                        if exact_request
+                        else "Presenta solo las opciones más relevantes de forma natural."
+                    )
+                ),
+            }
 
         if name == "check_availability":
             trusted = _normalize_booking_tool_arguments(
@@ -1067,6 +1086,13 @@ def _execute_tool(
             return {
                 "ok": True,
                 **availability_response.model_dump(mode="json"),
+                "assistant_guidance": (
+                    "El horario solicitado está disponible. Di que sí hay sitio "
+                    "y no menciones alternativas."
+                    if availability.available
+                    else "Ese horario no está disponible. Dilo brevemente y busca "
+                    "alternativas solo si la persona quiere continuar."
+                ),
             }
 
         if name == "create_appointment":

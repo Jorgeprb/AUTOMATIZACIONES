@@ -352,8 +352,16 @@ export interface CallAnalysisDetail extends CallAnalysis {
   errors: CallEvent[];
 }
 
+export interface TranscriptTurn {
+  role: "user" | "assistant" | "unknown";
+  speaker: string;
+  text: string;
+}
+
 export interface CallDebugResponse {
   call: CallAnalysisDetail;
+  transcript_text: string | null;
+  transcript: TranscriptTurn[];
   generated_at: string;
 }
 

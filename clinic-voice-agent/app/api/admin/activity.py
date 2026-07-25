@@ -21,6 +21,7 @@ from app.admin_schemas import (
     CallAppointmentRead,
     CallCreate,
     CallDebugResponse,
+    TranscriptTurnRead,
     CallEventRead,
     CallPrivacyResponse,
     CallRead,
@@ -169,6 +170,38 @@ def _call_detail(call: CallSession) -> CallAnalysisDetail:
         ],
     )
 
+
+
+
+def _transcript_turns(transcript_text: str | None) -> list[TranscriptTurnRead]:
+    """Parse the stored plain transcript into export-friendly turns."""
+    turns: list[TranscriptTurnRead] = []
+    for raw_line in (transcript_text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        speaker, separator, content = line.partition(":")
+        if not separator:
+            turns.append(
+                TranscriptTurnRead(role="unknown", speaker="Desconocido", text=line)
+            )
+            continue
+        normalized = speaker.strip().casefold()
+        role = (
+            "user"
+            if normalized in {"paciente", "usuario", "caller", "user"}
+            else "assistant"
+            if normalized in {"asistente", "assistant", "bot"}
+            else "unknown"
+        )
+        turns.append(
+            TranscriptTurnRead(
+                role=role,
+                speaker=speaker.strip(),
+                text=content.strip(),
+            )
+        )
+    return turns
 
 def _redact_value(value: object, old_phone: str) -> object:
     """Recursively remove a caller phone from stored diagnostic payloads."""
@@ -599,8 +632,11 @@ def get_call_debug(
     session: Annotated[Session, Depends(get_db)],
 ) -> CallDebugResponse:
     """Return a downloadable structured debug snapshot."""
+    detail = get_call(clinic_id, call_id, session)
     return CallDebugResponse(
-        call=get_call(clinic_id, call_id, session),
+        call=detail,
+        transcript_text=detail.transcript_text,
+        transcript=_transcript_turns(detail.transcript_text),
         generated_at=datetime.now(UTC),
     )
 

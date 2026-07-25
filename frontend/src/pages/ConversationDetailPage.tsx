@@ -40,9 +40,38 @@ import {
   formatDuration,
 } from "@/lib/calls";
 import { formatDateTime } from "@/lib/format";
-import type { CallEvent } from "@/schemas/domain";
+import type { CallEvent, TranscriptTurn } from "@/schemas/domain";
 
 type PrivacyAction = "content" | "phone" | "conversation" | null;
+
+
+function parseTranscript(transcriptText: string | null): TranscriptTurn[] {
+  const turns: TranscriptTurn[] = [];
+  for (const rawLine of (transcriptText ?? "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    const separator = line.indexOf(":");
+    if (separator < 0) {
+      const previous = turns.at(-1);
+      if (previous) previous.text = `${previous.text}\n${line}`;
+      else turns.push({ role: "unknown", speaker: "Conversación", text: line });
+      continue;
+    }
+
+    const speaker = line.slice(0, separator).trim();
+    const text = line.slice(separator + 1).trim();
+    if (!text) continue;
+    const normalized = speaker.toLocaleLowerCase("es-ES");
+    const role = ["paciente", "usuario", "cliente", "caller"].includes(normalized)
+      ? "user"
+      : ["asistente", "bot", "recepcionista"].includes(normalized)
+        ? "assistant"
+        : "unknown";
+    turns.push({ role, speaker, text });
+  }
+  return turns;
+}
 
 function EventList({
   events,
@@ -132,7 +161,7 @@ export function ConversationDetailPage() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `call-${callId}-debug.json`;
+      anchor.download = `conversacion-${callId}.json`;
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (error) {
@@ -144,6 +173,7 @@ export function ConversationDetailPage() {
   if (query.error) return <ErrorState error={query.error} />;
   if (!query.data) return null;
   const call = query.data;
+  const transcriptTurns = parseTranscript(call.transcript_text);
 
   return (
     <div className="space-y-7">
@@ -160,7 +190,7 @@ export function ConversationDetailPage() {
             </Button>
             <Button variant="outline" onClick={() => void downloadDebug()}>
               <Download className="size-4" />
-              Descargar JSON
+              Exportar conversación JSON
             </Button>
           </div>
         }
@@ -290,13 +320,68 @@ export function ConversationDetailPage() {
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Transcripción</CardTitle>
+        <CardHeader className="flex-row items-center justify-between gap-3">
+          <div>
+            <CardTitle>Transcripción</CardTitle>
+            <p className="mt-1 text-sm text-[#7a8699]">
+              Conversación completa entre el paciente y el asistente.
+            </p>
+          </div>
+          {call.transcript_text ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                void navigator.clipboard.writeText(call.transcript_text ?? "");
+                toast.success("Transcripción copiada");
+              }}
+            >
+              <Clipboard className="size-4" />
+              Copiar
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent>
-          <div className="max-h-[480px] overflow-y-auto whitespace-pre-wrap rounded-xl bg-[#f7f8fa] p-4 text-sm leading-6 text-[#344158]">
-            {call.transcript_text || "No hay transcripción guardada."}
-          </div>
+          {transcriptTurns.length ? (
+            <div className="max-h-[620px] space-y-3 overflow-y-auto rounded-2xl bg-[#f7f8fa] p-4 md:p-5">
+              {transcriptTurns.map((turn, index) => (
+                <div
+                  key={`${turn.role}-${index}`}
+                  className={`flex ${turn.role === "assistant" ? "justify-start" : "justify-end"}`}
+                >
+                  <div
+                    className={`max-w-[88%] rounded-2xl px-4 py-3 shadow-sm md:max-w-[76%] ${
+                      turn.role === "assistant"
+                        ? "rounded-bl-md border border-[#e2e7ef] bg-white text-[#344158]"
+                        : turn.role === "user"
+                          ? "rounded-br-md bg-[#315efb] text-white"
+                          : "border border-[#e2e7ef] bg-[#fff8e8] text-[#5a4a25]"
+                    }`}
+                  >
+                    <p
+                      className={`mb-1 text-[11px] font-bold uppercase tracking-wide ${
+                        turn.role === "user" ? "text-white/75" : "text-[#8993a4]"
+                      }`}
+                    >
+                      {turn.role === "assistant"
+                        ? "Asistente"
+                        : turn.role === "user"
+                          ? "Paciente"
+                          : turn.speaker}
+                    </p>
+                    <p className="whitespace-pre-wrap text-sm leading-6">{turn.text}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-[#d9dee8] bg-[#fafbfc] p-8 text-center">
+              <p className="font-semibold text-[#445069]">No hay transcripción guardada</p>
+              <p className="mt-1 text-sm text-[#7a8699]">
+                Las llamadas nuevas aparecerán aquí cuando la transcripción esté activada.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 

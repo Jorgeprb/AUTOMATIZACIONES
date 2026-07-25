@@ -87,21 +87,7 @@ class Settings(BaseSettings):
     openai_project_id: str
     openai_realtime_model: str = "gpt-realtime-2"
     openai_realtime_voice: str = "marin"
-    openai_realtime_models: str = (
-        "gpt-realtime-2.1,gpt-realtime-2.1-mini,gpt-realtime-1.5,gpt-realtime-2"
-    )
-    openai_realtime_vad_mode: Literal["server_vad", "semantic_vad"] = "server_vad"
-    openai_realtime_vad_threshold: float = 0.50
-    openai_realtime_vad_prefix_padding_ms: int = 200
-    openai_realtime_vad_silence_duration_ms: int = 300
-    openai_realtime_vad_eagerness: Literal["low", "medium", "high", "auto"] = "high"
-    openai_realtime_noise_reduction: Literal["near_field", "far_field", "off"] = "near_field"
-    openai_realtime_reasoning_effort: Literal[
-        "minimal", "low", "medium", "high", "xhigh"
-    ] = "low"
-    openai_realtime_transcription_delay: Literal[
-        "minimal", "low", "medium", "high", "xhigh"
-    ] = "minimal"
+    openai_realtime_models: str = "gpt-realtime-2"
     openai_realtime_voices: str = (
         "marin,cedar,alloy,ash,ballad,coral,echo,sage,shimmer,verse"
     )
@@ -182,23 +168,6 @@ class Settings(BaseSettings):
         if not value.startswith(("http://", "https://")):
             raise ValueError("must start with http:// or https://")
         return value.rstrip("/")
-
-    @field_validator("openai_realtime_vad_threshold")
-    @classmethod
-    def validate_realtime_vad_threshold(cls, value: float) -> float:
-        if not 0.0 <= value <= 1.0:
-            raise ValueError("OPENAI_REALTIME_VAD_THRESHOLD must be between 0 and 1")
-        return value
-
-    @field_validator(
-        "openai_realtime_vad_prefix_padding_ms",
-        "openai_realtime_vad_silence_duration_ms",
-    )
-    @classmethod
-    def validate_realtime_vad_timing(cls, value: int) -> int:
-        if not 50 <= value <= 5000:
-            raise ValueError("Realtime VAD timing must be between 50 and 5000 ms")
-        return value
 
     @field_validator("database_url")
     @classmethod

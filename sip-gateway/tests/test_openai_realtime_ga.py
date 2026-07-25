@@ -115,7 +115,7 @@ def test_openai_8000_rate_error_is_suppressed() -> None:
     asyncio.run(run())
 
 
-def test_session_update_shape_uses_native_g711_and_no_beta_fields() -> None:
+def test_session_update_shape_has_ga_24k_audio_and_no_beta_fields() -> None:
     session = build_realtime_session(_context())
     payload = {"type": "session.update", "session": session}
     encoded = json.dumps(payload)
@@ -125,43 +125,12 @@ def test_session_update_shape_uses_native_g711_and_no_beta_fields() -> None:
     assert session["type"] == "realtime"
     assert "audio" in session
     assert "input" in session["audio"]
-    assert session["audio"]["input"]["format"] == {"type": "audio/pcma"}
-    assert session["audio"]["input"]["turn_detection"]["silence_duration_ms"] == 300
-    assert session["audio"]["input"]["turn_detection"]["prefix_padding_ms"] == 200
-    assert session["reasoning"]["effort"] == "low"
+    assert session["audio"]["input"]["format"]["rate"] == 24000
     assert session["output_modalities"] == ["text"]
     assert "modalities" not in session
     assert "input_audio_format" not in session
     assert "output_audio_format" not in session
     assert "output" not in session["audio"]
-
-
-def test_send_g711_batches_native_telephony_audio_every_40ms() -> None:
-    class FakeWebSocket:
-        def __init__(self) -> None:
-            self.messages: list[dict[str, str]] = []
-
-        async def send(self, raw: str) -> None:
-            self.messages.append(json.loads(raw))
-
-    async def run() -> None:
-        websocket = FakeWebSocket()
-        bridge = OpenAIRealtimeBridge(
-            settings=GatewaySettings(openai_api_key="test-key"),
-            backend=SimpleNamespace(),
-            context=_context(),
-            call_id="call-1",
-            tool_executor=lambda name, arguments: {},  # type: ignore[arg-type]
-        )
-        bridge._ws = websocket
-        await bridge.send_g711(b"\xd5" * 160)
-        assert websocket.messages == []
-        await bridge.send_g711(b"\xd5" * 160)
-        assert len(websocket.messages) == 1
-        audio = base64.b64decode(websocket.messages[0]["audio"])
-        assert audio == b"\xd5" * 320
-
-    asyncio.run(run())
 
 
 def test_send_pcm16_resamples_8k_to_24k_before_openai() -> None:
@@ -185,13 +154,8 @@ def test_send_pcm16_resamples_8k_to_24k_before_openai() -> None:
         for _ in range(5):
             await bridge.send_pcm16(b"\x00\x00" * 160)
 
-        # 40 ms batches reduce VAD/input latency: five 20 ms frames produce
-        # two full batches and keep only the final frame buffered.
-        assert len(websocket.messages) == 2
-        assert all(
-            message["type"] == "input_audio_buffer.append"
-            for message in websocket.messages
-        )
+        assert len(websocket.messages) == 1
+        assert websocket.messages[0]["type"] == "input_audio_buffer.append"
         audio = base64.b64decode(websocket.messages[0]["audio"])
         assert len(audio) > 320
         assert len(audio) % 2 == 0

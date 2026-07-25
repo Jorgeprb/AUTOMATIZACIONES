@@ -372,7 +372,7 @@ class AssistantConfigBase(BaseModel):
     use_prices: bool = True
     use_knowledge_base: bool = True
     strict_calendar_mode: bool = True
-    transcript_enabled: bool = False
+    transcript_enabled: bool = True
     recording_enabled: bool = False
     conversation_retention_days: int = Field(default=30, ge=1, le=3650)
     conversation_flow_id: uuid.UUID | None = None
@@ -982,10 +982,20 @@ class CallAnalysisDetail(CallAnalysisRead):
     errors: list[CallEventRead]
 
 
+class TranscriptTurnRead(BaseModel):
+    """One human-readable turn included in conversation exports."""
+
+    role: Literal["user", "assistant", "unknown"]
+    speaker: str
+    text: str
+
+
 class CallDebugResponse(BaseModel):
-    """Downloadable troubleshooting payload for one call."""
+    """Downloadable troubleshooting payload including the full transcript."""
 
     call: CallAnalysisDetail
+    transcript_text: str | None
+    transcript: list[TranscriptTurnRead]
     generated_at: datetime
 
 

@@ -140,7 +140,3 @@ def test_realtime_session_payload_includes_voice_runtime_options() -> None:
     assert payload["audio"]["output"]["voice"] == "marin"
     assert payload["audio"]["input"]["turn_detection"]["idle_timeout_ms"] == 5000
     assert payload["audio"]["input"]["turn_detection"]["interrupt_response"] is False
-    assert payload["audio"]["input"]["turn_detection"]["silence_duration_ms"] == 300
-    assert payload["audio"]["input"]["turn_detection"]["prefix_padding_ms"] == 200
-    assert payload["audio"]["input"]["noise_reduction"] == {"type": "near_field"}
-    assert payload["reasoning"] == {"effort": "low"}

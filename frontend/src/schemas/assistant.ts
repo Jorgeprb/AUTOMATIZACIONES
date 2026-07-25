@@ -325,7 +325,7 @@ export const assistantConfigDefaults: AssistantConfigFormValues = {
   use_prices: true,
   use_knowledge_base: true,
   strict_calendar_mode: true,
-  transcript_enabled: false,
+  transcript_enabled: true,
   recording_enabled: false,
   conversation_retention_days: 30,
 };

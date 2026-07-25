@@ -152,9 +152,6 @@ Variables útiles:
     TELEPHONY_CODEC=pcma        # pcma => payload 8 PCMA/8000; pcmu => payload 0 PCMU/8000
     RTP_INITIAL_BUFFER_MS=240   # buffer de playout inicial para absorber jitter de TTS
     RTP_PACKET_LOG_EVERY=50     # frecuencia de logs agregados de RTP saliente
-    EXTERNAL_TTS_HALF_DUPLEX=true  # evita que el eco de Azure cree turnos fantasma
-    INITIAL_INPUT_GUARD_MS=1200    # no enviar audio a OpenAI durante el arranque/saludo
-    ECHO_SUPPRESSION_TAIL_MS=800   # cola de supresión después de terminar el bot
 
 Para Azure en llamadas, el backend debe devolver audio raw G.711:
 
@@ -162,18 +159,3 @@ Para Azure en llamadas, el backend debe devolver audio raw G.711:
 - `pcmu`: `raw-8khz-8bit-mono-mulaw`, `audio/pcmu`
 
 Los logs relevantes son `rtp_sender_started`, `rtp_out_sent`, `rtp_out_packet_sent`, `rtp_out_interval_ms`, `rtp_underrun`, `rtp_overrun`, `tts_audio_buffered_ms`, `tts_audio_bytes` y `packetizer_finished`.
-
-
-## Estabilidad de conversación con TTS externo
-
-Cuando `voice_provider=azure`, el saludo se reproduce fuera de OpenAI. El gateway
-registra ese saludo como un mensaje previo del asistente en la conversación Realtime,
-de modo que el modelo no vuelva a presentarse. Además, el audio entrante se bloquea
-mientras Azure está sintetizando o reproduciendo y durante una pequeña cola de eco.
-Esto evita que el propio altavoz del bot active el VAD como si fuese la persona usuaria.
-
-Las llamadas de herramientas se deduplican por `call_id`. El resultado se entrega una
-sola vez y la continuación `response.create` se envía después de `response.done`, nunca
-mientras ya existe otra respuesta activa. Los errores transitorios
-`conversation_already_has_active_response` y `response_cancel_not_active` no reproducen
-el mensaje técnico al usuario.

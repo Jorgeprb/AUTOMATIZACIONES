@@ -6,10 +6,8 @@ import {
   Clipboard,
   Eye,
   FileText,
-  Mic2,
   Pencil,
   Plus,
-  Sparkles,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -247,7 +245,7 @@ export function AssistantConfigPage() {
     <div className="space-y-7">
       <PageHeader
         title="Configuración del asistente"
-        description="Define identidad, voz, políticas, privacidad y comportamiento por clínica."
+        description="Configura cómo habla, escucha y actúa el asistente, sin exponer detalles técnicos internos."
         actions={
           <Button
             disabled={!options}
@@ -307,19 +305,15 @@ export function AssistantConfigPage() {
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-xl bg-[#f7f9fc] p-3">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-[#7a8598]">
-                      <Sparkles className="size-3.5" /> Modelo
-                    </div>
+                    <div className="text-xs font-semibold text-[#7a8598]">Voz</div>
                     <p className="mt-2 truncate text-sm font-semibold text-[#27334a]">
-                      {config.realtime_model}
+                      {config.voice_id || config.realtime_voice}
                     </p>
                   </div>
                   <div className="rounded-xl bg-[#f7f9fc] p-3">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-[#7a8598]">
-                      <Mic2 className="size-3.5" /> Voz
-                    </div>
+                    <div className="text-xs font-semibold text-[#7a8598]">Conversación</div>
                     <p className="mt-2 text-sm font-semibold text-[#27334a]">
-                      {config.realtime_voice}
+                      {config.tone} · {config.allow_interruptions ? "interrumpible" : "sin interrupciones"}
                     </p>
                   </div>
                 </div>
@@ -339,30 +333,8 @@ export function AssistantConfigPage() {
                       config.transcript_enabled ? "activa" : "desactivada"
                     }`}
                   </StatusBadge>
-                  <StatusBadge
-                    status={config.recording_enabled ? "warning" : "neutral"}
-                  >
-                    {`Grabación ${
-                      config.recording_enabled ? "solicitada" : "desactivada"
-                    }`}
-                  </StatusBadge>
-                  <StatusBadge
-                    status={
-                      config.call_audio_mode === "vps_media_bridge"
-                        ? "info"
-                        : "neutral"
-                    }
-                  >
-                    {config.call_audio_mode === "vps_media_bridge"
-                      ? "VPS Media Bridge"
-                      : "OpenAI Hosted SIP"}
-                  </StatusBadge>
-                  <StatusBadge
-                    status={
-                      config.voice_provider === "openai" ? "success" : "warning"
-                    }
-                  >
-                    {`Voz: ${config.voice_provider}`}
+                  <StatusBadge status="neutral">
+                    {`Idioma: ${config.language}`}
                   </StatusBadge>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-3">
@@ -382,7 +354,7 @@ export function AssistantConfigPage() {
                     onClick={() => previewMutation.mutate(config.id)}
                   >
                     <Eye className="size-4" />
-                    Previsualizar prompt final
+                    Revisar comportamiento
                   </Button>
                   <Button
                     variant={config.is_active ? "secondary" : "default"}
@@ -424,7 +396,7 @@ export function AssistantConfigPage() {
               {editingConfig ? "Editar configuración" : "Nueva configuración"}
             </DialogTitle>
             <DialogDescription>
-              Los prompts avanzados quedan visibles y agrupados por función.
+              Configura únicamente cómo debe hablar, escuchar y actuar el asistente.
             </DialogDescription>
           </DialogHeader>
           {options ? (
@@ -451,12 +423,10 @@ export function AssistantConfigPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="size-5 text-[#315efb]" />
-              Prompt renderizado
+              Comportamiento completo del asistente
             </DialogTitle>
             <DialogDescription>
-              {preview
-                ? `${preview.realtime_model} · ${preview.realtime_voice} · ${preview.language}`
-                : ""}
+              Reglas e información que utilizará durante las llamadas.
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end">
@@ -469,7 +439,7 @@ export function AssistantConfigPage() {
               }}
             >
               <Clipboard className="size-4" />
-              Copiar prompt
+              Copiar comportamiento
             </Button>
           </div>
           <pre className="max-h-[65vh] overflow-auto whitespace-pre-wrap rounded-xl bg-[#111827] p-5 text-xs leading-6 text-[#e5e7eb]">

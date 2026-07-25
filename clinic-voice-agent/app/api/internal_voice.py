@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import uuid
 from decimal import Decimal
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.audio import TTSGenerationError, synthesize_speech
 from app.config import Settings, get_settings
 from app.db import get_db, get_session_factory
-from app.models import AssistantConfig, CallSession, CallStatus, Clinic
+from app.models import AssistantConfig, CallEvent, CallSession, CallStatus, Clinic
 from app.openai_realtime.prompt_builder import (
     ActiveAssistantConfigMissing,
     ClinicContext,
@@ -146,6 +146,15 @@ class InternalToolRequest(BaseModel):
     openai_call_id: str = Field(min_length=1, max_length=128)
     name: str = Field(min_length=1, max_length=120)
     arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class InternalTranscriptRequest(BaseModel):
+    """One completed utterance persisted by the local media bridge."""
+
+    call_session_id: uuid.UUID
+    role: Literal["user", "assistant"]
+    text: str = Field(min_length=1, max_length=8000)
+    event_id: str | None = Field(default=None, max_length=256)
 
 
 def _decimal_to_str(value: Decimal | None) -> str | None:
@@ -321,19 +330,6 @@ def create_voice_context(
     session.refresh(call_session)
 
     instructions = build_realtime_instructions(context)
-    if config.call_audio_mode == "vps_media_bridge" and config.voice_provider != "openai":
-        instructions = (
-            f"{instructions}\n\n# Estado real de esta llamada\n"
-            f"El gateway ya ha reproducido externamente este saludo: "
-            f"{config.first_message!r}. No lo repitas ni vuelvas a presentarte "
-            "salvo que la persona lo pida expresamente. Espera a que la persona "
-            "hable y responde a su petición concreta.\n"
-            "Continúa exactamente en el mismo idioma del saludo inicial. "
-            f"Si el idioma configurado `{config.language}` no coincide con ese "
-            "saludo, prevalece el idioma del saludo para evitar cambios de idioma "
-            "durante la llamada. El locale o el nombre de la voz TTS son solo "
-            "metadatos de síntesis y nunca deben cambiar el idioma."
-        )
     instructions = (
         f"{instructions}\n\n# Contexto técnico\n"
         f"clinic_id técnico de esta llamada: {context.clinic.id}. "
@@ -418,6 +414,67 @@ def synthesize_internal_voice(
             detail=str(exc),
         ) from exc
     return Response(content=result.audio, media_type=result.media_type)
+
+
+
+
+@router.post("/transcript")
+def append_internal_voice_transcript(
+    payload: InternalTranscriptRequest,
+    session: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    """Append one completed turn and keep the admin transcript/export in sync."""
+    call = session.scalar(
+        select(CallSession)
+        .where(CallSession.id == payload.call_session_id)
+        .with_for_update()
+    )
+    if call is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Call session not found.",
+        )
+    if not call.transcript_enabled:
+        return {"ok": True, "stored": False, "reason": "transcription_disabled"}
+
+    text = " ".join(payload.text.split()).strip()
+    if not text:
+        return {"ok": True, "stored": False, "reason": "empty"}
+
+    event_type = f"transcript.{payload.role}"
+    if payload.event_id:
+        recent = session.scalars(
+            select(CallEvent)
+            .where(
+                CallEvent.call_session_id == call.id,
+                CallEvent.event_type == event_type,
+            )
+            .order_by(CallEvent.created_at.desc(), CallEvent.id.desc())
+            .limit(50)
+        ).all()
+        if any(event.payload_json.get("event_id") == payload.event_id for event in recent):
+            return {"ok": True, "stored": False, "reason": "duplicate"}
+
+    label = "Paciente" if payload.role == "user" else "Asistente"
+    line = f"{label}: {text}"
+    existing_lines = (call.transcript_text or "").splitlines()
+    if existing_lines and existing_lines[-1].strip() == line:
+        return {"ok": True, "stored": False, "reason": "duplicate_text"}
+
+    call.transcript_text = "\n".join([*existing_lines, line]).strip()
+    session.add(
+        CallEvent(
+            call_session_id=call.id,
+            event_type=event_type,
+            payload_json={
+                "role": payload.role,
+                "text": text,
+                "event_id": payload.event_id,
+            },
+        )
+    )
+    session.commit()
+    return {"ok": True, "stored": True}
 
 
 @router.post("/tool")

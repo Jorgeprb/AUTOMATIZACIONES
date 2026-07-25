@@ -38,17 +38,6 @@ AZURE_STATIC_VOICES = (
     ("es-ES-XimenaNeural", "Ximena Neural", "es-ES", "es", "female"),
 )
 
-# Reuse DNS/TCP/TLS connections across TTS chunks. The provider is called from
-# FastAPI's thread pool and httpx.Client is safe to share between threads.
-_AZURE_HTTP_CLIENT = httpx.Client(
-    timeout=httpx.Timeout(30.0, connect=5.0),
-    limits=httpx.Limits(
-        max_connections=50,
-        max_keepalive_connections=20,
-        keepalive_expiry=30.0,
-    ),
-)
-
 AZURE_OUTPUT_FORMATS = {
     "mp3": "audio-24khz-48kbitrate-mono-mp3",
     "wav": "riff-24khz-16bit-mono-pcm",
@@ -105,7 +94,7 @@ class AzureTTSProvider:
         if not self.info().configured:
             return items
         try:
-            response = _AZURE_HTTP_CLIENT.get(
+            response = httpx.get(
                 f"https://{self._region()}.tts.speech.microsoft.com/"
                 "cognitiveservices/voices/list",
                 headers={"Ocp-Apim-Subscription-Key": self._key()},
@@ -174,7 +163,7 @@ class AzureTTSProvider:
             f"<voice name='{html.escape(voice_id)}'>{escaped_text}</voice></speak>"
         )
         try:
-            response = _AZURE_HTTP_CLIENT.post(
+            response = httpx.post(
                 f"https://{region}.tts.speech.microsoft.com/cognitiveservices/v1",
                 headers={
                     "Ocp-Apim-Subscription-Key": key,

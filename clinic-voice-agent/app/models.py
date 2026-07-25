@@ -776,8 +776,8 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     transcript_enabled: Mapped[bool] = mapped_column(
         Boolean,
-        server_default=text("false"),
-        default=False,
+        server_default=text("true"),
+        default=True,
         nullable=False,
     )
     recording_enabled: Mapped[bool] = mapped_column(

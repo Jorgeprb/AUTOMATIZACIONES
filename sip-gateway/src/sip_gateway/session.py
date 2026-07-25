@@ -7,6 +7,7 @@ import logging
 import re
 import time
 import uuid
+from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine
 from contextlib import suppress
 from dataclasses import dataclass
@@ -37,10 +38,10 @@ from sip_gateway.sip import SipMessage
 
 logger = logging.getLogger(__name__)
 
-INITIAL_GREETING = "Ola, son a asistente virtual da clínica. En que podo axudarche?"
+INITIAL_GREETING = "Hola, soy el asistente virtual de la clínica. ¿En qué puedo ayudarte?"
 OPENAI_ERROR_MESSAGE = (
-    "Desculpa, estou tendo un problema técnico co asistente. "
-    "Podes chamar de novo nuns minutos."
+    "Disculpa, ahora mismo no puedo continuar. "
+    "Puedo pasarte con recepción o puedes intentarlo de nuevo en unos minutos."
 )
 
 
@@ -48,7 +49,7 @@ def split_tts_stream(
     text: str,
     *,
     force: bool = False,
-    max_chars: int = 160,
+    max_chars: int = 240,
 ) -> tuple[list[str], str]:
     """Extract complete speakable chunks and preserve an unfinished tail."""
     chunks: list[str] = []
@@ -56,8 +57,7 @@ def split_tts_stream(
     index = 0
     while index < len(text):
         char = text[index]
-        chunk_length = index - start + 1
-        boundary = char in ".?!;:\n" or (char == "," and chunk_length >= 32)
+        boundary = char in ".?!;:\n"
         over_limit = index - start + 1 >= max_chars
         if boundary or over_limit:
             end = index + 1
@@ -174,10 +174,8 @@ class GatewayCallSession:
         self._barge_in_voice_frames = 0
         self._last_barge_in_at = 0.0
         self._bot_speaking_since: float | None = None
-        self._input_suppressed_until = 0.0
-        self._scheduled_playout_end = 0.0
         self._tts_jobs_inflight = 0
-        self._last_turn_audio_metric_at: float | None = None
+        self._barge_in_preroll: deque[bytes] = deque(maxlen=15)
         self.stats = CallStats()
         self.started_at = time.perf_counter()
         self.last_invite_response: bytes | None = None
@@ -246,14 +244,6 @@ class GatewayCallSession:
                 tool_executor=tool_executor,
             )
             self._media_started.set()
-            if (
-                context.voice_provider != "openai"
-                and self.settings.external_tts_half_duplex
-            ):
-                self._input_suppressed_until = (
-                    time.monotonic()
-                    + self.settings.initial_input_guard_ms / 1000.0
-                )
             self._spawn(self._rtp_sender_loop())
             if context.voice_provider != "openai":
                 greeting = (context.first_message or INITIAL_GREETING).strip()
@@ -400,19 +390,6 @@ class GatewayCallSession:
         else:
             self._spawn(self._external_tts_output_loop())
 
-    def _should_suppress_openai_input(self, now: float) -> bool:
-        """Prevent external TTS and its echo from creating phantom user turns."""
-        return bool(
-            self.context is not None
-            and self.context.voice_provider != "openai"
-            and self.settings.external_tts_half_duplex
-            and (
-                self._bot_speaking
-                or not self.outbound_audio_queue.empty()
-                or now < self._input_suppressed_until
-            )
-        )
-
     async def _inbound_audio_loop(self) -> None:
         assert self.bridge is not None
         while not self._closed.is_set():
@@ -423,40 +400,41 @@ class GatewayCallSession:
             pcm16 = decode_g711(packet.payload_type, packet.payload)
             energy = pcm16_energy(pcm16)
             now = time.monotonic()
-            speaking_for_ms = (
-                (now - self._bot_speaking_since) * 1000
-                if self._bot_speaking_since is not None
-                else 0.0
-            )
-            if self._should_suppress_openai_input(now):
-                self._barge_in_voice_frames = 0
-                continue
 
-            if (
-                self.context is not None
-                and self.context.allow_interruptions
-                and self._bot_speaking
-                and speaking_for_ms >= self.settings.barge_in_start_guard_ms
-                and energy >= self.settings.silence_energy_threshold
-            ):
-                self._barge_in_voice_frames += 1
-            else:
-                self._barge_in_voice_frames = 0
+            # While the bot is speaking, keep a short pre-roll but do not send the
+            # line echo to OpenAI. Only open the microphone after several frames
+            # of genuine user speech. This preserves barge-in without self-talk.
+            if self._bot_speaking:
+                self._barge_in_preroll.append(pcm16)
+                speaking_for_ms = (
+                    (now - self._bot_speaking_since) * 1000
+                    if self._bot_speaking_since is not None
+                    else 0.0
+                )
+                can_interrupt = (
+                    self.context is not None
+                    and self.context.allow_interruptions
+                    and speaking_for_ms >= self.settings.barge_in_start_guard_ms
+                    and energy >= self.settings.silence_energy_threshold
+                )
+                self._barge_in_voice_frames = (
+                    self._barge_in_voice_frames + 1 if can_interrupt else 0
+                )
+                cooldown_elapsed = (
+                    (now - self._last_barge_in_at) * 1000
+                    >= self.settings.barge_in_cooldown_ms
+                )
+                if not (
+                    self._barge_in_voice_frames >= self.settings.barge_in_min_frames
+                    and cooldown_elapsed
+                ):
+                    continue
 
-            cooldown_elapsed = (
-                (now - self._last_barge_in_at) * 1000
-                >= self.settings.barge_in_cooldown_ms
-            )
-            if (
-                self._barge_in_voice_frames >= self.settings.barge_in_min_frames
-                and cooldown_elapsed
-            ):
                 self._barge_in_voice_frames = 0
                 self._last_barge_in_at = now
                 self._tts_generation += 1
                 self._stop_tts.set()
-                self._scheduled_playout_end = now
-                self._input_suppressed_until = now
+                self._drain_outbound_audio_queue()
                 response_cancelled = await self.bridge.cancel_response()
                 logger.info(
                     "barge_in_detected",
@@ -467,109 +445,75 @@ class GatewayCallSession:
                         "openai_response_cancelled": response_cancelled,
                     },
                 )
-            await self.bridge.send_g711(packet.payload)
+                for buffered_pcm in self._barge_in_preroll:
+                    await self.bridge.send_pcm16(buffered_pcm)
+                self._barge_in_preroll.clear()
+                continue
+
+            self._barge_in_voice_frames = 0
+            self._barge_in_preroll.clear()
+            await self.bridge.send_pcm16(pcm16)
 
     async def _openai_audio_output_loop(self) -> None:
         assert self.bridge is not None
         while not self._closed.is_set():
-            audio = await self.bridge.audio_queue.get()
-            if self.context is not None and self.context.telephony_codec in {"pcma", "pcmu"}:
-                raw_g711 = audio
-            else:
-                pcm16_8k = self._openai_output_resampler.convert(audio)
-                raw_g711 = encode_g711(self.payload_type, pcm16_8k)
+            pcm16 = await self.bridge.audio_queue.get()
+            pcm16_8k = self._openai_output_resampler.convert(pcm16)
+            raw_g711 = encode_g711(self.payload_type, pcm16_8k)
             await self._queue_g711_audio(raw_g711, source="openai_audio")
 
     async def _external_tts_output_loop(self) -> None:
-        """Chunk model text quickly while a separate worker preserves TTS order."""
         assert self.bridge is not None and self.context is not None
         buffer = ""
         timeout_seconds = self.settings.tts_text_flush_timeout_ms / 1000
-        tts_queue: asyncio.Queue[tuple[str, str, int]] = asyncio.Queue(maxsize=64)
-        worker = asyncio.create_task(self._external_tts_worker(tts_queue))
-        try:
-            while not self._closed.is_set():
-                timed_out = False
-                try:
-                    delta = await asyncio.wait_for(
-                        self.bridge.text_queue.get(),
-                        timeout=timeout_seconds,
-                    )
-                except TimeoutError:
-                    delta = ""
-                    timed_out = True
+        while not self._closed.is_set():
+            timed_out = False
+            try:
+                delta = await asyncio.wait_for(
+                    self.bridge.text_queue.get(),
+                    timeout=timeout_seconds,
+                )
+            except TimeoutError:
+                delta = ""
+                timed_out = True
 
-                if delta == "__OPENAI_ERROR__":
-                    if self._openai_error_announced:
-                        logger.warning(
-                            "openai_error_message_already_announced",
-                            extra={"call_id": self.call_id},
-                        )
-                        continue
-                    self._openai_error_announced = True
-                    await tts_queue.put(
-                        (OPENAI_ERROR_MESSAGE, "openai_error", self._tts_generation)
-                    )
-                    continue
-
-                if delta == "__OPENAI_CONFIG_ERROR_SUPPRESSED__":
-                    logger.error(
-                        "openai_config_error_suppressed",
+            if delta == "__OPENAI_ERROR__":
+                if self._openai_error_announced:
+                    logger.warning(
+                        "openai_error_message_already_announced",
                         extra={"call_id": self.call_id},
                     )
                     continue
+                self._openai_error_announced = True
+                await self._speak_text(OPENAI_ERROR_MESSAGE, reason="openai_error")
+                continue
 
-                response_done = delta == "\n"
-                if delta and not response_done:
-                    buffer += delta
-
-                force_flush = response_done or (
-                    timed_out
-                    and len(buffer.strip()) >= self.settings.tts_min_flush_chars
-                )
-                chunks, buffer = split_tts_stream(buffer, force=force_flush)
-                for chunk in chunks:
-                    if self._stop_tts.is_set():
-                        self._stop_tts.clear()
-                        buffer = ""
-                        self._drain_tts_text_queue(tts_queue)
-                        break
-                    logger.info(
-                        "tts_text_chunk_ready",
-                        extra={"call_id": self.call_id, "chars": len(chunk)},
-                    )
-                    await tts_queue.put(
-                        (chunk, "assistant_response", self._tts_generation)
-                    )
-        finally:
-            worker.cancel()
-            with suppress(asyncio.CancelledError):
-                await worker
-
-    @staticmethod
-    def _drain_tts_text_queue(
-        queue: asyncio.Queue[tuple[str, str, int]],
-    ) -> None:
-        while True:
-            try:
-                queue.get_nowait()
-            except asyncio.QueueEmpty:
-                return
-
-    async def _external_tts_worker(
-        self,
-        queue: asyncio.Queue[tuple[str, str, int]],
-    ) -> None:
-        """Synthesize chunks sequentially without blocking model text ingestion."""
-        while not self._closed.is_set():
-            text, reason, generation = await queue.get()
-            if generation != self._tts_generation:
-                logger.info(
-                    "tts_queued_generation_discarded",
-                    extra={"call_id": self.call_id, "reason": reason},
+            if delta == "__OPENAI_CONFIG_ERROR_SUPPRESSED__":
+                logger.error(
+                    "openai_config_error_suppressed",
+                    extra={"call_id": self.call_id},
                 )
                 continue
-            await self._speak_text(text, reason=reason)
+
+            response_done = delta == "\n"
+            if delta and not response_done:
+                buffer += delta
+
+            force_flush = response_done or (
+                timed_out
+                and len(buffer.strip()) >= self.settings.tts_min_flush_chars
+            )
+            chunks, buffer = split_tts_stream(buffer, force=force_flush)
+            for chunk in chunks:
+                if self._stop_tts.is_set():
+                    self._stop_tts.clear()
+                    buffer = ""
+                    break
+                logger.info(
+                    "tts_text_chunk_ready",
+                    extra={"call_id": self.call_id, "chars": len(chunk)},
+                )
+                await self._speak_text(chunk, reason="assistant_response")
 
     async def _speak_text(self, text: str, *, reason: str) -> None:
         assert self.context is not None
@@ -626,54 +570,11 @@ class GatewayCallSession:
                 },
             )
         await self._queue_g711_audio(raw_g711, source=f"tts:{reason}")
-        if (
-            reason == "assistant_response"
-            and self.bridge is not None
-            and self.bridge.last_speech_stopped_at is not None
-            and self.bridge.last_speech_stopped_at != self._last_turn_audio_metric_at
-        ):
-            self._last_turn_audio_metric_at = self.bridge.last_speech_stopped_at
-            logger.info(
-                "turn_speech_stop_to_audio_queued_ms",
-                extra={
-                    "call_id": self.call_id,
-                    "latency_ms": round(
-                        (time.perf_counter() - self.bridge.last_speech_stopped_at)
-                        * 1000,
-                        2,
-                    ),
-                    "tts_chars": len(cleaned),
-                },
-            )
 
     async def _queue_g711_audio(self, raw_g711: bytes, *, source: str) -> None:
         if not raw_g711:
             return
         buffered_ms = round(len(raw_g711) / 8.0, 2)
-        if (
-            self.context is not None
-            and self.context.voice_provider != "openai"
-            and self.settings.external_tts_half_duplex
-        ):
-            now = time.monotonic()
-            duration_seconds = len(raw_g711) / 8000.0
-            self._scheduled_playout_end = (
-                max(now, self._scheduled_playout_end) + duration_seconds
-            )
-            self._input_suppressed_until = max(
-                self._input_suppressed_until,
-                self._scheduled_playout_end
-                + self.settings.echo_suppression_tail_ms / 1000.0,
-            )
-            logger.info(
-                "openai_input_suppressed_for_playout",
-                extra={
-                    "call_id": self.call_id,
-                    "source": source,
-                    "audio_ms": buffered_ms,
-                    "echo_tail_ms": self.settings.echo_suppression_tail_ms,
-                },
-            )
         logger.info(
             "tts_audio_bytes",
             extra={"call_id": self.call_id, "source": source, "bytes": len(raw_g711)},
@@ -763,9 +664,6 @@ class GatewayCallSession:
                     if self._stop_tts.is_set():
                         payload_buffer.clear()
                         self._drain_outbound_audio_queue()
-                        now = time.monotonic()
-                        self._scheduled_playout_end = now
-                        self._input_suppressed_until = now
                         self._stop_tts.clear()
 
                     self._drain_outbound_audio_queue_into(payload_buffer)
@@ -781,12 +679,6 @@ class GatewayCallSession:
                         payload = silence
                         self._bot_speaking = False
                         self._bot_speaking_since = None
-                        if was_bot_speaking:
-                            self._input_suppressed_until = max(
-                                self._input_suppressed_until,
-                                time.monotonic()
-                                + self.settings.echo_suppression_tail_ms / 1000.0,
-                            )
                         if was_bot_speaking and self._tts_jobs_inflight > 0:
                             underruns += 1
                             self.stats.outbound_underruns += 1
