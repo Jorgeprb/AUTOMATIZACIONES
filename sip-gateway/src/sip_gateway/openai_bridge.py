@@ -578,12 +578,6 @@ class OpenAIRealtimeBridge:
         if not self._manual_turn_response:
             return None
         arguments["_server_input_clear"] = self._last_user_input_clear
-        arguments["_server_explicit_confirmation"] = (
-            self._last_user_explicit_confirmation
-        )
-        arguments["_server_confirmation_prompted"] = (
-            self._assistant_requested_write_confirmation
-        )
         arguments["_server_user_item_id"] = self._last_user_item_id
         if not self._last_user_input_clear:
             return {
@@ -596,31 +590,9 @@ class OpenAIRealtimeBridge:
                     "herramienta hasta entender una respuesta clara."
                 ),
             }
-        if name in _CONFIRMATION_REQUIRED_TOOLS:
-            if not self._assistant_requested_write_confirmation:
-                return {
-                    "ok": False,
-                    "error": "confirmation_prompt_required",
-                    "message": (
-                        "El asistente todavía no pidió confirmar explícitamente esta "
-                        "creación o cancelación."
-                    ),
-                    "assistant_guidance": (
-                        "No ejecutes la acción todavía. Resume brevemente la cita o "
-                        "cancelación concreta, pregunta si quiere confirmarla y espera "
-                        "la siguiente respuesta del usuario."
-                    ),
-                }
-            if not self._last_user_explicit_confirmation:
-                return {
-                    "ok": False,
-                    "error": "explicit_confirmation_required",
-                    "message": "No hay una confirmación afirmativa clara en el último turno.",
-                    "assistant_guidance": (
-                        "No crees ni canceles la cita. Pide una confirmación breve y "
-                        "espera una respuesta afirmativa clara."
-                    ),
-                }
+        # Se mantiene la protección contra audio ininteligible, pero se elimina
+        # la segunda confirmación técnica. La aceptación natural del hueco puede
+        # haber ocurrido antes de recoger nombre o teléfono y no debe repetirse.
         return None
 
     async def _persist_transcript(

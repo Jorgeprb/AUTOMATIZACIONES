@@ -566,12 +566,13 @@ def _enforce_vps_voice_guard(
     """Require gateway-derived clear speech evidence before appointment actions."""
     guard_available = bool(trusted.pop("_server_guard_available", False))
     input_clear = bool(trusted.pop("_server_input_clear", False))
-    explicit_confirmation = bool(
-        trusted.pop("_server_explicit_confirmation", False)
-    )
-    confirmation_prompted = bool(
-        trusted.pop("_server_confirmation_prompted", False)
-    )
+    # Descarta la evidencia del antiguo guard de doble confirmación. La
+    # seguridad frente a ruido se conserva mediante _server_input_clear.
+    trusted.pop("_server_explicit_confirmation", None)
+    trusted.pop("_server_confirmation_prompted", None)
+    trusted.pop("_server_confirmation_granted", None)
+    trusted.pop("_server_confirmation_required", None)
+    trusted.pop("_server_avoid_repeated_confirmations", None)
     trusted.pop("_server_user_item_id", None)
     if name not in {
         "propose_slots",
@@ -593,17 +594,6 @@ def _enforce_vps_voice_guard(
             "El último audio no se entendió con claridad. No continúes con la agenda; "
             "pide a la persona que repita su respuesta."
         )
-    if name in {"create_appointment", "cancel_appointment"}:
-        if not confirmation_prompted:
-            raise RealtimeToolError(
-                "Antes de crear o cancelar, el asistente debe pedir explícitamente "
-                "confirmación de esa acción y esperar el siguiente turno."
-            )
-        if not explicit_confirmation:
-            raise RealtimeToolError(
-                "Falta una confirmación afirmativa clara en la última intervención. "
-                "Pregunta si desea confirmar y espera una respuesta clara."
-            )
 
 
 def _sanitize_propose_slots_arguments(arguments: dict[str, Any]) -> dict[str, Any]:

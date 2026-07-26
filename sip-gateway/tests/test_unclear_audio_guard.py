@@ -119,19 +119,15 @@ def test_privacy_disabled_transcription_does_not_emit_fake_guard_evidence() -> N
     assert arguments == {"_server_guard_available": False}
 
 
-def test_confirmation_question_must_precede_write_action() -> None:
+def test_clear_input_does_not_require_a_second_confirmation_prompt() -> None:
     assert assistant_requested_confirmation(
         "Tengo sitio mañana a las cinco. ¿Quieres que la reserve?"
     ) is True
     bridge = _bridge()
     bridge._last_user_input_clear = True
-    bridge._last_user_explicit_confirmation = True
     arguments: dict[str, object] = {}
-    blocked = bridge._guard_tool_call("create_appointment", arguments)
-    assert blocked is not None
-    assert blocked["error"] == "confirmation_prompt_required"
-
-    bridge._assistant_requested_write_confirmation = True
-    arguments = {}
     assert bridge._guard_tool_call("create_appointment", arguments) is None
-    assert arguments["_server_confirmation_prompted"] is True
+    assert arguments["_server_guard_available"] is True
+    assert arguments["_server_input_clear"] is True
+    assert "_server_confirmation_prompted" not in arguments
+    assert "_server_explicit_confirmation" not in arguments
