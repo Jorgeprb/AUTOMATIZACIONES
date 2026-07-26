@@ -83,11 +83,13 @@ class VoiceContextResponse(BaseModel):
     voice_stability: str | None
     voice_similarity: str | None
     voice_temperature: str | None
+    temperature: str | None
     output_audio_format: str
     telephony_codec: str
     preview_audio_format: str
     allow_interruptions: bool
     idle_timeout_ms: int | None
+    turn_end_silence_ms: int
     transcript_enabled: bool
     language: str
     first_message: str
@@ -208,6 +210,40 @@ def _caller_phone(payload: VoiceContextRequest) -> str:
     return "unknown"
 
 
+def _caller_phone_instruction(config: AssistantConfig, caller_phone: str) -> str:
+    """Describe how the model may use the trusted incoming caller number."""
+    normalized = caller_phone.strip()
+    unavailable = normalized.casefold() in {
+        "",
+        "unknown",
+        "anonymous",
+        "private",
+        "restricted",
+    }
+    if unavailable:
+        return (
+            "# Teléfono para la cita\n"
+            "No hay un número entrante utilizable. Si la reserva necesita teléfono, "
+            "pídelo una sola vez."
+        )
+    if config.caller_phone_policy == "use_directly":
+        return (
+            "# Teléfono para la cita\n"
+            f"Número entrante de confianza: {normalized}. Úsalo directamente como "
+            "patient_phone al crear la cita. No preguntes si puedes usarlo ni pidas "
+            "que lo repitan. Si la persona facilita expresamente otro número, usa el "
+            "nuevo. No leas el número completo en voz alta salvo que te lo pidan."
+        )
+    return (
+        "# Teléfono para la cita\n"
+        f"Número entrante disponible: {normalized}. Antes de usarlo, pregunta una "
+        "sola vez: «¿Puedo usar el número desde el que está llamando para incluirlo "
+        "en la cita?». Si responde afirmativamente, usa exactamente ese número como "
+        "patient_phone sin pedir que lo dicte. Si responde que no, pide otro número. "
+        "No leas todos los dígitos al hacer la pregunta."
+    )
+
+
 def _single_active_clinic_fallback(session: Session) -> ClinicContext:
     """Resolve only when fallback cannot cross tenant boundaries."""
     clinic_ids = list(
@@ -274,6 +310,7 @@ def _clinic_info(clinic: Clinic) -> VoiceClinicInfo:
 def create_voice_context(
     payload: VoiceContextRequest,
     session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> VoiceContextResponse:
     """Resolve DID to clinic context and create a CallSession for tools."""
     try:
@@ -304,6 +341,9 @@ def create_voice_context(
         or payload.callee
         or "unknown"
     )[:32]
+    effective_transcript_enabled = bool(
+        config.transcript_enabled or settings.enable_call_transcription
+    )
     call_session = CallSession(
         clinic_id=context.clinic.id,
         phone_number_id=context.phone_number.id if context.phone_number else None,
@@ -314,7 +354,7 @@ def create_voice_context(
         called_number=called_number,
         status=CallStatus.ACTIVE,
         recording_enabled=config.recording_enabled,
-        transcript_enabled=config.transcript_enabled,
+        transcript_enabled=effective_transcript_enabled,
         conversation_state_json={
             "source": "vps_media_bridge",
             "caller": payload.caller,
@@ -331,7 +371,8 @@ def create_voice_context(
 
     instructions = build_realtime_instructions(context)
     instructions = (
-        f"{instructions}\n\n# Contexto técnico\n"
+        f"{instructions}\n\n{_caller_phone_instruction(config, caller_phone)}"
+        f"\n\n# Contexto técnico\n"
         f"clinic_id técnico de esta llamada: {context.clinic.id}. "
         "No lo leas en voz alta.\n"
         f"call_session_id técnico de esta llamada: {call_session.id}. "
@@ -358,12 +399,14 @@ def create_voice_context(
         voice_stability=_decimal_to_str(config.voice_stability),
         voice_similarity=_decimal_to_str(config.voice_similarity),
         voice_temperature=_decimal_to_str(config.voice_temperature),
+        temperature=_decimal_to_str(config.temperature),
         output_audio_format=config.output_audio_format,
         telephony_codec=config.telephony_codec,
         preview_audio_format=config.preview_audio_format,
         allow_interruptions=config.allow_interruptions,
         idle_timeout_ms=config.idle_timeout_ms,
-        transcript_enabled=config.transcript_enabled,
+        turn_end_silence_ms=config.turn_end_silence_ms,
+        transcript_enabled=effective_transcript_enabled,
         language=config.language,
         first_message=config.first_message,
         instructions=instructions,

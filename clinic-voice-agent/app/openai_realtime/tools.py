@@ -26,6 +26,7 @@ from app.calendar.google_client import (
     get_authorized_calendar_client,
 )
 from app.calendar.scheduler import SchedulingError, propose_slots
+from app.calendar.spoken_time import format_spoken_time
 from app.config import Settings
 from app.conversation_policy import merge_conversation_state
 from app.models import CallOutcome, CallSession, Clinic, Service, Worker
@@ -504,6 +505,23 @@ class ToolExecutionContext:
 
 class RealtimeToolError(RuntimeError):
     """Stable error safe to return to the Realtime model."""
+
+
+def _time_reading_style(session: Session, context: ToolExecutionContext) -> str:
+    """Resolve the time presentation configured for this exact call."""
+    call = session.get(CallSession, context.call_session_id)
+    if call is None or call.assistant_config is None:
+        return "natural_quarters"
+    return call.assistant_config.time_reading_style
+
+
+def _spoken_time(
+    session: Session,
+    context: ToolExecutionContext,
+    value: datetime,
+) -> str:
+    """Render one tool time in the configured telephone style."""
+    return format_spoken_time(value, _time_reading_style(session, context))
 
 
 def _trusted_arguments(
@@ -1006,9 +1024,21 @@ def _execute_tool(
                 awaiting_confirmation=bool(propose_response.slots),
             )
             exact_request = propose_payload.max_slots == 1
+            serialized_slots = propose_response.model_dump(mode="json")["slots"]
+            for slot_payload, slot in zip(serialized_slots, propose_response.slots):
+                slot_payload["spoken_start_at"] = _spoken_time(
+                    session,
+                    context,
+                    slot.start_at,
+                )
+                slot_payload["spoken_end_at"] = _spoken_time(
+                    session,
+                    context,
+                    slot.end_at,
+                )
             return {
                 "ok": True,
-                **propose_response.model_dump(mode="json"),
+                "slots": serialized_slots,
                 "exact_time_request": exact_request,
                 "assistant_guidance": (
                     "El horario solicitado está disponible. Confírmalo de forma "
@@ -1086,6 +1116,16 @@ def _execute_tool(
             return {
                 "ok": True,
                 **availability_response.model_dump(mode="json"),
+                "spoken_start_at": _spoken_time(
+                    session,
+                    context,
+                    availability_payload.start_at,
+                ),
+                "spoken_end_at": _spoken_time(
+                    session,
+                    context,
+                    availability_payload.end_at,
+                ),
                 "assistant_guidance": (
                     "El horario solicitado está disponible. Di que sí hay sitio "
                     "y no menciones alternativas."
@@ -1183,6 +1223,20 @@ def _execute_tool(
             return {
                 "ok": True,
                 **appointment_response.model_dump(mode="json"),
+                "spoken_start_at": _spoken_time(
+                    session,
+                    context,
+                    appointment.start_at,
+                ),
+                "spoken_end_at": _spoken_time(
+                    session,
+                    context,
+                    appointment.end_at,
+                ),
+                "assistant_guidance": (
+                    "La cita se ha creado correctamente. Confirma fecha, hora y "
+                    "profesional usando spoken_start_at para decir la hora."
+                ),
             }
 
         if name == "cancel_appointment":

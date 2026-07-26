@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 from collections.abc import Iterator
+from decimal import Decimal
 
 import httpx
 
@@ -36,6 +37,12 @@ AZURE_STATIC_VOICES = (
     ("es-ES-TrianaNeural", "Triana Neural", "es-ES", "es", "female"),
     ("es-ES-VeraNeural", "Vera Neural", "es-ES", "es", "female"),
     ("es-ES-XimenaNeural", "Ximena Neural", "es-ES", "es", "female"),
+)
+
+_AZURE_HTTP_CLIENT = httpx.Client(
+    timeout=httpx.Timeout(30.0, connect=5.0),
+    limits=httpx.Limits(max_connections=50, max_keepalive_connections=20, keepalive_expiry=60.0),
+    headers={"User-Agent": "clinic-voice-agent"},
 )
 
 AZURE_OUTPUT_FORMATS = {
@@ -94,7 +101,7 @@ class AzureTTSProvider:
         if not self.info().configured:
             return items
         try:
-            response = httpx.get(
+            response = _AZURE_HTTP_CLIENT.get(
                 f"https://{self._region()}.tts.speech.microsoft.com/"
                 "cognitiveservices/voices/list",
                 headers={"Ocp-Apim-Subscription-Key": self._key()},
@@ -150,11 +157,17 @@ class AzureTTSProvider:
         if not voice_id:
             raise VoiceProviderError("Falta voice_id para Azure Speech.")
         style = (request.voice_style or "").strip()
-        escaped_text = escaped
+        speed = max(Decimal("0.50"), min(request.voice_speed, Decimal("2.00")))
+        pitch = max(Decimal("-24.00"), min(request.voice_pitch, Decimal("24.00")))
+        pitch_value = f"{pitch:+.2f}st"
+        escaped_text = (
+            f"<prosody rate='{speed:.2f}' pitch='{pitch_value}'>"
+            f"{escaped}</prosody>"
+        )
         if style:
             escaped_text = (
                 "<mstts:express-as style='"
-                f"{html.escape(style)}'>{escaped}</mstts:express-as>"
+                f"{html.escape(style)}'>{escaped_text}</mstts:express-as>"
             )
         ssml = (
             "<speak version='1.0' "
@@ -163,13 +176,12 @@ class AzureTTSProvider:
             f"<voice name='{html.escape(voice_id)}'>{escaped_text}</voice></speak>"
         )
         try:
-            response = httpx.post(
+            response = _AZURE_HTTP_CLIENT.post(
                 f"https://{region}.tts.speech.microsoft.com/cognitiveservices/v1",
                 headers={
                     "Ocp-Apim-Subscription-Key": key,
                     "Content-Type": "application/ssml+xml",
                     "X-Microsoft-OutputFormat": output_format,
-                    "User-Agent": "clinic-voice-agent",
                 },
                 content=ssml.encode("utf-8"),
                 timeout=30.0,

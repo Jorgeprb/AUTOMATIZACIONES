@@ -105,15 +105,25 @@ function providerName(
   );
 }
 
+function speechSpeedForMultiplier(value: string): "slow" | "normal" | "fast" {
+  const multiplier = Number(value);
+  if (multiplier < 0.9) return "slow";
+  if (multiplier > 1.15) return "fast";
+  return "normal";
+}
+
 function buildConfigPayload(
   values: AssistantConfigFormValues,
 ): AssistantConfigPayload {
   return {
     ...values,
+    ask_patient_phone: true,
     // The stable local bridge supports both OpenAI audio and external TTS.
     // Keep the routing decision out of the user-facing configuration.
     call_audio_mode: "vps_media_bridge",
+    speech_speed: speechSpeedForMultiplier(values.voice_speed),
     temperature: values.temperature || null,
+    turn_end_silence_ms: Number(values.turn_end_silence_ms),
     idle_timeout_ms: values.idle_timeout_ms
       ? Number(values.idle_timeout_ms)
       : null,
@@ -461,12 +471,52 @@ export function AssistantConfigForm({
             </Select>
           </div>
           <div>
-            <Label>Velocidad al hablar</Label>
-            <Select {...register("speech_speed")}>
-              <option value="slow">Pausada</option>
-              <option value="normal">Natural</option>
-              <option value="fast">Ágil</option>
-            </Select>
+            <Label htmlFor="assistant-voice-speed">Velocidad de voz</Label>
+            <Input
+              id="assistant-voice-speed"
+              type="number"
+              min={0.5}
+              max={2}
+              step={0.05}
+              inputMode="decimal"
+              {...register("voice_speed")}
+            />
+            <p className="mt-1 text-xs text-[#657087]">
+              Multiplicador: 1.00 es normal, 1.20 es un 20 % más rápida.
+            </p>
+            <FieldError message={errors.voice_speed?.message} />
+          </div>
+          <div>
+            <Label htmlFor="assistant-temperature">Temperatura del modelo</Label>
+            <Input
+              id="assistant-temperature"
+              type="number"
+              min={0.6}
+              max={1.2}
+              step={0.05}
+              inputMode="decimal"
+              {...register("temperature")}
+            />
+            <p className="mt-1 text-xs text-[#657087]">
+              0.80 es equilibrada; valores bajos son más consistentes y los altos más variados.
+            </p>
+            <FieldError message={errors.temperature?.message} />
+          </div>
+          <div>
+            <Label htmlFor="assistant-turn-end">Espera al terminar de hablar</Label>
+            <Input
+              id="assistant-turn-end"
+              type="number"
+              min={200}
+              max={1200}
+              step={50}
+              inputMode="numeric"
+              {...register("turn_end_silence_ms")}
+            />
+            <p className="mt-1 text-xs text-[#657087]">
+              Milisegundos de silencio antes de responder. 300–400 ms suele sentirse ágil.
+            </p>
+            <FieldError message={errors.turn_end_silence_ms?.message} />
           </div>
           <div>
             <Label>Pausas</Label>
@@ -475,6 +525,18 @@ export function AssistantConfigForm({
               <option value="natural">Naturales</option>
               <option value="slow">Pausadas</option>
             </Select>
+          </div>
+          <div>
+            <Label>Cómo debe decir las horas</Label>
+            <Select {...register("time_reading_style")}>
+              <option value="natural_quarters">
+                Natural: cinco en punto, y cuarto, y media
+              </option>
+              <option value="numeric">Numérica: 17:00, 17:15, 17:30</option>
+            </Select>
+            <p className="mt-1 text-xs text-[#657087]">
+              También usa «menos cuarto» para los minutos 45.
+            </p>
           </div>
           <div>
             <Label>Preguntas seguidas como máximo</Label>
@@ -571,11 +633,24 @@ export function AssistantConfigForm({
             checked={watch("ask_patient_name")}
             onChange={(checked) => setValue("ask_patient_name", checked)}
           />
-          <SwitchField
-            label="Pedir o confirmar el teléfono"
-            checked={watch("ask_patient_phone")}
-            onChange={(checked) => setValue("ask_patient_phone", checked)}
-          />
+          <div className="rounded-xl border border-[#e4e8ef] bg-white p-4">
+            <Label htmlFor="caller-phone-policy">Teléfono desde el que llama</Label>
+            <Select
+              id="caller-phone-policy"
+              className="mt-2"
+              {...register("caller_phone_policy")}
+            >
+              <option value="ask_before_use">
+                Preguntar si puede utilizarse para la cita
+              </option>
+              <option value="use_directly">
+                Utilizarlo directamente sin preguntar
+              </option>
+            </Select>
+            <p className="mt-2 text-xs leading-5 text-[#748095]">
+              Si el número está oculto o la persona facilita otro, el asistente pedirá el nuevo.
+            </p>
+          </div>
           <SwitchField
             label="Preguntar el servicio"
             checked={watch("ask_service")}
@@ -608,6 +683,45 @@ export function AssistantConfigForm({
             max={5}
             {...register("max_proposed_slots", { valueAsNumber: true })}
           />
+        </div>
+      </Section>
+
+      <Section
+        title="Evento de Google Calendar"
+        description="Personaliza el título y la descripción de las citas creadas automáticamente."
+      >
+        <div className="space-y-5">
+          <div>
+            <Label htmlFor="calendar-event-title">Plantilla del título</Label>
+            <Input
+              id="calendar-event-title"
+              {...register("calendar_event_title_template")}
+              placeholder="Cita - {patient_name}"
+            />
+            <FieldError message={errors.calendar_event_title_template?.message} />
+          </div>
+          <div>
+            <Label htmlFor="calendar-event-description">
+              Plantilla de la descripción
+            </Label>
+            <Textarea
+              id="calendar-event-description"
+              rows={8}
+              {...register("calendar_event_description_template")}
+            />
+            <FieldError
+              message={errors.calendar_event_description_template?.message}
+            />
+          </div>
+          <div className="rounded-xl border border-[#dce5ff] bg-[#f6f8ff] p-4 text-xs leading-6 text-[#526078]">
+            <p className="font-semibold text-[#27334a]">Variables disponibles</p>
+            <code className="mt-2 block whitespace-pre-wrap break-words">
+              {`{patient_name}  {patient_phone}  {reason}  {service_name}
+{worker_name}  {clinic_name}  {start_date}  {start_time}
+{end_date}  {end_time}  {start_datetime}  {end_datetime}
+{appointment_id}  {call_session_id}`}
+            </code>
+          </div>
         </div>
       </Section>
 
@@ -648,6 +762,19 @@ export function AssistantConfigForm({
         description="Añade únicamente reglas específicas de tu negocio. El prompt general ya está optimizado para sonar natural."
       >
         <div className="space-y-5">
+          <div>
+            <Label htmlFor="general-system-prompt">Prompt general</Label>
+            <Textarea
+              id="general-system-prompt"
+              rows={8}
+              {...register("system_prompt")}
+              placeholder="Describe el papel general del asistente y las reglas propias del negocio."
+            />
+            <p className="mt-1 text-xs leading-5 text-[#748095]">
+              Se incorpora al prompt optimizado de naturalidad, agenda y seguridad. No incluyas claves ni datos secretos.
+            </p>
+            <FieldError message={errors.system_prompt?.message} />
+          </div>
           <div>
             <Label>Instrucciones adicionales</Label>
             <Textarea

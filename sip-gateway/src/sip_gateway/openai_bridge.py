@@ -73,7 +73,7 @@ def build_realtime_session(context: VoiceContext) -> dict[str, Any]:
             "interrupt_response": context.allow_interruptions,
             "threshold": 0.55,
             "prefix_padding_ms": 300,
-            "silence_duration_ms": 650,
+            "silence_duration_ms": max(200, min(context.turn_end_silence_ms, 1200)),
         },
     }
     if context.idle_timeout_ms is not None:
@@ -97,6 +97,11 @@ def build_realtime_session(context: VoiceContext) -> dict[str, Any]:
         "output_modalities": ["text"] if external_tts else ["audio"],
         "audio": {"input": audio_input},
     }
+    if context.temperature is not None:
+        session["temperature"] = max(0.6, min(float(context.temperature), 1.2))
+    if context.model.startswith("gpt-realtime-2"):
+        # Low reasoning is the best latency/quality balance for appointment calls.
+        session["reasoning"] = {"effort": "low"}
     tools = _sanitize_tools(context.tools)
     if tools:
         session["tools"] = tools
@@ -105,7 +110,7 @@ def build_realtime_session(context: VoiceContext) -> dict[str, Any]:
         session["audio"]["output"] = {
             "format": {"type": "audio/pcm", "rate": OPENAI_INPUT_SAMPLE_RATE},
             "voice": context.realtime_voice,
-            "speed": 1.0,
+            "speed": max(0.25, min(float(context.voice_speed), 1.5)),
         }
     return session
 
@@ -204,6 +209,13 @@ class OpenAIRealtimeBridge:
                 "input_rate": OPENAI_INPUT_SAMPLE_RATE,
                 "output_modalities": session["output_modalities"],
                 "transcription": self._context.transcript_enabled,
+                "temperature": session.get("temperature"),
+                "turn_end_silence_ms": self._context.turn_end_silence_ms,
+                "reasoning_effort": (
+                    session.get("reasoning", {}).get("effort")
+                    if isinstance(session.get("reasoning"), dict)
+                    else None
+                ),
             },
         )
 
@@ -354,11 +366,21 @@ class OpenAIRealtimeBridge:
         if not self._context.transcript_enabled or not text.strip():
             return
         try:
-            await self._backend.append_transcript(
+            result = await self._backend.append_transcript(
                 call_session_id=self._context.call_session_id,
                 role=role,
                 text=text.strip(),
                 event_id=event_id,
+            )
+            logger.info(
+                "transcript_turn_persisted",
+                extra={
+                    "call_id": self._call_id,
+                    "role": role,
+                    "chars": len(text.strip()),
+                    "stored": bool(result.get("stored", True)),
+                    "reason": result.get("reason"),
+                },
             )
         except Exception:
             logger.exception(
@@ -421,7 +443,10 @@ class OpenAIRealtimeBridge:
             await self.text_queue.put("__OPENAI_ERROR__")
             return
 
-        if event_type == "conversation.item.input_audio_transcription.completed":
+        if event_type in {
+            "conversation.item.input_audio_transcription.completed",
+            "input_audio_transcription.completed",
+        }:
             transcript = event.get("transcript")
             if isinstance(transcript, str) and transcript.strip():
                 await self._persist_transcript(
@@ -433,6 +458,16 @@ class OpenAIRealtimeBridge:
                     "user_transcript_completed",
                     extra={"call_id": self._call_id, "chars": len(transcript)},
                 )
+            return
+
+        if event_type in {
+            "input_audio_buffer.speech_started",
+            "input_audio_buffer.speech_stopped",
+        }:
+            logger.info(
+                event_type.replace(".", "_"),
+                extra={"call_id": self._call_id},
+            )
             return
 
         if event_type == "response.output_audio.delta":

@@ -64,9 +64,12 @@ export interface AssistantConfig {
   pause_style: "short" | "natural" | "slow";
   phone_reading_style: "digits" | "groups" | "natural";
   date_reading_style: "natural" | "numeric";
+  time_reading_style: "natural_quarters" | "numeric";
+  caller_phone_policy: "ask_before_use" | "use_directly";
   price_reading_style: "brief" | "clear" | "detailed";
   allow_interruptions: boolean;
   idle_timeout_ms: number | null;
+  turn_end_silence_ms: number;
   ai_disclosure_enabled: boolean;
   ai_disclosure_message: string | null;
   preview_audio_format: "mp3" | "wav" | "opus";
@@ -76,6 +79,8 @@ export interface AssistantConfig {
   system_prompt: string;
   safety_prompt: string;
   booking_policy_prompt: string;
+  calendar_event_title_template: string;
+  calendar_event_description_template: string;
   cancellation_policy_prompt: string;
   transfer_policy_prompt: string;
   tone: "profesional" | "cercano" | "comercial" | "breve" | "formal";

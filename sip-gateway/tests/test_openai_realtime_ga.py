@@ -154,10 +154,16 @@ def test_send_pcm16_resamples_8k_to_24k_before_openai() -> None:
         for _ in range(5):
             await bridge.send_pcm16(b"\x00\x00" * 160)
 
-        assert len(websocket.messages) == 1
-        assert websocket.messages[0]["type"] == "input_audio_buffer.append"
-        audio = base64.b64decode(websocket.messages[0]["audio"])
-        assert len(audio) > 320
+        assert len(websocket.messages) == 2
+        assert all(
+            message["type"] == "input_audio_buffer.append"
+            for message in websocket.messages
+        )
+        audio = b"".join(
+            base64.b64decode(message["audio"])
+            for message in websocket.messages
+        )
+        assert len(audio) > 640
         assert len(audio) % 2 == 0
 
     asyncio.run(run())

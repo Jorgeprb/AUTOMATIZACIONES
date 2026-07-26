@@ -453,9 +453,16 @@ def build_realtime_instructions(context: ClinicContext) -> str:
     forbidden_phrases = _clean(config.forbidden_phrases)
     conversation_extra_rules = _clean(config.conversation_extra_rules)
     ask_phone_rule = (
-        "sí"
-        if config.ask_patient_phone
-        else "solo confirmar si caller ID ya sirve"
+        "pregunta una sola vez si puedes usar el número desde el que llama; "
+        "si acepta, úsalo sin pedir que lo dicte"
+        if config.caller_phone_policy == "ask_before_use"
+        else "usa directamente el número desde el que llama sin preguntarlo ni confirmarlo"
+    )
+    time_reading_rule = (
+        "natural: para los cuartos exactos di 'en punto', 'y cuarto', "
+        "'y media' y 'menos cuarto'"
+        if config.time_reading_style == "natural_quarters"
+        else "numérica: expresa la hora con horas y minutos"
     )
     allow_worker_rule = (
         "sí" if config.allow_booking_without_worker else "no"
@@ -504,6 +511,8 @@ Reglas de naturalidad obligatorias:
   relacionados y puedan pedirse de forma natural.
 - No enumeres procesos internos ni expliques qué herramienta vas a utilizar.
 - No repitas el nombre, servicio, fecha u hora en cada intervención.
+- Forma de decir las horas: {time_reading_rule}. No leas "17:00" como una cifra
+  técnica si está seleccionado el estilo natural.
 - No resumas toda la conversación después de cada respuesta.
 - No uses siempre "perfecto", "de acuerdo" o "entiendo". Varía o responde
   directamente.
@@ -570,7 +579,9 @@ interpretar referencias como "la primera", "esa" o "a las nueve".
 {_clean(context.booking_rules.booking_policy)}
 
 Pedir nombre: {"sí" if config.ask_patient_name else "solo si es imprescindible"}.
-Pedir teléfono: {ask_phone_rule}.
+Política del teléfono del llamante: {ask_phone_rule}.
+Si el número entrante no está disponible o la persona quiere usar otro, pide ese
+número de forma breve. Nunca inventes ni completes dígitos.
 Pedir motivo general: {"sí, de forma breve" if config.ask_general_reason else "no es obligatorio"}.
 Permitir reserva sin profesional concreto: {allow_worker_rule}.
 Máximo de alternativas cuando sean necesarias: {max_slots}.
@@ -592,6 +603,7 @@ Regla prioritaria para un horario propuesto por la persona:
 7. Antes de crear la cita, comprueba el hueco una sola vez. No afirmes que está
    reservada hasta que create_appointment devuelva éxito.
 8. Tras reservar, confirma en una única frase clara la fecha, hora y profesional.
+9. Al decir una hora, aplica siempre esta preferencia: {time_reading_rule}.
 
 Mensaje base si no hay disponibilidad: {no_availability_message}
 Mensaje si falta calendario: {missing_calendar_message}

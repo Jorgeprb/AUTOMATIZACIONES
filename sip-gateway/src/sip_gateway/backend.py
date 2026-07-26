@@ -43,6 +43,8 @@ class VoiceContext:
     tools: list[dict[str, Any]]
     language: str = "es-ES"
     call_audio_mode: str = "vps_media_bridge"
+    temperature: str | None = None
+    turn_end_silence_ms: int = 350
     openai_project_id: str | None = None
     prompt: str | None = None
     caller: str | None = None
@@ -61,6 +63,10 @@ class VoiceContext:
             filtered.get("telephony_codec") or "pcmu"
         ).casefold()
         filtered["language"] = str(filtered.get("language") or "es-ES")
+        filtered["temperature"] = filtered.get("temperature")
+        filtered["turn_end_silence_ms"] = int(
+            filtered.get("turn_end_silence_ms") or 350
+        )
         return cls(**filtered)
 
 
@@ -234,7 +240,7 @@ class BackendClient:
         role: str,
         text: str,
         event_id: str | None = None,
-    ) -> None:
+    ) -> dict[str, Any]:
         """Persist one completed utterance without blocking the media flow."""
         payload = {
             "call_session_id": call_session_id,
@@ -249,6 +255,8 @@ class BackendClient:
             timeout=10.0,
         )
         response.raise_for_status()
+        data = response.json()
+        return data if isinstance(data, dict) else {"ok": True}
 
     async def execute_tool(
         self,

@@ -50,21 +50,21 @@ class GatewaySettings(BaseSettings):
     barge_in_min_frames: int = 8
     barge_in_cooldown_ms: int = 1200
     barge_in_start_guard_ms: int = 600
-    tts_text_flush_timeout_ms: int = 650
-    tts_min_flush_chars: int = 40
+    tts_text_flush_timeout_ms: int = 300
+    tts_min_flush_chars: int = 24
     openai_realtime_ws_url: str = "wss://api.openai.com/v1/realtime"
     openai_project_id: str = ""
     openai_hosted_sip_domain: str = "sip.api.openai.com"
     openai_hosted_sip_transport: str = "tls"
     openai_hosted_sip_strategy: str = "blocked"
     telephony_codec: str = "pcmu"
-    rtp_initial_buffer_ms: int = 240
+    rtp_initial_buffer_ms: int = 120
     rtp_packet_log_every: int = 50
     outbound_audio_max_ms: int = 30000
     jitter_buffer_depth: int = 3
     jitter_flush_ms: int = 80
     openai_queue_max_items: int = 500
-    openai_input_batch_ms: int = 80
+    openai_input_batch_ms: int = 40
 
     @field_validator("sip_port", "rtp_port_min", "rtp_port_max", "health_port")
     @classmethod

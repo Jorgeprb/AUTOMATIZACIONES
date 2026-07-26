@@ -29,6 +29,40 @@ export const clonedOrCustomVoiceProviders = [
 
 const clonedOrCustomProviderSet = new Set<string>(clonedOrCustomVoiceProviders);
 
+
+const calendarTemplateFields = new Set([
+  "appointment_id",
+  "call_session_id",
+  "clinic_name",
+  "patient_name",
+  "patient_phone",
+  "reason",
+  "service_name",
+  "worker_name",
+  "start_date",
+  "start_time",
+  "end_date",
+  "end_time",
+  "start_datetime",
+  "end_datetime",
+]);
+
+function calendarTemplateString(label: string, max: number, required: boolean) {
+  return z
+    .string()
+    .max(max, `${label} es demasiado larga`)
+    .refine((value) => !required || value.trim().length > 0, `${label} es obligatoria`)
+    .refine((value) => {
+      const withoutEscapedBraces = value.replace(/\{\{/g, "").replace(/\}\}/g, "");
+      const matches = withoutEscapedBraces.matchAll(/\{([^{}]+)\}/g);
+      for (const match of matches) {
+        const field = match[1];
+        if (!field || !calendarTemplateFields.has(field)) return false;
+      }
+      return !/[{}]/.test(withoutEscapedBraces.replace(/\{[^{}]+\}/g, ""));
+    }, `${label} contiene una variable no permitida o llaves inválidas`);
+}
+
 function requiredDecimalString(
   label: string,
   min: number,
@@ -79,7 +113,7 @@ export const assistantConfigFormSchema = z
   voice_gender: z.string(),
   azure_speech_region: z.string(),
   voice_style: z.string(),
-  voice_speed: requiredDecimalString("La velocidad de voz", 0.25, 4),
+  voice_speed: requiredDecimalString("La velocidad de voz", 0.5, 2),
   voice_pitch: requiredDecimalString("El pitch", -24, 24),
   voice_stability: optionalDecimalString("La estabilidad", 0, 1),
   voice_similarity: optionalDecimalString("La similitud", 0, 1),
@@ -95,8 +129,20 @@ export const assistantConfigFormSchema = z
   pause_style: z.enum(["short", "natural", "slow"]),
   phone_reading_style: z.enum(["digits", "groups", "natural"]),
   date_reading_style: z.enum(["natural", "numeric"]),
+  time_reading_style: z.enum(["natural_quarters", "numeric"]),
+  caller_phone_policy: z.enum(["ask_before_use", "use_directly"]),
   price_reading_style: z.enum(["brief", "clear", "detailed"]),
   allow_interruptions: z.boolean(),
+  turn_end_silence_ms: z
+    .string()
+    .trim()
+    .refine(
+      (value) =>
+        Number.isInteger(Number(value)) &&
+        Number(value) >= 200 &&
+        Number(value) <= 1200,
+      "El tiempo de fin de turno debe estar entre 200 y 1200 ms",
+    ),
   idle_timeout_ms: z
     .string()
     .trim()
@@ -119,9 +165,9 @@ export const assistantConfigFormSchema = z
       (value) =>
         value === "" ||
         (Number.isFinite(Number(value)) &&
-          Number(value) >= 0 &&
-          Number(value) <= 2),
-      "La temperatura debe estar entre 0 y 2",
+          Number(value) >= 0.6 &&
+          Number(value) <= 1.2),
+      "La temperatura debe estar entre 0.6 y 1.2",
     ),
   first_message: z.string().trim().min(1, "El primer mensaje es obligatorio"),
   system_prompt: z
@@ -134,6 +180,16 @@ export const assistantConfigFormSchema = z
     .string()
     .trim()
     .min(1, "La política de reservas es obligatoria"),
+  calendar_event_title_template: calendarTemplateString(
+    "La plantilla del título",
+    500,
+    true,
+  ),
+  calendar_event_description_template: calendarTemplateString(
+    "La plantilla de la descripción",
+    5000,
+    false,
+  ),
   cancellation_policy_prompt: z
     .string()
     .trim()
@@ -214,6 +270,7 @@ export interface AssistantConfigPayload
     AssistantConfigFormValues,
     | "temperature"
     | "idle_timeout_ms"
+    | "turn_end_silence_ms"
     | "tts_model"
     | "voice_id"
     | "voice_locale"
@@ -226,6 +283,7 @@ export interface AssistantConfigPayload
   > {
   temperature: string | null;
   idle_timeout_ms: number | null;
+  turn_end_silence_ms: number;
   tts_model: string | null;
   voice_id: string | null;
   voice_locale: string | null;
@@ -250,7 +308,7 @@ export const assistantConfigDefaults: AssistantConfigFormValues = {
   voice_gender: "",
   azure_speech_region: "",
   voice_style: "",
-  voice_speed: "1",
+  voice_speed: "1.00",
   voice_pitch: "0",
   voice_stability: "",
   voice_similarity: "",
@@ -267,14 +325,17 @@ export const assistantConfigDefaults: AssistantConfigFormValues = {
   pause_style: "natural",
   phone_reading_style: "groups",
   date_reading_style: "natural",
+  time_reading_style: "natural_quarters",
+  caller_phone_policy: "ask_before_use",
   price_reading_style: "clear",
   allow_interruptions: true,
+  turn_end_silence_ms: "350",
   idle_timeout_ms: "",
   ai_disclosure_enabled: true,
   ai_disclosure_message: "Soy un asistente virtual de la clínica.",
   preview_audio_format: "mp3",
   language: "es-ES",
-  temperature: "",
+  temperature: "0.80",
   first_message:
     "Hola, soy el asistente virtual de la clínica. ¿En qué puedo ayudarle?",
   system_prompt:
@@ -283,6 +344,9 @@ export const assistantConfigDefaults: AssistantConfigFormValues = {
     "No diagnostiques ni recomiendes medicación. Ante una urgencia, indica llamar al 112 o acudir a urgencias.",
   booking_policy_prompt:
     "Recoge los datos mínimos, ofrece hasta tres huecos reales y reserva cuando el cliente acepte un hueco de forma natural.",
+  calendar_event_title_template: "Cita - {patient_name}",
+  calendar_event_description_template:
+    "Reserva creada por asistente telefónico.\nPaciente: {patient_name}\nTeléfono: {patient_phone}\nServicio: {service_name}\nProfesional: {worker_name}\nFecha: {start_date}\nHora: {start_time}\nMotivo general: {reason}",
   cancellation_policy_prompt:
     "Identifica la cita correcta y confirma con la persona antes de cancelarla.",
   transfer_policy_prompt:

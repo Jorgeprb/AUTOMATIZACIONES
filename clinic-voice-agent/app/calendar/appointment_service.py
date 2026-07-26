@@ -11,6 +11,12 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from app.calendar.event_templates import (
+    DEFAULT_CALENDAR_EVENT_DESCRIPTION_TEMPLATE,
+    DEFAULT_CALENDAR_EVENT_TITLE_TEMPLATE,
+    calendar_template_values,
+    render_calendar_event_template,
+)
 from app.calendar.google_client import GoogleCalendarClient
 from app.calendar.scheduler import (
     SchedulingError,
@@ -20,6 +26,7 @@ from app.calendar.scheduler import (
 )
 from app.models import (
     Appointment,
+    AssistantConfig,
     AppointmentSource,
     AppointmentStatus,
     CallSession,
@@ -333,15 +340,28 @@ def create_appointment_transactional(
             start_at=start_at,
             end_at=end_at,
         )
-        if call_session_id is not None and (
-            (call_session := session.get(CallSession, call_session_id)) is None
-            or (
+        call_session: CallSession | None = None
+        assistant_config: AssistantConfig | None = None
+        if call_session_id is not None:
+            call_session = session.get(CallSession, call_session_id)
+            if call_session is None or (
                 call_session.clinic_id is not None
                 and call_session.clinic_id != clinic_id
-            )
-        ):
-            raise AgentResourceNotFound(
-                "Call session not found or belongs to another clinic."
+            ):
+                raise AgentResourceNotFound(
+                    "Call session not found or belongs to another clinic."
+                )
+            if call_session.assistant_config_id is not None:
+                assistant_config = session.get(
+                    AssistantConfig,
+                    call_session.assistant_config_id,
+                )
+        if assistant_config is None:
+            assistant_config = session.scalar(
+                select(AssistantConfig).where(
+                    AssistantConfig.clinic_id == clinic_id,
+                    AssistantConfig.is_active.is_(True),
+                )
             )
 
         blocked_start = start_at.astimezone(UTC) - timedelta(
@@ -372,15 +392,46 @@ def create_appointment_transactional(
         if not google_available:
             raise AppointmentUnavailable("The slot is no longer available.")
 
-        description = (
-            "Reserva creada por asistente telefónico. "
-            f"Teléfono: {normalized_phone} "
-            f"Motivo general: {reason or 'No especificado'}"
+        service = session.get(Service, service_id) if service_id is not None else None
+        zone = ZoneInfo(clinic.timezone)
+        local_start = start_at.astimezone(zone)
+        local_end = end_at.astimezone(zone)
+        template_values = calendar_template_values(
+            appointment_id=appointment_id,
+            call_session_id=call_session_id,
+            clinic_name=clinic.name,
+            patient_name=patient_name,
+            patient_phone=normalized_phone,
+            reason=reason,
+            service_name=(service.public_name or service.name) if service else None,
+            worker_name=worker.name,
+            start_at=local_start,
+            end_at=local_end,
+        )
+        title_template = (
+            assistant_config.calendar_event_title_template
+            if assistant_config is not None
+            else DEFAULT_CALENDAR_EVENT_TITLE_TEMPLATE
+        )
+        description_template = (
+            assistant_config.calendar_event_description_template
+            if assistant_config is not None
+            else DEFAULT_CALENDAR_EVENT_DESCRIPTION_TEMPLATE
+        )
+        summary = render_calendar_event_template(
+            title_template,
+            template_values,
+            label="title",
+        )
+        description = render_calendar_event_template(
+            description_template,
+            template_values,
+            label="description",
         )
         event_body = build_worker_event_body(
             worker=worker,
-            summary=f"Cita - {patient_name}",
-            description=description,
+            summary=summary,
+            description=description or None,
             start_at=start_at,
             end_at=end_at,
             timezone=clinic.timezone,

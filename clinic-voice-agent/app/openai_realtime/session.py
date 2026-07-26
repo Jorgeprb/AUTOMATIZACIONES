@@ -47,6 +47,8 @@ class RealtimeSessionConfig:
     fallback_voice: str | None = None
     allow_interruptions: bool = True
     idle_timeout_ms: int | None = None
+    turn_end_silence_ms: int = 350
+    temperature: float | None = 0.8
 
     def as_accept_payload(self) -> dict[str, Any]:
         """Serialize the documented Realtime session payload."""
@@ -59,7 +61,7 @@ class RealtimeSessionConfig:
                 "type": "server_vad",
                 "threshold": 0.55,
                 "prefix_padding_ms": 300,
-                "silence_duration_ms": 650,
+                "silence_duration_ms": max(200, min(self.turn_end_silence_ms, 1200)),
                 "interrupt_response": self.allow_interruptions,
             },
         }
@@ -76,7 +78,7 @@ class RealtimeSessionConfig:
             }
         if input_audio:
             audio["input"] = input_audio
-        return {
+        payload: dict[str, Any] = {
             "type": "realtime",
             "model": self.model,
             "audio": audio,
@@ -84,6 +86,11 @@ class RealtimeSessionConfig:
             "tools": list(get_realtime_tools()),
             "tool_choice": "auto",
         }
+        if self.temperature is not None:
+            payload["temperature"] = max(0.6, min(float(self.temperature), 1.2))
+        if self.model.startswith("gpt-realtime-2"):
+            payload["reasoning"] = {"effort": "low"}
+        return payload
 
 
 def build_session_config(
@@ -113,9 +120,37 @@ def build_session_config(
             "Úsalo al crear citas y no lo leas en voz alta."
         )
     if caller_phone:
-        context_lines.append(
-            f"Caller ID recibido: {caller_phone}. Confírmalo si hay duda."
-        )
+        normalized_caller_phone = caller_phone.strip()
+        caller_phone_unavailable = normalized_caller_phone.casefold() in {
+            "",
+            "unknown",
+            "anonymous",
+            "private",
+            "restricted",
+        }
+        if caller_phone_unavailable:
+            context_lines.append(
+                "No hay un Caller ID utilizable. Si la reserva necesita teléfono, "
+                "pídelo una sola vez."
+            )
+        elif (
+            context is not None
+            and context.active_assistant_config.caller_phone_policy
+            == "use_directly"
+        ):
+            context_lines.append(
+                f"Caller ID de confianza: {normalized_caller_phone}. Úsalo directamente "
+                "como patient_phone al crear la cita, sin pedir permiso ni solicitar que "
+                "lo repitan. Si la persona facilita expresamente otro número, usa el nuevo. "
+                "No leas el número completo en voz alta salvo que te lo pidan."
+            )
+        else:
+            context_lines.append(
+                f"Caller ID disponible: {normalized_caller_phone}. Antes de usarlo en la "
+                "cita, pregunta una sola vez si puedes utilizar el número desde el que está "
+                "llamando. Si acepta, usa exactamente ese número como patient_phone sin "
+                "pedir que lo dicte. Si no acepta, pide otro número."
+            )
     if context_lines:
         instructions = f"{instructions}\n\n# Contexto técnico\n" + "\n".join(
             context_lines
@@ -159,6 +194,17 @@ def build_session_config(
             context.active_assistant_config.idle_timeout_ms
             if context is not None
             else None
+        ),
+        turn_end_silence_ms=(
+            context.active_assistant_config.turn_end_silence_ms
+            if context is not None
+            else 350
+        ),
+        temperature=(
+            float(context.active_assistant_config.temperature)
+            if context is not None
+            and context.active_assistant_config.temperature is not None
+            else 0.8
         ),
     )
 

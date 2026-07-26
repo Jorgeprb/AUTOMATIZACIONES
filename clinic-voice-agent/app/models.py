@@ -442,6 +442,14 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="valid_assistant_date_reading_style",
         ),
         CheckConstraint(
+            "time_reading_style IN ('natural_quarters', 'numeric')",
+            name="valid_assistant_time_reading_style",
+        ),
+        CheckConstraint(
+            "caller_phone_policy IN ('ask_before_use', 'use_directly')",
+            name="valid_assistant_caller_phone_policy",
+        ),
+        CheckConstraint(
             "price_reading_style IN ('brief', 'clear', 'detailed')",
             name="valid_assistant_price_reading_style",
         ),
@@ -452,6 +460,10 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint(
             "idle_timeout_ms IS NULL OR idle_timeout_ms BETWEEN 1000 AND 60000",
             name="valid_assistant_idle_timeout_ms",
+        ),
+        CheckConstraint(
+            "turn_end_silence_ms BETWEEN 200 AND 1200",
+            name="valid_assistant_turn_end_silence_ms",
         ),
         CheckConstraint(
             "call_audio_mode IN ('openai_hosted_sip', 'vps_media_bridge')",
@@ -468,7 +480,7 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="valid_assistant_voice_provider",
         ),
         CheckConstraint(
-            "voice_speed BETWEEN 0.25 AND 4.00",
+            "voice_speed BETWEEN 0.50 AND 2.00",
             name="valid_assistant_voice_speed",
         ),
         CheckConstraint(
@@ -601,6 +613,18 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default="natural",
         nullable=False,
     )
+    time_reading_style: Mapped[str] = mapped_column(
+        String(24),
+        server_default=text("'natural_quarters'"),
+        default="natural_quarters",
+        nullable=False,
+    )
+    caller_phone_policy: Mapped[str] = mapped_column(
+        String(24),
+        server_default=text("'ask_before_use'"),
+        default="ask_before_use",
+        nullable=False,
+    )
     price_reading_style: Mapped[str] = mapped_column(
         String(16),
         server_default=text("'clear'"),
@@ -614,6 +638,12 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
     )
     idle_timeout_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    turn_end_silence_ms: Mapped[int] = mapped_column(
+        Integer,
+        server_default=text("350"),
+        default=350,
+        nullable=False,
+    )
     ai_disclosure_enabled: Mapped[bool] = mapped_column(
         Boolean,
         server_default=text("true"),
@@ -636,6 +666,36 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     safety_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     booking_policy_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    calendar_event_title_template: Mapped[str] = mapped_column(
+        Text,
+        server_default=text("'Cita - {patient_name}'"),
+        default="Cita - {patient_name}",
+        nullable=False,
+    )
+    calendar_event_description_template: Mapped[str] = mapped_column(
+        Text,
+        server_default=text(
+            "'Reserva creada por asistente telefónico.\n"
+            "Paciente: {patient_name}\n"
+            "Teléfono: {patient_phone}\n"
+            "Servicio: {service_name}\n"
+            "Profesional: {worker_name}\n"
+            "Fecha: {start_date}\n"
+            "Hora: {start_time}\n"
+            "Motivo general: {reason}'"
+        ),
+        default=(
+            "Reserva creada por asistente telefónico.\n"
+            "Paciente: {patient_name}\n"
+            "Teléfono: {patient_phone}\n"
+            "Servicio: {service_name}\n"
+            "Profesional: {worker_name}\n"
+            "Fecha: {start_date}\n"
+            "Hora: {start_time}\n"
+            "Motivo general: {reason}"
+        ),
+        nullable=False,
+    )
     cancellation_policy_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     transfer_policy_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     tone: Mapped[str] = mapped_column(

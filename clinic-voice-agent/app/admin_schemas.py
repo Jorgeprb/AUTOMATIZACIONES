@@ -21,6 +21,11 @@ from app.call_audio import (
     normalize_call_audio_mode,
     requires_external_voice_legal_confirmation,
 )
+from app.calendar.event_templates import (
+    DEFAULT_CALENDAR_EVENT_DESCRIPTION_TEMPLATE,
+    DEFAULT_CALENDAR_EVENT_TITLE_TEMPLATE,
+    validate_calendar_event_template,
+)
 from app.conversation_flows import validate_flow_json
 from app.models import (
     AppointmentSource,
@@ -301,8 +306,8 @@ class AssistantConfigBase(BaseModel):
     voice_style: str | None = Field(default=None, max_length=80)
     voice_speed: Decimal = Field(
         default=Decimal("1.00"),
-        ge=Decimal("0.25"),
-        le=Decimal("4.00"),
+        ge=Decimal("0.50"),
+        le=Decimal("2.00"),
     )
     voice_pitch: Decimal = Field(
         default=Decimal("0.00"),
@@ -323,18 +328,38 @@ class AssistantConfigBase(BaseModel):
     pause_style: Literal["short", "natural", "slow"] = "natural"
     phone_reading_style: Literal["digits", "groups", "natural"] = "groups"
     date_reading_style: Literal["natural", "numeric"] = "natural"
+    time_reading_style: Literal["natural_quarters", "numeric"] = (
+        "natural_quarters"
+    )
+    caller_phone_policy: Literal["ask_before_use", "use_directly"] = (
+        "ask_before_use"
+    )
     price_reading_style: Literal["brief", "clear", "detailed"] = "clear"
     allow_interruptions: bool = True
     idle_timeout_ms: int | None = Field(default=None, ge=1000, le=60000)
+    turn_end_silence_ms: int = Field(default=350, ge=200, le=1200)
     ai_disclosure_enabled: bool = True
     ai_disclosure_message: str | None = None
     preview_audio_format: Literal["mp3", "wav", "opus"] = "mp3"
     language: str = Field(default="es", min_length=2, max_length=16)
-    temperature: Decimal | None = Field(default=None, ge=0, le=2)
+    temperature: Decimal | None = Field(
+        default=Decimal("0.80"),
+        ge=Decimal("0.60"),
+        le=Decimal("1.20"),
+    )
     first_message: str = Field(min_length=1)
     system_prompt: str = Field(min_length=1, max_length=12000)
     safety_prompt: str = Field(min_length=1)
     booking_policy_prompt: str = Field(min_length=1)
+    calendar_event_title_template: str = Field(
+        default=DEFAULT_CALENDAR_EVENT_TITLE_TEMPLATE,
+        min_length=1,
+        max_length=500,
+    )
+    calendar_event_description_template: str = Field(
+        default=DEFAULT_CALENDAR_EVENT_DESCRIPTION_TEMPLATE,
+        max_length=5000,
+    )
     cancellation_policy_prompt: str = Field(min_length=1)
     transfer_policy_prompt: str = Field(min_length=1)
     tone: Literal["profesional", "cercano", "comercial", "breve", "formal"] = (
@@ -378,6 +403,19 @@ class AssistantConfigBase(BaseModel):
     conversation_flow_id: uuid.UUID | None = None
     is_active: bool = False
 
+
+    @field_validator("calendar_event_title_template")
+    @classmethod
+    def validate_calendar_title_template(cls, value: str) -> str:
+        """Reject unsupported or unsafe title placeholders."""
+        return validate_calendar_event_template(value, label="title")
+
+    @field_validator("calendar_event_description_template")
+    @classmethod
+    def validate_calendar_description_template(cls, value: str) -> str:
+        """Reject unsupported or unsafe description placeholders."""
+        return validate_calendar_event_template(value, label="description")
+
     @model_validator(mode="after")
     def validate_dual_call_audio_policy(self) -> AssistantConfigBase:
         """Keep OpenAI hosted SIP compatible and bridge external voices."""
@@ -419,8 +457,8 @@ class AssistantConfigUpdate(BaseModel):
     voice_style: str | None = Field(default=None, max_length=80)
     voice_speed: Decimal | None = Field(
         default=None,
-        ge=Decimal("0.25"),
-        le=Decimal("4.00"),
+        ge=Decimal("0.50"),
+        le=Decimal("2.00"),
     )
     voice_pitch: Decimal | None = Field(
         default=None,
@@ -441,18 +479,34 @@ class AssistantConfigUpdate(BaseModel):
     pause_style: Literal["short", "natural", "slow"] | None = None
     phone_reading_style: Literal["digits", "groups", "natural"] | None = None
     date_reading_style: Literal["natural", "numeric"] | None = None
+    time_reading_style: Literal["natural_quarters", "numeric"] | None = None
+    caller_phone_policy: Literal["ask_before_use", "use_directly"] | None = None
     price_reading_style: Literal["brief", "clear", "detailed"] | None = None
     allow_interruptions: bool | None = None
     idle_timeout_ms: int | None = Field(default=None, ge=1000, le=60000)
+    turn_end_silence_ms: int | None = Field(default=None, ge=200, le=1200)
     ai_disclosure_enabled: bool | None = None
     ai_disclosure_message: str | None = None
     preview_audio_format: Literal["mp3", "wav", "opus"] | None = None
     language: str | None = Field(default=None, min_length=2, max_length=16)
-    temperature: Decimal | None = Field(default=None, ge=0, le=2)
+    temperature: Decimal | None = Field(
+        default=None,
+        ge=Decimal("0.60"),
+        le=Decimal("1.20"),
+    )
     first_message: str | None = Field(default=None, min_length=1)
     system_prompt: str | None = Field(default=None, min_length=1, max_length=12000)
     safety_prompt: str | None = Field(default=None, min_length=1)
     booking_policy_prompt: str | None = Field(default=None, min_length=1)
+    calendar_event_title_template: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=500,
+    )
+    calendar_event_description_template: str | None = Field(
+        default=None,
+        max_length=5000,
+    )
     cancellation_policy_prompt: str | None = Field(default=None, min_length=1)
     transfer_policy_prompt: str | None = Field(default=None, min_length=1)
     tone: (
@@ -502,6 +556,24 @@ class AssistantConfigUpdate(BaseModel):
     conversation_flow_id: uuid.UUID | None = None
     is_active: bool | None = None
 
+    @field_validator("calendar_event_title_template")
+    @classmethod
+    def validate_optional_calendar_title_template(cls, value: str | None) -> str | None:
+        """Validate a supplied partial title template."""
+        if value is None:
+            return None
+        return validate_calendar_event_template(value, label="title")
+
+    @field_validator("calendar_event_description_template")
+    @classmethod
+    def validate_optional_calendar_description_template(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        """Validate a supplied partial description template."""
+        if value is None:
+            return None
+        return validate_calendar_event_template(value, label="description")
 
 class AssistantConfigRead(AssistantConfigBase, ORMReadModel):
     """Administrative assistant configuration representation."""
@@ -528,8 +600,8 @@ class AssistantVoicePreviewRequest(BaseModel):
     voice_style: str | None = Field(default=None, max_length=80)
     voice_speed: Decimal = Field(
         default=Decimal("1.00"),
-        ge=Decimal("0.25"),
-        le=Decimal("4.00"),
+        ge=Decimal("0.50"),
+        le=Decimal("2.00"),
     )
     voice_pitch: Decimal = Field(
         default=Decimal("0.00"),
@@ -703,6 +775,12 @@ class AssistantRecommendedTemplateResponse(BaseModel):
     pause_style: Literal["short", "natural", "slow"] = "natural"
     phone_reading_style: Literal["digits", "groups", "natural"] = "groups"
     date_reading_style: Literal["natural", "numeric"] = "natural"
+    time_reading_style: Literal["natural_quarters", "numeric"] = (
+        "natural_quarters"
+    )
+    caller_phone_policy: Literal["ask_before_use", "use_directly"] = (
+        "ask_before_use"
+    )
     price_reading_style: Literal["brief", "clear", "detailed"] = "clear"
     allow_interruptions: bool = True
     idle_timeout_ms: int | None = Field(default=None, ge=1000, le=60000)

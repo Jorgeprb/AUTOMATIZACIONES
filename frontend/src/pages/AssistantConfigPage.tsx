@@ -64,7 +64,7 @@ function formValues(config: AssistantConfig): AssistantConfigFormValues {
     voice_gender: config.voice_gender ?? "",
     azure_speech_region: config.azure_speech_region ?? "",
     voice_style: config.voice_style ?? "",
-    voice_speed: config.voice_speed ?? "1",
+    voice_speed: config.voice_speed ?? "1.00",
     voice_pitch: config.voice_pitch ?? "0",
     voice_stability: config.voice_stability ?? "",
     voice_similarity: config.voice_similarity ?? "",
@@ -80,18 +80,25 @@ function formValues(config: AssistantConfig): AssistantConfigFormValues {
     pause_style: config.pause_style,
     phone_reading_style: config.phone_reading_style,
     date_reading_style: config.date_reading_style,
+    time_reading_style: config.time_reading_style ?? "natural_quarters",
+    caller_phone_policy: config.caller_phone_policy ?? "ask_before_use",
     price_reading_style: config.price_reading_style,
     allow_interruptions: config.allow_interruptions,
+    turn_end_silence_ms: String(config.turn_end_silence_ms ?? 350),
     idle_timeout_ms: config.idle_timeout_ms ? String(config.idle_timeout_ms) : "",
     ai_disclosure_enabled: config.ai_disclosure_enabled,
     ai_disclosure_message: config.ai_disclosure_message ?? "",
     preview_audio_format: config.preview_audio_format,
     language: config.language,
-    temperature: config.temperature ?? "",
+    temperature: config.temperature ?? "0.80",
     first_message: config.first_message,
     system_prompt: config.system_prompt,
     safety_prompt: config.safety_prompt,
     booking_policy_prompt: config.booking_policy_prompt,
+    calendar_event_title_template:
+      config.calendar_event_title_template ?? "Cita - {patient_name}",
+    calendar_event_description_template:
+      config.calendar_event_description_template ?? "",
     cancellation_policy_prompt: config.cancellation_policy_prompt,
     transfer_policy_prompt: config.transfer_policy_prompt,
     tone: config.tone,
@@ -131,6 +138,13 @@ function formValues(config: AssistantConfig): AssistantConfigFormValues {
   };
 }
 
+function speechSpeedForMultiplier(value: string): "slow" | "normal" | "fast" {
+  const multiplier = Number(value);
+  if (multiplier < 0.9) return "slow";
+  if (multiplier > 1.15) return "fast";
+  return "normal";
+}
+
 function payload(
   values: AssistantConfigFormValues,
   isActive: boolean,
@@ -139,8 +153,11 @@ function payload(
   return {
     ...values,
     is_active: isActive,
+    ask_patient_phone: true,
     call_audio_mode: externalVoice ? "vps_media_bridge" : values.call_audio_mode,
+    speech_speed: speechSpeedForMultiplier(values.voice_speed),
     temperature: values.temperature || null,
+    turn_end_silence_ms: Number(values.turn_end_silence_ms),
     idle_timeout_ms: values.idle_timeout_ms
       ? Number(values.idle_timeout_ms)
       : null,
