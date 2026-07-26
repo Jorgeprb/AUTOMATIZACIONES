@@ -470,6 +470,23 @@ def build_realtime_instructions(context: ClinicContext) -> str:
     natural_confirmation_rule = (
         "sí" if config.natural_confirmation_required else "no"
     )
+    configured_temperature = (
+        float(config.temperature) if config.temperature is not None else 0.8
+    )
+    if configured_temperature <= 0.75:
+        language_variation_rule = (
+            "muy consistente: usa formulaciones directas y poca variación, sin "
+            "alterar nunca datos ni completar información dudosa"
+        )
+    elif configured_temperature >= 1.0:
+        language_variation_rule = (
+            "variada pero controlada: alterna expresiones naturales sin cambiar "
+            "hechos, decisiones, herramientas ni requisitos de confirmación"
+        )
+    else:
+        language_variation_rule = (
+            "equilibrada: evita sonar repetitiva manteniendo respuestas previsibles"
+        )
     price_usage = (
         "activado"
         if config.use_prices and config.allow_price_answers
@@ -527,6 +544,24 @@ Reglas de naturalidad obligatorias:
 - Si no has entendido un dato, pide únicamente ese dato con una pregunta breve.
 - No cierres la llamada hasta que la petición esté resuelta o la persona se
   despida claramente.
+- Variación del lenguaje configurada: {language_variation_rule}.
+
+# Audio no claro y entradas ininteligibles
+
+Esta sección tiene prioridad sobre la iniciativa y sobre las reglas de reserva:
+- Responde y actúa únicamente cuando el último audio sea claro y tenga un sentido
+  comprensible dentro de la conversación.
+- Si escuchas silencio, ruido, televisión, música, tos, palabras parciales, sílabas
+  repetidas, una frase incoherente o no estás segura de haber entendido, no infieras
+  ninguna intención ni ningún dato.
+- En ese caso no consultes disponibilidad, no propongas horarios y no llames ninguna
+  herramienta. Pide que lo repitan con una única frase breve en el idioma de la
+  conversación. En gallego puedes decir: "Perdoa, non te entendín ben. Podes
+  repetilo?". En castellano: "Perdona, no te entendí bien. ¿Puedes repetirlo?".
+- Nunca interpretes un sonido, una palabra dudosa o ruido de fondo como "sí", "vale",
+  aceptación de un horario, nombre, teléfono, fecha o servicio.
+- Para crear o cancelar una cita, la última intervención de la persona debe contener
+  una aceptación afirmativa clara. Si falta, pregunta y espera; no actúes.
 
 # Información específica de la clínica
 
@@ -643,8 +678,11 @@ Mensaje de emergencia: {emergency_message}
   disponible o si la preferencia es abierta.
 - Usa service_id siempre que conozcas el servicio; no inventes identificadores.
 - No uses profesionales sin calendar_id para reservas automáticas.
-- Usa create_appointment solo con servicio, hueco, nombre, teléfono y aceptación.
-- Usa cancel_appointment únicamente después de identificar y confirmar la cita.
+- No llames herramientas de agenda si el último audio no fue claro. Pide repetir.
+- Usa create_appointment solo con servicio, hueco, nombre, teléfono y una aceptación
+  afirmativa clara en la última intervención del usuario.
+- Usa cancel_appointment únicamente después de identificar la cita y recibir una
+  confirmación afirmativa clara en la última intervención del usuario.
 - Usa transfer_to_human cuando la persona lo pida o la petición quede fuera de
   alcance.
 - Usa end_call solo después de una despedida clara.

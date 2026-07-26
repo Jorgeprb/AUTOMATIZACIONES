@@ -557,6 +557,55 @@ def _trusted_arguments(
     return trusted
 
 
+def _enforce_vps_voice_guard(
+    session: Session,
+    context: ToolExecutionContext,
+    name: str,
+    trusted: dict[str, Any],
+) -> None:
+    """Require gateway-derived clear speech evidence before appointment actions."""
+    guard_available = bool(trusted.pop("_server_guard_available", False))
+    input_clear = bool(trusted.pop("_server_input_clear", False))
+    explicit_confirmation = bool(
+        trusted.pop("_server_explicit_confirmation", False)
+    )
+    confirmation_prompted = bool(
+        trusted.pop("_server_confirmation_prompted", False)
+    )
+    trusted.pop("_server_user_item_id", None)
+    if name not in {
+        "propose_slots",
+        "check_availability",
+        "create_appointment",
+        "cancel_appointment",
+    }:
+        return
+    call_session = session.get(CallSession, context.call_session_id)
+    source = (
+        str(call_session.conversation_state_json.get("source") or "")
+        if call_session is not None
+        else ""
+    )
+    if source != "vps_media_bridge" or not guard_available:
+        return
+    if not input_clear:
+        raise RealtimeToolError(
+            "El último audio no se entendió con claridad. No continúes con la agenda; "
+            "pide a la persona que repita su respuesta."
+        )
+    if name in {"create_appointment", "cancel_appointment"}:
+        if not confirmation_prompted:
+            raise RealtimeToolError(
+                "Antes de crear o cancelar, el asistente debe pedir explícitamente "
+                "confirmación de esa acción y esperar el siguiente turno."
+            )
+        if not explicit_confirmation:
+            raise RealtimeToolError(
+                "Falta una confirmación afirmativa clara en la última intervención. "
+                "Pregunta si desea confirmar y espera una respuesta clara."
+            )
+
+
 def _sanitize_propose_slots_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
     """Prefer the service duration over a model-supplied raw duration."""
     sanitized = dict(arguments)
@@ -945,6 +994,7 @@ def _execute_tool(
         calendar_provider = (
             context.calendar_client_provider or get_authorized_calendar_client
         )
+        _enforce_vps_voice_guard(session, context, name, trusted)
         if name == "get_clinic_info":
             info = _clinic_info(session, context.clinic_id)
             return {"ok": True, **info.model_dump(mode="json")}

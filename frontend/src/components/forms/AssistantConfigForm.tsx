@@ -498,7 +498,7 @@ export function AssistantConfigForm({
               {...register("temperature")}
             />
             <p className="mt-1 text-xs text-[#657087]">
-              0.80 es equilibrada; valores bajos son más consistentes y los altos más variados.
+              En gpt-realtime-2 este valor ajusta la variación del lenguaje mediante instrucciones; la API ya no acepta session.temperature.
             </p>
             <FieldError message={errors.temperature?.message} />
           </div>

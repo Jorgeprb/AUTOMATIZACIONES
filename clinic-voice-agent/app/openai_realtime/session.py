@@ -86,8 +86,8 @@ class RealtimeSessionConfig:
             "tools": list(get_realtime_tools()),
             "tool_choice": "auto",
         }
-        if self.temperature is not None:
-            payload["temperature"] = max(0.6, min(float(self.temperature), 1.2))
+        # Current gpt-realtime models reject a session.temperature field. The
+        # stored preference is represented through prompt-level variation instead.
         if self.model.startswith("gpt-realtime-2"):
             payload["reasoning"] = {"effort": "low"}
         return payload

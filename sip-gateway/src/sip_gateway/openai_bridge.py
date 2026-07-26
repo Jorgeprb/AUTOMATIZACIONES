@@ -6,7 +6,9 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import time
+import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -30,6 +32,75 @@ _BENIGN_ERROR_CODES = {
     "response_cancel_not_active",
     "conversation_already_has_active_response",
 }
+_APPOINTMENT_TOOLS = {
+    "propose_slots",
+    "check_availability",
+    "create_appointment",
+    "cancel_appointment",
+}
+_CONFIRMATION_REQUIRED_TOOLS = {"create_appointment", "cancel_appointment"}
+_UNCLEAR_FILLERS = {
+    "ah",
+    "eh",
+    "em",
+    "hm",
+    "hmm",
+    "mmm",
+    "ruido",
+    "silencio",
+    "inaudible",
+    "ininteligible",
+}
+_CONFIRMATION_PHRASES = {
+    "si",
+    "vale",
+    "de acuerdo",
+    "correcto",
+    "correcta",
+    "confirmo",
+    "adelante",
+    "me viene bien",
+    "esa",
+    "ese",
+    "la primera",
+    "el primero",
+    "reservala",
+    "reservalo",
+    "reserva esa",
+    "reserva ese",
+    "puedes reservar",
+    "podes reservar",
+}
+_CONFIRMATION_REQUEST_MARKERS = (
+    "confirmas",
+    "confirmame",
+    "confirmar",
+    "lo confirmas",
+    "la confirmas",
+    "quieres que la reserve",
+    "quieres que lo reserve",
+    "quiere que la reserve",
+    "quiere que lo reserve",
+    "queres que a reserve",
+    "queres que o reserve",
+    "te la reservo",
+    "se la reservo",
+    "reservo la cita",
+    "reservo a cita",
+    "quieres cancelar",
+    "quiere cancelar",
+    "queres cancelar",
+)
+_CLARIFICATION_MARKERS = (
+    "no te entendi",
+    "no lo entendi",
+    "no la entendi",
+    "non te entendin",
+    "puedes repetir",
+    "puede repetir",
+    "podes repetilo",
+    "pode repetilo",
+)
 
 
 def _sanitize_tool_schema(tool: dict[str, Any]) -> dict[str, Any]:
@@ -58,6 +129,80 @@ def _transcription_language(value: str) -> str:
     return normalized.casefold() or "es"
 
 
+def _normalize_user_text(value: str) -> str:
+    """Normalize a user transcript for conservative voice-action guards."""
+    decomposed = unicodedata.normalize("NFKD", value.casefold())
+    without_accents = "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    )
+    return " ".join(without_accents.split())
+
+
+def transcript_is_clear(value: str) -> bool:
+    """Return whether a transcript contains usable speech rather than noise/fillers."""
+    normalized = _normalize_user_text(value)
+    if not normalized:
+        return False
+    if any(marker in normalized for marker in ("[inaudible]", "[ruido]", "(ruido)", "...")):
+        return False
+    tokens = re.findall(r"[a-z0-9]+", normalized)
+    if not tokens or all(token in _UNCLEAR_FILLERS for token in tokens):
+        return False
+    if len(tokens) >= 3 and len(set(tokens)) == 1:
+        return False
+    meaningful_characters = sum(character.isalnum() for character in normalized)
+    if meaningful_characters < 2:
+        return False
+    return True
+
+
+def transcript_has_explicit_confirmation(value: str) -> bool:
+    """Require a clear, affirmative latest turn before a write-side appointment tool."""
+    normalized = _normalize_user_text(value)
+    if not transcript_is_clear(normalized):
+        return False
+    if normalized in _CONFIRMATION_PHRASES:
+        return True
+    return any(
+        phrase in normalized
+        for phrase in _CONFIRMATION_PHRASES
+        if " " in phrase or phrase.startswith("reserva")
+    )
+
+
+def assistant_requested_confirmation(value: str) -> bool:
+    """Detect whether the assistant explicitly asked to confirm a write action."""
+    normalized = _normalize_user_text(value)
+    return any(marker in normalized for marker in _CONFIRMATION_REQUEST_MARKERS)
+
+
+def assistant_text_is_clarification(value: str) -> bool:
+    """Keep a pending confirmation across a brief request to repeat unclear audio."""
+    normalized = _normalize_user_text(value)
+    return any(marker in normalized for marker in _CLARIFICATION_MARKERS)
+
+
+def _clarification_instruction(language: str, *, reason: str) -> str:
+    """Build one strict clarification response in the configured call language."""
+    language_code = _transcription_language(language)
+    if language_code == "gl":
+        phrase = "Perdoa, non te entendín ben. Podes repetilo?"
+        language_name = "gallego"
+    elif language_code == "pt":
+        phrase = "Desculpa, não percebi bem. Pode repetir?"
+        language_name = "portugués"
+    else:
+        phrase = "Perdona, no te entendí bien. ¿Puedes repetirlo?"
+        language_name = "español"
+    return (
+        "El último audio del usuario no es suficientemente claro. "
+        "No infieras intención, servicio, profesional, fecha, hora, nombre, teléfono "
+        "ni aceptación. No llames ninguna herramienta. Responde únicamente en "
+        f"{language_name} con una petición breve para repetir. Di: \"{phrase}\". "
+        f"Motivo técnico interno: {reason}."
+    )
+
+
 def build_realtime_session(context: VoiceContext) -> dict[str, Any]:
     """Build a natural Realtime GA session for one telephone call."""
     external_tts = context.voice_provider != "openai"
@@ -69,7 +214,10 @@ def build_realtime_session(context: VoiceContext) -> dict[str, Any]:
         "noise_reduction": {"type": "near_field"},
         "turn_detection": {
             "type": "server_vad",
-            "create_response": True,
+            # When transcription is enabled the bridge creates the response only
+            # after validating the completed transcript. This prevents background
+            # noise or partial speech from triggering tools or invented bookings.
+            "create_response": not context.transcript_enabled,
             "interrupt_response": context.allow_interruptions,
             "threshold": 0.55,
             "prefix_padding_ms": 300,
@@ -97,8 +245,9 @@ def build_realtime_session(context: VoiceContext) -> dict[str, Any]:
         "output_modalities": ["text"] if external_tts else ["audio"],
         "audio": {"input": audio_input},
     }
-    if context.temperature is not None:
-        session["temperature"] = max(0.6, min(float(context.temperature), 1.2))
+    # Current gpt-realtime models do not accept session.temperature. Keep the
+    # stored preference for prompt-level variation, but never send an unsupported
+    # field that would invalidate the complete session.update event.
     if context.model.startswith("gpt-realtime-2"):
         # Low reasoning is the best latency/quality balance for appointment calls.
         session["reasoning"] = {"effort": "low"}
@@ -156,7 +305,17 @@ class OpenAIRealtimeBridge:
         )
         self._assistant_text_parts: list[str] = []
         self._processed_tool_call_ids: set[str] = set()
+        self._processed_transcript_item_ids: set[str] = set()
         self._pending_tool_continuation = False
+        self._manual_turn_response = bool(context.transcript_enabled)
+        self._speech_turn_serial = 0
+        self._responded_speech_turns: set[int] = set()
+        self._last_user_transcript = ""
+        self._last_user_item_id = ""
+        self._last_user_input_clear = False
+        self._last_user_explicit_confirmation = False
+        self._assistant_requested_write_confirmation = False
+        self._transcription_timeout_task: asyncio.Task[None] | None = None
 
     @property
     def first_audio_latency_ms(self) -> float | None:
@@ -209,7 +368,8 @@ class OpenAIRealtimeBridge:
                 "input_rate": OPENAI_INPUT_SAMPLE_RATE,
                 "output_modalities": session["output_modalities"],
                 "transcription": self._context.transcript_enabled,
-                "temperature": session.get("temperature"),
+                "temperature_requested": self._context.temperature,
+                "temperature_applied": False,
                 "turn_end_silence_ms": self._context.turn_end_silence_ms,
                 "reasoning_effort": (
                     session.get("reasoning", {}).get("effort")
@@ -300,6 +460,11 @@ class OpenAIRealtimeBridge:
     async def close(self) -> None:
         """Close WebSocket and stop reader task."""
         self._closed.set()
+        if self._transcription_timeout_task is not None:
+            self._transcription_timeout_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._transcription_timeout_task
+            self._transcription_timeout_task = None
         if self._reader_task is not None:
             self._reader_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -355,6 +520,108 @@ class OpenAIRealtimeBridge:
                 extra={"call_id": self._call_id},
             )
             return True
+
+    def _response_modalities(self) -> list[str]:
+        return ["text"] if self._context.voice_provider != "openai" else ["audio"]
+
+    async def _request_turn_response(
+        self,
+        *,
+        instructions: str | None = None,
+    ) -> None:
+        """Create exactly one model response for the validated current speech turn."""
+        await self._request_response(
+            instructions=instructions,
+            output_modalities=self._response_modalities(),
+        )
+
+    async def _clarify_if_transcription_missing(self, turn_serial: int) -> None:
+        """Fail closed when speech ended but no final transcript arrived."""
+        try:
+            await asyncio.sleep(1.5)
+        except asyncio.CancelledError:
+            return
+        if (
+            self._closed.is_set()
+            or turn_serial in self._responded_speech_turns
+            or turn_serial != self._speech_turn_serial
+        ):
+            return
+        self._responded_speech_turns.add(turn_serial)
+        self._last_user_transcript = ""
+        self._last_user_input_clear = False
+        self._last_user_explicit_confirmation = False
+        logger.warning(
+            "user_transcript_missing_clarification",
+            extra={"call_id": self._call_id, "turn": turn_serial},
+        )
+        await self._request_turn_response(
+            instructions=_clarification_instruction(
+                self._context.language,
+                reason="missing_transcript",
+            )
+        )
+
+    def _guard_tool_call(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Attach server evidence and fail closed for appointment actions."""
+        if name not in _APPOINTMENT_TOOLS:
+            return None
+        # The evidence below is only authoritative when input transcription is
+        # enabled and the bridge has waited for its completed event. Do not
+        # accidentally block legacy/privacy-disabled calls that have no such
+        # server-side evidence available.
+        arguments["_server_guard_available"] = self._manual_turn_response
+        if not self._manual_turn_response:
+            return None
+        arguments["_server_input_clear"] = self._last_user_input_clear
+        arguments["_server_explicit_confirmation"] = (
+            self._last_user_explicit_confirmation
+        )
+        arguments["_server_confirmation_prompted"] = (
+            self._assistant_requested_write_confirmation
+        )
+        arguments["_server_user_item_id"] = self._last_user_item_id
+        if not self._last_user_input_clear:
+            return {
+                "ok": False,
+                "error": "unclear_user_input",
+                "message": "El último audio no tiene una transcripción clara.",
+                "assistant_guidance": (
+                    "No infieras ningún dato ni continúes con la agenda. Pide a la "
+                    "persona que repita lo que acaba de decir y no llames otra "
+                    "herramienta hasta entender una respuesta clara."
+                ),
+            }
+        if name in _CONFIRMATION_REQUIRED_TOOLS:
+            if not self._assistant_requested_write_confirmation:
+                return {
+                    "ok": False,
+                    "error": "confirmation_prompt_required",
+                    "message": (
+                        "El asistente todavía no pidió confirmar explícitamente esta "
+                        "creación o cancelación."
+                    ),
+                    "assistant_guidance": (
+                        "No ejecutes la acción todavía. Resume brevemente la cita o "
+                        "cancelación concreta, pregunta si quiere confirmarla y espera "
+                        "la siguiente respuesta del usuario."
+                    ),
+                }
+            if not self._last_user_explicit_confirmation:
+                return {
+                    "ok": False,
+                    "error": "explicit_confirmation_required",
+                    "message": "No hay una confirmación afirmativa clara en el último turno.",
+                    "assistant_guidance": (
+                        "No crees ni canceles la cita. Pide una confirmación breve y "
+                        "espera una respuesta afirmativa clara."
+                    ),
+                }
+        return None
 
     async def _persist_transcript(
         self,
@@ -424,13 +691,25 @@ class OpenAIRealtimeBridge:
             error = raw_error if isinstance(raw_error, dict) else {}
             code = str(error.get("code") or "")
             message = str(error.get("message") or "")
-            if code in _BENIGN_ERROR_CODES:
+            parameter = str(error.get("param") or "")
+            temperature_compatibility_error = (
+                code == "unknown_parameter"
+                and (
+                    parameter == "session.temperature"
+                    or "session.temperature" in message
+                )
+            )
+            if code in _BENIGN_ERROR_CODES or temperature_compatibility_error:
                 if code == "response_cancel_not_active":
                     self._response_active = False
                 self._response_create_inflight = False
                 logger.warning(
                     "openai_transient_error_ignored",
-                    extra={"call_id": self._call_id, "code": code},
+                    extra={
+                        "call_id": self._call_id,
+                        "code": code,
+                        "parameter": parameter or None,
+                    },
                 )
                 return
             logger.error(
@@ -448,26 +727,79 @@ class OpenAIRealtimeBridge:
             "input_audio_transcription.completed",
         }:
             transcript = event.get("transcript")
-            if isinstance(transcript, str) and transcript.strip():
+            item_id = str(event.get("item_id") or event.get("event_id") or "")
+            if item_id and item_id in self._processed_transcript_item_ids:
+                return
+            if item_id:
+                self._processed_transcript_item_ids.add(item_id)
+            transcript_text = transcript.strip() if isinstance(transcript, str) else ""
+            self._last_user_transcript = transcript_text
+            self._last_user_item_id = item_id
+            self._last_user_input_clear = transcript_is_clear(transcript_text)
+            self._last_user_explicit_confirmation = (
+                transcript_has_explicit_confirmation(transcript_text)
+            )
+            if self._last_user_input_clear and not self._last_user_explicit_confirmation:
+                self._assistant_requested_write_confirmation = False
+            if transcript_text:
                 await self._persist_transcript(
                     "user",
-                    transcript,
-                    event_id=str(event.get("item_id") or event.get("event_id") or ""),
+                    transcript_text,
+                    event_id=item_id,
                 )
-                logger.info(
-                    "user_transcript_completed",
-                    extra={"call_id": self._call_id, "chars": len(transcript)},
-                )
+            logger.info(
+                "user_transcript_completed",
+                extra={
+                    "call_id": self._call_id,
+                    "chars": len(transcript_text),
+                    "clear": self._last_user_input_clear,
+                    "explicit_confirmation": self._last_user_explicit_confirmation,
+                },
+            )
+            if self._manual_turn_response:
+                turn_serial = max(self._speech_turn_serial, 1)
+                if turn_serial not in self._responded_speech_turns:
+                    self._responded_speech_turns.add(turn_serial)
+                    if self._transcription_timeout_task is not None:
+                        self._transcription_timeout_task.cancel()
+                        self._transcription_timeout_task = None
+                    await self._request_turn_response(
+                        instructions=(
+                            None
+                            if self._last_user_input_clear
+                            else _clarification_instruction(
+                                self._context.language,
+                                reason="unclear_transcript",
+                            )
+                        )
+                    )
             return
 
-        if event_type in {
-            "input_audio_buffer.speech_started",
-            "input_audio_buffer.speech_stopped",
-        }:
+        if event_type == "input_audio_buffer.speech_started":
+            self._speech_turn_serial += 1
+            self._last_user_transcript = ""
+            self._last_user_item_id = ""
+            self._last_user_input_clear = False
+            self._last_user_explicit_confirmation = False
+            if self._transcription_timeout_task is not None:
+                self._transcription_timeout_task.cancel()
+                self._transcription_timeout_task = None
             logger.info(
-                event_type.replace(".", "_"),
-                extra={"call_id": self._call_id},
+                "input_audio_buffer_speech_started",
+                extra={"call_id": self._call_id, "turn": self._speech_turn_serial},
             )
+            return
+
+        if event_type == "input_audio_buffer.speech_stopped":
+            logger.info(
+                "input_audio_buffer_speech_stopped",
+                extra={"call_id": self._call_id, "turn": self._speech_turn_serial},
+            )
+            if self._manual_turn_response:
+                turn_serial = max(self._speech_turn_serial, 1)
+                self._transcription_timeout_task = asyncio.create_task(
+                    self._clarify_if_transcription_missing(turn_serial)
+                )
             return
 
         if event_type == "response.output_audio.delta":
@@ -519,7 +851,19 @@ class OpenAIRealtimeBridge:
                     assistant_text,
                     event_id=response_id,
                 )
-            logger.info("openai_response_done", extra={"call_id": self._call_id})
+                if not assistant_text_is_clarification(assistant_text):
+                    self._assistant_requested_write_confirmation = (
+                        assistant_requested_confirmation(assistant_text)
+                    )
+            logger.info(
+                "openai_response_done",
+                extra={
+                    "call_id": self._call_id,
+                    "confirmation_prompted": (
+                        self._assistant_requested_write_confirmation
+                    ),
+                },
+            )
             await self.text_queue.put("\n")
             if self._pending_tool_continuation:
                 self._pending_tool_continuation = False
@@ -566,7 +910,26 @@ class OpenAIRealtimeBridge:
             "openai_tool_call_started",
             extra={"call_id": self._call_id, "tool": name, "tool_call_id": call_id},
         )
-        output = await self._tool_executor(name, arguments)
+        output = self._guard_tool_call(name, arguments)
+        if output is None:
+            output = await self._tool_executor(name, arguments)
+            if (
+                name in _CONFIRMATION_REQUIRED_TOOLS
+                and isinstance(output, dict)
+                and bool(output.get("ok"))
+            ):
+                self._assistant_requested_write_confirmation = False
+                self._last_user_explicit_confirmation = False
+        else:
+            logger.warning(
+                "openai_tool_call_blocked_by_voice_guard",
+                extra={
+                    "call_id": self._call_id,
+                    "tool": name,
+                    "tool_call_id": call_id,
+                    "error": output.get("error"),
+                },
+            )
         await self._send(
             {
                 "type": "conversation.item.create",
