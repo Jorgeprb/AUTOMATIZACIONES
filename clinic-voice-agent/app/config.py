@@ -68,6 +68,17 @@ class Settings(BaseSettings):
     admin_login_max_attempts: int = 5
     admin_login_lock_minutes: int = 15
     admin_secure_cookies: bool = False
+    auth_cookie_domain: str = ""
+    admin_frontend_base_url: str = "http://localhost:5173"
+    client_frontend_base_url: str = "http://localhost:5174"
+    public_site_base_url: str = "http://localhost:5175"
+    admin_portal_host: str = "admin.autogal.es"
+    client_portal_host: str = "client.autogal.es"
+    google_login_enabled: bool = True
+    google_login_admin_redirect_uri: str = ""
+    google_login_client_redirect_uri: str = ""
+    google_login_allowed_domain: str = ""
+    google_login_auto_provision: bool = False
     retention_job_interval_seconds: int = 86_400
     database_pool_size: int = 10
     database_max_overflow: int = 20
@@ -145,6 +156,13 @@ class Settings(BaseSettings):
             raise ValueError("GOOGLE_REDIRECT_URI is required in production")
         if not self.google_redirect_uri.startswith("https://"):
             raise ValueError("GOOGLE_REDIRECT_URI must use https in production")
+        if self.google_login_enabled:
+            for name, value in {
+                "GOOGLE_LOGIN_ADMIN_REDIRECT_URI": self.google_login_admin_redirect_uri,
+                "GOOGLE_LOGIN_CLIENT_REDIRECT_URI": self.google_login_client_redirect_uri,
+            }.items():
+                if not value or not value.startswith("https://"):
+                    raise ValueError(f"{name} must use https in production")
         placeholders = ("replace", "changeme", "example")
         secrets = {
             "OPENAI_API_KEY": self.openai_api_key.get_secret_value(),
@@ -159,7 +177,16 @@ class Settings(BaseSettings):
                 raise ValueError(f"{name} must contain a real production value")
         return self
 
-    @field_validator("public_base_url", "google_redirect_uri", "frontend_base_url")
+    @field_validator(
+        "public_base_url",
+        "google_redirect_uri",
+        "frontend_base_url",
+        "admin_frontend_base_url",
+        "client_frontend_base_url",
+        "public_site_base_url",
+        "google_login_admin_redirect_uri",
+        "google_login_client_redirect_uri",
+    )
     @classmethod
     def validate_http_url(cls, value: str) -> str:
         """Require externally usable HTTP(S) URLs and normalize trailing slashes."""

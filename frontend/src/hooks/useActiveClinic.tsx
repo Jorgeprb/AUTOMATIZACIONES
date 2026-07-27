@@ -10,8 +10,9 @@ import { useQuery } from "@tanstack/react-query";
 
 import { listAllClinics } from "@/api/clinics";
 import type { Clinic } from "@/schemas/clinic";
+import { portalMode } from "@/lib/portal";
 
-const STORAGE_KEY = "clinic-voice-active-clinic";
+const STORAGE_KEY = `autogal-${portalMode}-active-clinic`;
 
 interface ActiveClinicContextValue {
   clinics: Clinic[];

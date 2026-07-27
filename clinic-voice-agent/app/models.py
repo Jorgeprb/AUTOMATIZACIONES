@@ -1335,7 +1335,13 @@ class AdminUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     username: Mapped[str] = mapped_column(String(160), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(320), unique=True, index=True, nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    google_subject: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    auth_provider: Mapped[str] = mapped_column(
+        String(32), server_default=text("'password'"), default="password", nullable=False
+    )
     password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
     role: Mapped[AdminRole] = mapped_column(
         Enum(
@@ -1432,6 +1438,25 @@ class AdminSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     user: Mapped[AdminUser] = relationship(back_populates="sessions")
 
+
+
+
+class OAuthLoginState(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Short-lived OAuth login transaction with PKCE and nonce protection."""
+
+    __tablename__ = "oauth_login_states"
+    __table_args__ = (
+        UniqueConstraint("state_hash", name="uq_oauth_login_states_state_hash"),
+        Index("ix_oauth_login_states_expiry", "expires_at"),
+    )
+
+    state_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    nonce: Mapped[str] = mapped_column(String(128), nullable=False)
+    code_verifier: Mapped[str] = mapped_column(String(256), nullable=False)
+    redirect_uri: Mapped[str] = mapped_column(String(1000), nullable=False)
+    portal: Mapped[str] = mapped_column(String(24), nullable=False)
+    return_to: Mapped[str] = mapped_column(String(1000), server_default=text("'/'"), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 class AdminAuditLog(UUIDPrimaryKeyMixin, Base):
     """Immutable audit trail for administrative actions."""

@@ -30,6 +30,9 @@ class AdminPrincipal:
 
     user_id: uuid.UUID | None
     username: str
+    display_name: str | None
+    email: str | None
+    avatar_url: str | None
     role: AdminRole
     clinic_ids: frozenset[uuid.UUID]
     clinic_roles: dict[uuid.UUID, AdminRole]
@@ -109,7 +112,9 @@ def ensure_bootstrap_admin(session: Session, settings: Settings) -> AdminUser:
     password = settings.admin_bootstrap_password.get_secret_value()
     user = AdminUser(
         username=username,
+        email=username if "@" in username else None,
         display_name="Administrador",
+        auth_provider="password",
         password_hash=hash_password(password),
         role=AdminRole.SUPER_ADMIN,
         is_active=True,
@@ -230,6 +235,9 @@ def principal_from_session(
         AdminPrincipal(
             user_id=user.id,
             username=user.username,
+            display_name=user.display_name,
+            email=user.email,
+            avatar_url=user.avatar_url,
             role=user.role,
             clinic_ids=frozenset(memberships),
             clinic_roles=memberships,

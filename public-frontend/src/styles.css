@@ -1,0 +1,147 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * AUTOGAL design system
+ * Premium European B2B SaaS. Editorial typography, Atlantic blue accent,
+ * warm off-white neutrals. All tokens in oklch.
+ */
+
+@theme inline {
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-brand: var(--brand);
+  --color-brand-deep: var(--brand-deep);
+  --color-brand-soft: var(--brand-soft);
+  --color-ice: var(--ice);
+  --color-success: var(--success);
+  --color-paper: var(--paper);
+  --color-paper-warm: var(--paper-warm);
+  --color-hairline: var(--hairline);
+  --color-night: var(--night);
+  --color-night-2: var(--night-2);
+}
+
+:root {
+  --radius: 0.75rem;
+
+  /* Warm off-white paper */
+  --paper: oklch(0.985 0.004 90);
+  --paper-warm: oklch(0.965 0.008 85);
+
+  /* Deep navy ink */
+  --ink: oklch(0.19 0.035 255);
+  --ink-soft: oklch(0.42 0.025 255);
+
+  /* Atlantic blue brand */
+  --brand: oklch(0.52 0.13 245);
+  --brand-deep: oklch(0.36 0.11 250);
+  --brand-soft: oklch(0.92 0.03 240);
+  --ice: oklch(0.965 0.015 235);
+
+  /* Night surfaces */
+  --night: oklch(0.20 0.035 255);
+  --night-2: oklch(0.26 0.04 255);
+
+  --success: oklch(0.62 0.11 155);
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+
+  --card: oklch(1 0 0);
+  --card-foreground: var(--ink);
+  --popover: oklch(1 0 0);
+  --popover-foreground: var(--ink);
+
+  --primary: var(--ink);
+  --primary-foreground: var(--paper);
+
+  --secondary: var(--paper-warm);
+  --secondary-foreground: var(--ink);
+
+  --muted: var(--paper-warm);
+  --muted-foreground: var(--ink-soft);
+
+  --accent: var(--brand-soft);
+  --accent-foreground: var(--brand-deep);
+
+  --destructive: oklch(0.55 0.19 25);
+  --destructive-foreground: oklch(0.98 0 0);
+
+  --hairline: oklch(0.9 0.008 250);
+  --border: var(--hairline);
+  --input: var(--hairline);
+  --ring: var(--brand);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-feature-settings: "ss01", "cv11";
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--brand) 25%, transparent);
+  }
+}
+
+@utility hairline {
+  border-color: var(--hairline);
+}
+
+@utility text-display {
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+}
+
+@utility eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand-deep);
+}
+
+@utility numeric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum", "ss01";
+}

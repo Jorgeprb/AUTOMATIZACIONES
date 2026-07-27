@@ -28,6 +28,8 @@ import {
 } from "@/components/ui/dialog";
 import { useActiveClinic } from "@/hooks/useActiveClinic";
 import { formatDate } from "@/lib/format";
+import { getCurrentAdmin } from "@/lib/auth";
+import { isClientPortal } from "@/lib/portal";
 import {
   clinicDefaults,
   type Clinic,
@@ -73,6 +75,8 @@ export function ClinicsPage() {
   const [editingClinic, setEditingClinic] = useState<Clinic | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [deletingClinic, setDeletingClinic] = useState<Clinic | null>(null);
+  const authQuery = useQuery({ queryKey: ["auth", "me"], queryFn: getCurrentAdmin, staleTime: 60_000 });
+  const canManageTenants = authQuery.data?.role === "super_admin";
 
   const clinicsQuery = useQuery({
     queryKey: ["clinics", "admin-list"],
@@ -205,27 +209,20 @@ export function ClinicsPage() {
             >
               <Pencil className="size-4" />
             </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              title="Eliminar"
-              onClick={() => setDeletingClinic(clinic)}
-            >
-              <Trash2 className="size-4 text-[#bd3341]" />
-            </Button>
+            {canManageTenants ? <Button size="icon" variant="ghost" title="Eliminar" onClick={() => setDeletingClinic(clinic)}><Trash2 className="size-4 text-[#bd3341]" /></Button> : null}
           </div>
         ),
       },
     ],
-    [],
+    [canManageTenants],
   );
 
   return (
     <div className="space-y-7">
       <PageHeader
-        title="Clínicas"
-        description="Gestiona los tenants, datos públicos y estado operativo de la plataforma."
-        actions={
+        title={isClientPortal ? "Mis clínicas" : "Clínicas"}
+        description={isClientPortal ? "Accede a los datos y configuraciones de las clínicas asignadas a tu cuenta." : "Gestiona los tenants, datos públicos y estado operativo de la plataforma."}
+        actions={canManageTenants ?
           <Button
             onClick={() => {
               setEditingClinic(null);
@@ -235,7 +232,7 @@ export function ClinicsPage() {
             <Plus className="size-4" />
             Nueva clínica
           </Button>
-        }
+        : undefined}
       />
 
       {clinicsQuery.isLoading ? <LoadingState rows={6} /> : null}
@@ -257,12 +254,7 @@ export function ClinicsPage() {
             icon={Building2}
             title="No hay clínicas"
             description="Crea la primera clínica para empezar a configurar el asistente."
-            action={
-              <Button onClick={() => setFormOpen(true)}>
-                <Plus className="size-4" />
-                Crear clínica
-              </Button>
-            }
+            action={canManageTenants ? <Button onClick={() => setFormOpen(true)}><Plus className="size-4" />Crear clínica</Button> : undefined}
           />
         )
       ) : null}

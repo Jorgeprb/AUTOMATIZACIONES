@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.admin import (
+    accounts,
     activity,
     content,
     core,
@@ -12,6 +13,7 @@ from app.api.admin import (
 )
 
 router = APIRouter()
+router.include_router(accounts.router)
 router.include_router(core.router)
 router.include_router(content.router)
 router.include_router(activity.router)

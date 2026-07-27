@@ -5,7 +5,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { useActiveClinic } from "@/hooks/useActiveClinic";
-import { logout } from "@/lib/auth";
+import { getCurrentAdmin, logout } from "@/lib/auth";
+import { useQuery } from "@tanstack/react-query";
 
 export function TopBar({ onOpenMenu }: { onOpenMenu: () => void }) {
   const {
@@ -18,6 +19,7 @@ export function TopBar({ onOpenMenu }: { onOpenMenu: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const authQuery = useQuery({ queryKey: ["auth", "me"], queryFn: getCurrentAdmin, staleTime: 60_000 });
 
   const handleClinicChange = (clinicId: string) => {
     setActiveClinicId(clinicId || null);
@@ -77,6 +79,7 @@ export function TopBar({ onOpenMenu }: { onOpenMenu: () => void }) {
           <ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-[#8b95a6]" />
         </div>
 
+        <span className="hidden max-w-[180px] truncate text-sm font-semibold text-[#364259] md:block">{authQuery.data?.display_name || authQuery.data?.email || authQuery.data?.username}</span>
         <Button
           type="button"
           variant="outline"

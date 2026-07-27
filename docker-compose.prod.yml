@@ -68,6 +68,9 @@ services:
         VITE_API_BASE_URL: https://${APP_ADMIN_DOMAIN}
         VITE_API_TIMEOUT_MS: ${VITE_API_TIMEOUT_MS:-20000}
         VITE_ENABLE_DEV_FALLBACKS: "false"
+        VITE_PORTAL_MODE: admin
+        VITE_ADMIN_PORTAL_URL: https://${APP_ADMIN_DOMAIN}
+        VITE_CLIENT_PORTAL_URL: https://${APP_CLIENT_DOMAIN}
     expose: ["8080"]
     restart: unless-stopped
     healthcheck:
@@ -78,6 +81,57 @@ services:
       start_period: 10s
     logging: *default-logging
     mem_limit: ${FRONTEND_MEM_LIMIT:-256m}
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,nosuid,nodev,noexec,mode=1777
+      - /var/run:rw,nosuid,nodev,noexec,mode=1777
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777
+    networks: [edge]
+    <<: *default-hardening
+
+  client-frontend:
+    build:
+      context: ./frontend
+      target: production
+      args:
+        VITE_API_BASE_URL: https://${APP_CLIENT_DOMAIN}
+        VITE_API_TIMEOUT_MS: ${VITE_API_TIMEOUT_MS:-20000}
+        VITE_ENABLE_DEV_FALLBACKS: "false"
+        VITE_PORTAL_MODE: client
+        VITE_ADMIN_PORTAL_URL: https://${APP_ADMIN_DOMAIN}
+        VITE_CLIENT_PORTAL_URL: https://${APP_CLIENT_DOMAIN}
+    expose: ["8080"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    mem_limit: ${FRONTEND_MEM_LIMIT:-256m}
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,nosuid,nodev,noexec,mode=1777
+      - /var/run:rw,nosuid,nodev,noexec,mode=1777
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777
+    networks: [edge]
+    <<: *default-hardening
+
+  public-frontend:
+    build:
+      context: ./public-frontend
+      target: production
+    expose: ["8080"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    mem_limit: ${PUBLIC_FRONTEND_MEM_LIMIT:-256m}
     read_only: true
     tmpfs:
       - /var/cache/nginx:rw,nosuid,nodev,noexec,mode=1777
@@ -127,6 +181,9 @@ services:
     environment:
       APP_DOMAIN: ${APP_DOMAIN}
       APP_ADMIN_DOMAIN: ${APP_ADMIN_DOMAIN}
+      APP_CLIENT_DOMAIN: ${APP_CLIENT_DOMAIN}
+      APP_PUBLIC_DOMAIN: ${APP_PUBLIC_DOMAIN}
+      APP_PUBLIC_WWW_DOMAIN: ${APP_PUBLIC_WWW_DOMAIN}
       CADDY_EMAIL: ${CADDY_EMAIL}
     ports:
       - "80:80/tcp"
@@ -141,6 +198,10 @@ services:
       api:
         condition: service_healthy
       frontend:
+        condition: service_healthy
+      client-frontend:
+        condition: service_healthy
+      public-frontend:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

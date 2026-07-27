@@ -4,6 +4,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { LoadingState } from "@/components/common/LoadingState";
 import { RequireAuth } from "@/components/layout/RequireAuth";
+import { isAdminPortal } from "@/lib/portal";
 
 const DashboardPage = lazy(() =>
   import("@/pages/DashboardPage").then((module) => ({
@@ -65,6 +66,11 @@ const TestConsolePage = lazy(() =>
     default: module.TestConsolePage,
   })),
 );
+const ClientAccountsPage = lazy(() =>
+  import("@/pages/ClientAccountsPage").then((module) => ({
+    default: module.ClientAccountsPage,
+  })),
+);
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((module) => ({
     default: module.SettingsPage,
@@ -119,6 +125,7 @@ export default function App() {
               path="clinics/:clinicId/test"
               element={<TestConsolePage />}
             />
+            <Route path="users" element={isAdminPortal ? <ClientAccountsPage /> : <Navigate to="/" replace />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

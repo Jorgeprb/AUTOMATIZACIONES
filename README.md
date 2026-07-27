@@ -246,3 +246,14 @@ El panel usa usuarios persistentes, sesiones opacas en cookie HttpOnly,
 protección CSRF, bloqueo de intentos, permisos por clínica y auditoría. La
 `ADMIN_API_KEY` se conserva exclusivamente para automatizaciones
 servidor-servidor y nunca se integra en el bundle del navegador.
+
+## Portales y dominios
+
+- `https://www.autogal.es`: web pública y punto de entrada con Google.
+- `https://client.autogal.es`: portal de clientes, limitado a las clínicas asignadas.
+- `https://admin.autogal.es`: administración global para superadministradores.
+- `https://voice.autogal.es`: API pública, webhooks y OAuth de Google Calendar.
+
+El frontend de cliente reutiliza el mismo código que el panel administrador con un modo de compilación distinto. El aislamiento real se aplica en la API mediante membresías por clínica; no depende de ocultar opciones en el navegador.
+
+La guía completa de DNS, Google OAuth, alta de clientes y despliegue está en `docs/CLIENT_PORTAL_GOOGLE_DNS.md`.

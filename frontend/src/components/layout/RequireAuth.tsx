@@ -4,6 +4,7 @@ import { Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { LoadingState } from "@/components/common/LoadingState";
 import { getCurrentAdmin } from "@/lib/auth";
+import { adminPortalUrl, clientPortalUrl, isAdminPortal, isClientPortal } from "@/lib/portal";
 
 export function RequireAuth() {
   const location = useLocation();
@@ -28,6 +29,17 @@ export function RequireAuth() {
 
   if (authQuery.isPending) {
     return <div className="p-8"><LoadingState rows={5} /></div>;
+  }
+
+  if (authQuery.data) {
+    if (isAdminPortal && authQuery.data.role !== "super_admin") {
+      window.location.replace(clientPortalUrl);
+      return <LoadingState rows={3} />;
+    }
+    if (isClientPortal && authQuery.data.role === "super_admin") {
+      window.location.replace(adminPortalUrl);
+      return <LoadingState rows={3} />;
+    }
   }
 
   if (authQuery.isError || !authQuery.data) {

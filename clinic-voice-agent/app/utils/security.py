@@ -77,6 +77,9 @@ def _api_key_principal() -> AdminPrincipal:
     return AdminPrincipal(
         user_id=None,
         username="server-api-key",
+        display_name="Server API key",
+        email=None,
+        avatar_url=None,
         role=AdminRole.SUPER_ADMIN,
         clinic_ids=frozenset(),
         clinic_roles={},
@@ -137,6 +140,15 @@ def require_admin_access(
             headers={"WWW-Authenticate": "Session"},
         )
     principal, record = resolved
+    request_host = request.headers.get("host", "").split(":", 1)[0].casefold()
+    if (
+        request_host == settings.admin_portal_host.casefold()
+        and not principal.is_super_admin
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account must use the client portal.",
+        )
     validate_csrf(request, record, settings)
     _enforce_principal_permissions(request, principal)
     request.state.admin_principal = principal
