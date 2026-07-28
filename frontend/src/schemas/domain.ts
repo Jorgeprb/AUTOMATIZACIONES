@@ -64,8 +64,6 @@ export interface AssistantConfig {
   pause_style: "short" | "natural" | "slow";
   phone_reading_style: "digits" | "groups" | "natural";
   date_reading_style: "natural" | "numeric";
-  time_reading_style: "natural_quarters" | "numeric";
-  caller_phone_policy: "ask_before_use" | "use_directly";
   price_reading_style: "brief" | "clear" | "detailed";
   allow_interruptions: boolean;
   idle_timeout_ms: number | null;
@@ -79,8 +77,6 @@ export interface AssistantConfig {
   system_prompt: string;
   safety_prompt: string;
   booking_policy_prompt: string;
-  calendar_event_title_template: string;
-  calendar_event_description_template: string;
   cancellation_policy_prompt: string;
   transfer_policy_prompt: string;
   tone: "profesional" | "cercano" | "comercial" | "breve" | "formal";
@@ -92,6 +88,15 @@ export interface AssistantConfig {
   allow_bookings: boolean;
   allow_price_answers: boolean;
   ask_service: boolean;
+  service_prompt_mode: "list_services" | "ask_open" | "infer_confirm";
+  slot_interval_minutes: 5 | 10 | 15 | 20 | 30 | 60;
+  direct_availability_response: boolean;
+  direct_booking_response: boolean;
+  booking_confirmation_datetime_enabled: boolean;
+  post_booking_followup_enabled: boolean;
+  post_booking_followup_message: string | null;
+  hangup_after_no_more_help: boolean;
+  hangup_on_natural_goodbye: boolean;
   max_proposed_slots: number;
   max_consecutive_questions: number;
   conversation_style: "natural" | "formal" | "comercial" | "breve";

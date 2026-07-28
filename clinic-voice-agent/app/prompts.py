@@ -152,6 +152,36 @@ def build_receptionist_instructions(
                             if assistant_config.avoid_exact_confirmation_phrases
                             else "Puede pedir confirmación explícita si hace falta."
                         ),
+                        (
+                            "Modo de identificación del servicio: "
+                            f"{assistant_config.service_prompt_mode}."
+                        ),
+                        (
+                            "Los inicios de cita se ofrecen cada "
+                            f"{assistant_config.slot_interval_minutes} minutos."
+                        ),
+                        (
+                            "Responde directamente tras consultar disponibilidad; "
+                            "no narres el proceso."
+                            if assistant_config.direct_availability_response
+                            else "Puede anunciar brevemente la consulta de agenda."
+                        ),
+                        (
+                            "Tras reservar, confirma directamente el resultado sin "
+                            "anunciar previamente que vas a reservar."
+                            if assistant_config.direct_booking_response
+                            else "Puede introducir brevemente la acción de reserva."
+                        ),
+                        (
+                            "Después de reservar pregunta si puede ayudar con algo más."
+                            if assistant_config.post_booking_followup_enabled
+                            else "No hagas una pregunta posterior automática."
+                        ),
+                        (
+                            "Ante una despedida natural, despídete brevemente y usa end_call."
+                            if assistant_config.hangup_on_natural_goodbye
+                            else "No cierres automáticamente ante despedidas naturales."
+                        ),
                     ]
                 ),
             ),

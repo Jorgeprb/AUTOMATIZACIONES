@@ -352,3 +352,28 @@ def test_check_slot_available_performs_final_freebusy_check(
         end_at=end_at,
         timezone="Europe/Madrid",
     )
+
+
+def test_configured_thirty_minute_grid_never_offers_quarter_hours(
+    db_session: Session,
+) -> None:
+    """A 30-minute clinic grid must only return :00 and :30 starts."""
+    clinic, service, workers = _create_clinic_service_workers(
+        db_session,
+        working_hours=_weekly_hours([{"start": "09:05", "end": "11:00"}]),
+    )
+
+    slots = propose_slots(
+        db_session,
+        _freebusy_client({}),
+        clinic_id=clinic.id,
+        service_id=service.id,
+        worker_id=workers[0].id,
+        preferred_date=MONDAY,
+        slot_interval_minutes=30,
+        max_slots=4,
+        now=NOW,
+    )
+
+    assert _starts(slots) == ["09:30", "10:00", "10:30"]
+    assert all(slot.start_at.minute in {0, 30} for slot in slots)

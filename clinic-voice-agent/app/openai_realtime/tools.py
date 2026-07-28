@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -26,10 +27,17 @@ from app.calendar.google_client import (
     get_authorized_calendar_client,
 )
 from app.calendar.scheduler import SchedulingError, propose_slots
-from app.calendar.spoken_time import format_spoken_time
+from app.calendar.spoken_datetime import format_spoken_appointment
 from app.config import Settings
 from app.conversation_policy import merge_conversation_state
-from app.models import CallOutcome, CallSession, Clinic, Service, Worker
+from app.models import (
+    AssistantConfig,
+    CallOutcome,
+    CallSession,
+    Clinic,
+    Service,
+    Worker,
+)
 from app.schemas import (
     AgentAppointmentConfirmation,
     AgentAvailabilityRequest,
@@ -507,23 +515,6 @@ class RealtimeToolError(RuntimeError):
     """Stable error safe to return to the Realtime model."""
 
 
-def _time_reading_style(session: Session, context: ToolExecutionContext) -> str:
-    """Resolve the time presentation configured for this exact call."""
-    call = session.get(CallSession, context.call_session_id)
-    if call is None or call.assistant_config is None:
-        return "natural_quarters"
-    return call.assistant_config.time_reading_style
-
-
-def _spoken_time(
-    session: Session,
-    context: ToolExecutionContext,
-    value: datetime,
-) -> str:
-    """Render one tool time in the configured telephone style."""
-    return format_spoken_time(value, _time_reading_style(session, context))
-
-
 def _trusted_arguments(
     arguments: dict[str, Any],
     context: ToolExecutionContext,
@@ -555,45 +546,6 @@ def _trusted_arguments(
     trusted["clinic_id"] = str(context.clinic_id)
     trusted["call_session_id"] = str(context.call_session_id)
     return trusted
-
-
-def _enforce_vps_voice_guard(
-    session: Session,
-    context: ToolExecutionContext,
-    name: str,
-    trusted: dict[str, Any],
-) -> None:
-    """Require gateway-derived clear speech evidence before appointment actions."""
-    guard_available = bool(trusted.pop("_server_guard_available", False))
-    input_clear = bool(trusted.pop("_server_input_clear", False))
-    # Descarta la evidencia del antiguo guard de doble confirmación. La
-    # seguridad frente a ruido se conserva mediante _server_input_clear.
-    trusted.pop("_server_explicit_confirmation", None)
-    trusted.pop("_server_confirmation_prompted", None)
-    trusted.pop("_server_confirmation_granted", None)
-    trusted.pop("_server_confirmation_required", None)
-    trusted.pop("_server_avoid_repeated_confirmations", None)
-    trusted.pop("_server_user_item_id", None)
-    if name not in {
-        "propose_slots",
-        "check_availability",
-        "create_appointment",
-        "cancel_appointment",
-    }:
-        return
-    call_session = session.get(CallSession, context.call_session_id)
-    source = (
-        str(call_session.conversation_state_json.get("source") or "")
-        if call_session is not None
-        else ""
-    )
-    if source != "vps_media_bridge" or not guard_available:
-        return
-    if not input_clear:
-        raise RealtimeToolError(
-            "El último audio no se entendió con claridad. No continúes con la agenda; "
-            "pide a la persona que repita su respuesta."
-        )
 
 
 def _sanitize_propose_slots_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -973,6 +925,113 @@ def _mark_call_outcome(
     session.commit()
 
 
+def _assistant_config_for_call(
+    session: Session,
+    context: ToolExecutionContext,
+) -> AssistantConfig:
+    """Resolve the immutable config attached to the current call session."""
+    call_session = session.get(CallSession, context.call_session_id)
+    config = (
+        session.get(AssistantConfig, call_session.assistant_config_id)
+        if call_session is not None and call_session.assistant_config_id is not None
+        else None
+    )
+    if config is None:
+        config = session.scalar(
+            select(AssistantConfig).where(
+                AssistantConfig.clinic_id == context.clinic_id,
+                AssistantConfig.is_active.is_(True),
+            )
+        )
+    if config is None:
+        raise RealtimeToolError("No hay una configuración activa para esta llamada.")
+    return config
+
+
+def _slot_start_matches_grid(
+    session: Session,
+    *,
+    clinic_id: uuid.UUID,
+    start_at: datetime,
+    interval_minutes: int,
+) -> bool:
+    """Validate a requested start against the clinic-local appointment grid."""
+    clinic = session.get(Clinic, clinic_id)
+    if clinic is None:
+        raise RealtimeToolError("La clínica no existe.")
+    local_start = start_at.astimezone(ZoneInfo(clinic.timezone))
+    minutes_from_midnight = local_start.hour * 60 + local_start.minute
+    return (
+        local_start.second == 0
+        and local_start.microsecond == 0
+        and minutes_from_midnight % interval_minutes == 0
+    )
+
+
+def _availability_guidance(
+    *,
+    available: bool,
+    direct: bool,
+    spoken_start_at: str | None = None,
+) -> str:
+    if available:
+        if direct:
+            detail = f" para {spoken_start_at}" if spoken_start_at else ""
+            return (
+                f"Responde directamente que hay un hueco{detail}. No digas que vas "
+                "a comprobarlo, que lo estás revisando ni que ya lo has comprobado. "
+                "No ofrezcas alternativas."
+            )
+        return (
+            "Puedes explicar brevemente que has comprobado la agenda y que el horario "
+            "está disponible; no ofrezcas alternativas."
+        )
+    if direct:
+        return (
+            "Di directamente que ese horario no está libre. No narres la consulta de "
+            "agenda y ofrece alternativas solo si la persona quiere continuar."
+        )
+    return (
+        "Indica que la consulta de agenda no encontró ese horario y pregunta si quiere "
+        "alternativas cercanas."
+    )
+
+
+def _booking_success_guidance(
+    config: AssistantConfig,
+    *,
+    spoken_start_at: str,
+) -> str:
+    confirmation = (
+        f"Confirma la reserva incluyendo exactamente la fecha y la hora natural: "
+        f"{spoken_start_at}."
+        if config.booking_confirmation_datetime_enabled
+        else "Confirma brevemente que la cita ha quedado reservada."
+    )
+    direct = (
+        " No digas 'voy a reservar', 'procedo a reservar' ni 'un momento'. "
+        "Empieza directamente con la confirmación final."
+        if config.direct_booking_response
+        else " Puedes mencionar brevemente que la reserva se ha completado."
+    )
+    followup_message = (
+        (config.post_booking_followup_message or "¿Puedo ayudarte con algo más?").strip()
+    )
+    followup = (
+        f' Después pregunta una sola vez: "{followup_message}". Si la persona '
+        "necesita algo más, ayúdala y vuelve a hacer la misma pregunta al terminar."
+        if config.post_booking_followup_enabled
+        else ""
+    )
+    closing = (
+        " Si responde que no necesita nada más, di el mensaje de despedida y llama "
+        "a end_call para finalizar la llamada."
+        if config.post_booking_followup_enabled and config.hangup_after_no_more_help
+        else ""
+    )
+    return confirmation + direct + followup + closing
+
+
 def _execute_tool(
     name: str,
     arguments: dict[str, Any],
@@ -981,10 +1040,10 @@ def _execute_tool(
     """Execute one known tool with a fresh database session."""
     trusted = _trusted_arguments(arguments, context)
     with context.session_factory() as session:
+        assistant_config = _assistant_config_for_call(session, context)
         calendar_provider = (
             context.calendar_client_provider or get_authorized_calendar_client
         )
-        _enforce_vps_voice_guard(session, context, name, trusted)
         if name == "get_clinic_info":
             info = _clinic_info(session, context.clinic_id)
             return {"ok": True, **info.model_dump(mode="json")}
@@ -1014,7 +1073,11 @@ def _execute_tool(
                 preferred_date=propose_payload.preferred_date,
                 preferred_time_window=propose_payload.preferred_time_window,
                 days_ahead=propose_payload.days_ahead,
-                max_slots=min(propose_payload.max_slots, 3),
+                max_slots=min(
+                    propose_payload.max_slots,
+                    assistant_config.max_proposed_slots,
+                ),
+                slot_interval_minutes=assistant_config.slot_interval_minutes,
                 now=context.now,
             )
             propose_response = AgentProposeSlotsResponse(
@@ -1064,33 +1127,40 @@ def _execute_tool(
                 awaiting_confirmation=bool(propose_response.slots),
             )
             exact_request = propose_payload.max_slots == 1
-            serialized_slots = propose_response.model_dump(mode="json")["slots"]
-            for slot_payload, slot in zip(serialized_slots, propose_response.slots):
-                slot_payload["spoken_start_at"] = _spoken_time(
-                    session,
-                    context,
-                    slot.start_at,
+            spoken_slots = [
+                {
+                    "worker_id": str(slot.worker_id),
+                    "spoken_start_at": format_spoken_appointment(
+                        slot.start_at,
+                        assistant_config.language,
+                    ),
+                }
+                for slot in slots
+            ]
+            if exact_request:
+                guidance = _availability_guidance(
+                    available=bool(propose_response.slots),
+                    direct=assistant_config.direct_availability_response,
+                    spoken_start_at=(
+                        spoken_slots[0]["spoken_start_at"]
+                        if spoken_slots
+                        else None
+                    ),
                 )
-                slot_payload["spoken_end_at"] = _spoken_time(
-                    session,
-                    context,
-                    slot.end_at,
+            elif assistant_config.direct_availability_response:
+                guidance = (
+                    "Presenta directamente solo los horarios disponibles más relevantes. "
+                    "No digas que vas a consultar, comprobar o revisar la agenda."
                 )
+            else:
+                guidance = "Presenta solo las opciones más relevantes de forma natural."
             return {
                 "ok": True,
-                "slots": serialized_slots,
+                **propose_response.model_dump(mode="json"),
+                "spoken_slots": spoken_slots,
+                "slot_interval_minutes": assistant_config.slot_interval_minutes,
                 "exact_time_request": exact_request,
-                "assistant_guidance": (
-                    "El horario solicitado está disponible. Confírmalo de forma "
-                    "directa y no ofrezcas alternativas."
-                    if exact_request and propose_response.slots
-                    else (
-                        "El horario solicitado no está disponible. Indícalo "
-                        "brevemente antes de proponer alternativas cercanas."
-                        if exact_request
-                        else "Presenta solo las opciones más relevantes de forma natural."
-                    )
-                ),
+                "assistant_guidance": guidance,
             }
 
         if name == "check_availability":
@@ -1101,6 +1171,33 @@ def _execute_tool(
                 clinic_id=context.clinic_id,
             )
             availability_payload = AgentAvailabilityRequest.model_validate(trusted)
+            if not _slot_start_matches_grid(
+                session,
+                clinic_id=availability_payload.clinic_id,
+                start_at=availability_payload.start_at,
+                interval_minutes=assistant_config.slot_interval_minutes,
+            ):
+                spoken_start_at = format_spoken_appointment(
+                    availability_payload.start_at,
+                    assistant_config.language,
+                )
+                return {
+                    "ok": True,
+                    "available": False,
+                    "clinic_id": str(availability_payload.clinic_id),
+                    "worker_id": str(availability_payload.worker_id),
+                    "start_at": availability_payload.start_at.isoformat(),
+                    "end_at": availability_payload.end_at.isoformat(),
+                    "reason": "outside_slot_grid",
+                    "spoken_start_at": spoken_start_at,
+                    "slot_interval_minutes": assistant_config.slot_interval_minutes,
+                    "assistant_guidance": (
+                        "Ese inicio no pertenece a los horarios configurados de la "
+                        f"clínica, que comienzan cada {assistant_config.slot_interval_minutes} "
+                        "minutos. No lo reserves. Busca la opción válida más cercana y "
+                        "respóndela de forma directa."
+                    ),
+                }
             client = calendar_provider(
                 session,
                 context.settings,
@@ -1153,25 +1250,18 @@ def _execute_tool(
                 },
                 awaiting_confirmation=availability.available,
             )
+            spoken_start_at = format_spoken_appointment(
+                availability_payload.start_at,
+                assistant_config.language,
+            )
             return {
                 "ok": True,
                 **availability_response.model_dump(mode="json"),
-                "spoken_start_at": _spoken_time(
-                    session,
-                    context,
-                    availability_payload.start_at,
-                ),
-                "spoken_end_at": _spoken_time(
-                    session,
-                    context,
-                    availability_payload.end_at,
-                ),
-                "assistant_guidance": (
-                    "El horario solicitado está disponible. Di que sí hay sitio "
-                    "y no menciones alternativas."
-                    if availability.available
-                    else "Ese horario no está disponible. Dilo brevemente y busca "
-                    "alternativas solo si la persona quiere continuar."
+                "spoken_start_at": spoken_start_at,
+                "assistant_guidance": _availability_guidance(
+                    available=availability.available,
+                    direct=assistant_config.direct_availability_response,
+                    spoken_start_at=spoken_start_at,
                 ),
             }
 
@@ -1189,6 +1279,17 @@ def _execute_tool(
                 clinic_id=context.clinic_id,
             )
             create_payload = AgentCreateAppointmentRequest.model_validate(trusted)
+            if not _slot_start_matches_grid(
+                session,
+                clinic_id=create_payload.clinic_id,
+                start_at=create_payload.start_at,
+                interval_minutes=assistant_config.slot_interval_minutes,
+            ):
+                raise RealtimeToolError(
+                    "La hora seleccionada no pertenece a la cuadrícula de citas "
+                    f"configurada cada {assistant_config.slot_interval_minutes} minutos. "
+                    "Consulta otra hora válida antes de reservar."
+                )
             client = calendar_provider(
                 session,
                 context.settings,
@@ -1260,22 +1361,27 @@ def _execute_tool(
                 intent="create_appointment",
                 outcome=CallOutcome.APPOINTMENT_CREATED,
             )
+            spoken_start_at = format_spoken_appointment(
+                appointment.start_at,
+                assistant_config.language,
+            )
             return {
                 "ok": True,
                 **appointment_response.model_dump(mode="json"),
-                "spoken_start_at": _spoken_time(
-                    session,
-                    context,
-                    appointment.start_at,
+                "spoken_start_at": spoken_start_at,
+                "post_booking_followup_enabled": (
+                    assistant_config.post_booking_followup_enabled
                 ),
-                "spoken_end_at": _spoken_time(
-                    session,
-                    context,
-                    appointment.end_at,
+                "post_booking_followup_message": (
+                    assistant_config.post_booking_followup_message
+                    or "¿Puedo ayudarte con algo más?"
                 ),
-                "assistant_guidance": (
-                    "La cita se ha creado correctamente. Confirma fecha, hora y "
-                    "profesional usando spoken_start_at para decir la hora."
+                "hangup_after_no_more_help": (
+                    assistant_config.hangup_after_no_more_help
+                ),
+                "assistant_guidance": _booking_success_guidance(
+                    assistant_config,
+                    spoken_start_at=spoken_start_at,
                 ),
             }
 

@@ -189,6 +189,7 @@ def _assistant_config_values_for_create(
 ) -> dict[str, Any]:
     """Normalize assistant create payload before it reaches the ORM."""
     values = payload.model_dump()
+    values["ask_service"] = values.get("service_prompt_mode") != "infer_confirm"
     _enforce_assistant_voice_policy(values)
     return values
 
@@ -199,6 +200,8 @@ def _assistant_config_values_for_update(
 ) -> dict[str, Any]:
     """Normalize partial assistant updates with existing persisted values."""
     values = payload.model_dump(exclude_unset=True)
+    if "service_prompt_mode" in values:
+        values["ask_service"] = values["service_prompt_mode"] != "infer_confirm"
     _enforce_assistant_voice_policy(values, current=config)
     return values
 
@@ -1048,6 +1051,15 @@ def get_recommended_assistant_template() -> AssistantRecommendedTemplateResponse
         allow_bookings=True,
         allow_price_answers=True,
         ask_service=True,
+        service_prompt_mode="ask_open",
+        slot_interval_minutes=15,
+        direct_availability_response=True,
+        direct_booking_response=True,
+        booking_confirmation_datetime_enabled=True,
+        post_booking_followup_enabled=True,
+        post_booking_followup_message="¿Puedo ayudarte con algo más?",
+        hangup_after_no_more_help=True,
+        hangup_on_natural_goodbye=True,
         max_proposed_slots=3,
         max_consecutive_questions=2,
         conversation_style="natural",

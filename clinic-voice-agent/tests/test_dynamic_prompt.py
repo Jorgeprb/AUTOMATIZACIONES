@@ -343,3 +343,48 @@ def test_dynamic_prompt_respects_assistant_behavior_fields(
     assert "Gracias y hasta luego" in prompt
     assert "Sé comercial" in prompt
     assert "garantizado al 100%" in prompt
+
+
+def test_prompt_renders_configurable_booking_conversation_behavior(
+    db_session: Session,
+) -> None:
+    """The live prompt must expose service, grid, direct response and closing rules."""
+    clinic = Clinic(
+        name="Peluquería Natural",
+        timezone="Europe/Madrid",
+        phone_number="+34910001077",
+    )
+    phone = PhoneNumber(
+        clinic=clinic,
+        provider=PhoneProvider.VOIPSTUDIO,
+        phone_number="+34910001077",
+        label="Principal",
+    )
+    config = _assistant_config(clinic, name="Recepción")
+    config.service_prompt_mode = "infer_confirm"
+    config.slot_interval_minutes = 30
+    config.direct_availability_response = True
+    config.direct_booking_response = True
+    config.booking_confirmation_datetime_enabled = True
+    config.post_booking_followup_enabled = True
+    config.post_booking_followup_message = "¿Puedo ayudarte con algo más?"
+    config.hangup_after_no_more_help = True
+    config.hangup_on_natural_goodbye = True
+    service = Service(
+        clinic=clinic,
+        name="Corte",
+        public_name="Cortar el pelo",
+        duration_minutes=30,
+    )
+    db_session.add_all([clinic, phone, config, service])
+    db_session.commit()
+
+    context = resolve_clinic_by_called_number("+34910001077", session=db_session)
+    prompt = build_realtime_instructions(context)
+
+    assert "¿Para cortar el pelo?" in prompt
+    assert "múltiplos de\n30 minutos" in prompt
+    assert "no digas «voy a reservar»" in prompt
+    assert "¿Puedo ayudarte con algo más?" in prompt
+    assert "«adiós», «chao», «hasta luego»" in prompt
+    assert "usa end_call" in prompt

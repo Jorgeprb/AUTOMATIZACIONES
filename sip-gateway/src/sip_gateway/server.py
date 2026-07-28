@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 import zlib
@@ -15,7 +16,7 @@ from sip_gateway.config import GatewaySettings
 from sip_gateway.rtp import RTPPortPool
 from sip_gateway.sdp import build_sdp_answer, parse_sdp_offer
 from sip_gateway.session import GatewayCallSession, select_called_number
-from sip_gateway.sip import SipMessage, build_response
+from sip_gateway.sip import SipMessage, build_request, build_response
 
 logger = logging.getLogger(__name__)
 
@@ -534,6 +535,7 @@ class SipGateway:
                 payload_type=payload_type,
                 rtp_port=rtp_port,
                 on_closed=self._on_call_closed,
+                on_hangup_requested=self._send_bye_and_close,
             )
             # Avoid resolving /api/internal/voice/context twice. prepare() will
             # bind RTP and reuse this context when present.
@@ -638,6 +640,7 @@ class SipGateway:
             )
             return
 
+        call.dialog_remote_addr = addr
         logger.info(
             "sip_ack_accepted",
             extra={
@@ -697,6 +700,70 @@ class SipGateway:
         if not call.media_started and not call._closed.is_set():
             logger.warning("sip_ack_timeout", extra={"call_id": call.call_id})
             await self._remove_call(call, "ack_timeout")
+
+    @staticmethod
+    def _header_uri(value: str) -> str:
+        """Extract the first SIP URI from a Contact/From/To header."""
+        match = re.search(r"sip:[^>;\s]+(?:;[^>\s]+)?", value or "", re.IGNORECASE)
+        return match.group(0) if match else ""
+
+    async def _send_bye_and_close(
+        self,
+        call: GatewayCallSession,
+        reason: str,
+    ) -> None:
+        """Terminate an established inbound dialog after assistant playout."""
+        if call._closed.is_set():
+            return
+        if self.transport is not None:
+            remote_uri = self._header_uri(call.invite.header("contact"))
+            if not remote_uri:
+                remote_uri = (
+                    f"sip:{call.invite.caller}@{call.dialog_remote_addr[0]}:"
+                    f"{call.dialog_remote_addr[1]}"
+                )
+            original_to = call.invite.header("to") or call.invite.header("t")
+            if "tag=" not in original_to.casefold():
+                original_to = f"{original_to};tag={call.local_tag}"
+            original_from = call.invite.header("from") or call.invite.header("f")
+            try:
+                invite_cseq = int(call.invite.cseq.split()[0])
+            except (ValueError, IndexError):
+                invite_cseq = 1
+            branch = f"z9hG4bK-{uuid.uuid4().hex[:16]}"
+            local_host = self.settings.advertised_sip_host
+            bye = build_request(
+                "BYE",
+                remote_uri,
+                {
+                    "Via": (
+                        f"SIP/2.0/UDP {local_host}:{self.settings.sip_port};"
+                        f"branch={branch};rport"
+                    ),
+                    "Max-Forwards": "70",
+                    "From": original_to,
+                    "To": original_from,
+                    "Call-ID": call.call_id,
+                    "CSeq": f"{invite_cseq + 1} BYE",
+                    "Contact": (
+                        f"<sip:bot@{local_host}:{self.settings.sip_port};transport=udp>"
+                    ),
+                    "User-Agent": "Autogal-SIP-Gateway",
+                    "Reason": f'SIP;cause=200;text="{reason}"',
+                },
+            )
+            self.transport.sendto(bye, call.dialog_remote_addr)
+            logger.info(
+                "sip_bye_sent",
+                extra={
+                    "call_id": call.call_id,
+                    "reason": reason,
+                    "target": remote_uri,
+                    "source_ip": call.dialog_remote_addr[0],
+                },
+            )
+            await asyncio.sleep(0.15)
+        await self._remove_call(call, f"assistant_{reason}")
 
     async def _on_call_closed(self, call: GatewayCallSession, reason: str) -> None:
         del reason

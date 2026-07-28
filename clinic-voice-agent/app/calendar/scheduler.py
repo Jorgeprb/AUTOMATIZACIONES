@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 from app.calendar.google_client import GoogleCalendarClient, WorkerCalendarError
 from app.models import AppointmentSource, Clinic, Service, Worker
 
-SLOT_INTERVAL_MINUTES = 15
+DEFAULT_SLOT_INTERVAL_MINUTES = 15
+ALLOWED_SLOT_INTERVAL_MINUTES = frozenset({5, 10, 15, 20, 30, 60})
 GOOGLE_FREEBUSY_CALENDAR_LIMIT = 50
 WEEKDAY_NAMES = (
     "monday",
@@ -389,13 +390,23 @@ def subtract_busy_ranges(
     return available
 
 
-def _ceil_to_slot_grid(value: datetime) -> datetime:
-    """Round a UTC datetime up to the next 15-minute boundary."""
-    normalized = _as_utc(value).replace(second=0, microsecond=0)
-    remainder = normalized.minute % SLOT_INTERVAL_MINUTES
+def _ceil_to_slot_grid(
+    value: datetime,
+    slot_interval_minutes: int,
+    timezone: str,
+) -> datetime:
+    """Round up on the clinic-local appointment grid and return UTC."""
+    if slot_interval_minutes not in ALLOWED_SLOT_INTERVAL_MINUTES:
+        raise SchedulingValidationError(
+            "slot_interval_minutes must be one of 5, 10, 15, 20, 30, or 60."
+        )
+    zone = ZoneInfo(timezone)
+    normalized = _as_utc(value).astimezone(zone).replace(second=0, microsecond=0)
+    minutes_from_midnight = normalized.hour * 60 + normalized.minute
+    remainder = minutes_from_midnight % slot_interval_minutes
     if remainder:
-        normalized += timedelta(minutes=SLOT_INTERVAL_MINUTES - remainder)
-    return normalized
+        normalized += timedelta(minutes=slot_interval_minutes - remainder)
+    return normalized.astimezone(UTC)
 
 
 def generate_candidate_slots(
@@ -406,6 +417,7 @@ def generate_candidate_slots(
     buffer_before_minutes: int = 0,
     buffer_after_minutes: int = 0,
     timezone: str,
+    slot_interval_minutes: int = DEFAULT_SLOT_INTERVAL_MINUTES,
 ) -> list[ProposedSlot]:
     """Generate real appointment slots fully contained in free ranges."""
     if not worker.calendar_id:
@@ -420,12 +432,20 @@ def generate_candidate_slots(
     duration = timedelta(minutes=duration_minutes)
     before = timedelta(minutes=buffer_before_minutes)
     after = timedelta(minutes=buffer_after_minutes)
-    step = timedelta(minutes=SLOT_INTERVAL_MINUTES)
+    if slot_interval_minutes not in ALLOWED_SLOT_INTERVAL_MINUTES:
+        raise SchedulingValidationError(
+            "slot_interval_minutes must be one of 5, 10, 15, 20, 30, or 60."
+        )
+    step = timedelta(minutes=slot_interval_minutes)
     zone = ZoneInfo(timezone)
     slots: list[ProposedSlot] = []
 
     for free_range in _merge_ranges(available_ranges):
-        appointment_start = _ceil_to_slot_grid(free_range.start + before)
+        appointment_start = _ceil_to_slot_grid(
+            free_range.start + before,
+            slot_interval_minutes,
+            timezone,
+        )
         while appointment_start + duration + after <= free_range.end:
             appointment_end = appointment_start + duration
             slots.append(
@@ -487,6 +507,7 @@ def propose_slots(
     preferred_time_window: str | None = None,
     days_ahead: int = 14,
     max_slots: int = 3,
+    slot_interval_minutes: int = DEFAULT_SLOT_INTERVAL_MINUTES,
     now: datetime | None = None,
 ) -> list[ProposedSlot]:
     """Return up to `max_slots` real FreeBusy-backed appointment options."""
@@ -586,6 +607,7 @@ def propose_slots(
                 buffer_before_minutes=buffer_before,
                 buffer_after_minutes=buffer_after,
                 timezone=clinic.timezone,
+                slot_interval_minutes=slot_interval_minutes,
             )
         )
 

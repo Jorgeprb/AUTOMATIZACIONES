@@ -128,4 +128,31 @@ describe("assistant configuration", () => {
 
     expect(sabela.success).toBe(true);
   });
+  it("validates booking conversation and slot-grid options", () => {
+    const valid = assistantConfigFormSchema.safeParse({
+      ...assistantConfigDefaults,
+      service_prompt_mode: "infer_confirm",
+      slot_interval_minutes: 30,
+      direct_availability_response: true,
+      direct_booking_response: true,
+      booking_confirmation_datetime_enabled: true,
+      post_booking_followup_enabled: true,
+      post_booking_followup_message: "¿Necesitas algo más?",
+      hangup_after_no_more_help: true,
+      hangup_on_natural_goodbye: true,
+    });
+    const invalidGrid = assistantConfigFormSchema.safeParse({
+      ...assistantConfigDefaults,
+      slot_interval_minutes: 25,
+    });
+    const invalidFollowup = assistantConfigFormSchema.safeParse({
+      ...assistantConfigDefaults,
+      post_booking_followup_message: "x".repeat(301),
+    });
+
+    expect(valid.success).toBe(true);
+    expect(invalidGrid.success).toBe(false);
+    expect(invalidFollowup.success).toBe(false);
+  });
+
 });

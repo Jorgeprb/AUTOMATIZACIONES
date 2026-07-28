@@ -133,16 +133,19 @@ class GatewayCallSession:
         payload_type: int,
         rtp_port: int,
         on_closed: Callable[["GatewayCallSession", str], Awaitable[None] | None] | None = None,
+        on_hangup_requested: Callable[["GatewayCallSession", str], Awaitable[None] | None] | None = None,
     ) -> None:
         self.settings = settings
         self.backend = backend
         self.port_pool = port_pool
         self.invite = invite
         self.sip_addr = sip_addr
+        self.dialog_remote_addr = sip_addr
         self.offer = offer
         self.payload_type = payload_type
         self.rtp_port = rtp_port
         self._on_closed = on_closed
+        self._on_hangup_requested = on_hangup_requested
         self.call_id = invite.call_id or str(uuid.uuid4())
         self.local_tag = uuid.uuid4().hex[:12]
         self.openai_call_id = f"vps-{self.call_id}"
@@ -176,6 +179,10 @@ class GatewayCallSession:
         self._bot_speaking_since: float | None = None
         self._tts_jobs_inflight = 0
         self._barge_in_preroll: deque[bytes] = deque(maxlen=15)
+        self._input_suppressed_until = 0.0
+        self._end_call_requested = False
+        self._end_call_reason = "completed"
+        self._end_call_task_started = False
         self.stats = CallStats()
         self.started_at = time.perf_counter()
         self.last_invite_response: bytes | None = None
@@ -228,13 +235,29 @@ class GatewayCallSession:
                 raise RuntimeError("local media cannot start for a non-bridge route")
 
             async def tool_executor(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-                return await self.backend.execute_tool(
+                output = await self.backend.execute_tool(
                     clinic_id=context.clinic_id,
                     call_session_id=context.call_session_id,
                     openai_call_id=self.openai_call_id,
                     name=name,
                     arguments=arguments,
                 )
+                if name == "end_call" and bool(output.get("ok")):
+                    self._end_call_requested = True
+                    self._end_call_reason = str(arguments.get("reason") or "completed")
+                    logger.info(
+                        "sip_end_call_requested",
+                        extra={
+                            "call_id": self.call_id,
+                            "reason": self._end_call_reason,
+                        },
+                    )
+                return output
+
+            async def on_response_done() -> None:
+                if self._end_call_requested and not self._end_call_task_started:
+                    self._end_call_task_started = True
+                    self._spawn(self._hangup_after_playout())
 
             self.bridge = OpenAIRealtimeBridge(
                 settings=self.settings,
@@ -242,6 +265,7 @@ class GatewayCallSession:
                 context=context,
                 call_id=self.call_id,
                 tool_executor=tool_executor,
+                on_response_done=on_response_done,
             )
             self._media_started.set()
             self._spawn(self._rtp_sender_loop())
@@ -390,6 +414,14 @@ class GatewayCallSession:
         else:
             self._spawn(self._external_tts_output_loop())
 
+    def _should_suppress_openai_input(self, now: float) -> bool:
+        """Suppress external-TTS echo while preserving deliberate barge-in."""
+        if not self.settings.external_tts_half_duplex:
+            return False
+        if self.context is None or self.context.voice_provider == "openai":
+            return False
+        return self._bot_speaking or now < self._input_suppressed_until
+
     async def _inbound_audio_loop(self) -> None:
         assert self.bridge is not None
         while not self._closed.is_set():
@@ -400,6 +432,9 @@ class GatewayCallSession:
             pcm16 = decode_g711(packet.payload_type, packet.payload)
             energy = pcm16_energy(pcm16)
             now = time.monotonic()
+
+            if self._should_suppress_openai_input(now) and not self._bot_speaking:
+                continue
 
             # While the bot is speaking, keep a short pre-roll but do not send the
             # line echo to OpenAI. Only open the microphone after several frames
@@ -679,6 +714,11 @@ class GatewayCallSession:
                         payload = silence
                         self._bot_speaking = False
                         self._bot_speaking_since = None
+                        if was_bot_speaking and self.settings.external_tts_half_duplex:
+                            self._input_suppressed_until = (
+                                time.monotonic()
+                                + self.settings.echo_suppression_tail_ms / 1000
+                            )
                         if was_bot_speaking and self._tts_jobs_inflight > 0:
                             underruns += 1
                             self.stats.outbound_underruns += 1
@@ -755,6 +795,45 @@ class GatewayCallSession:
                 self.outbound_audio_queue.get_nowait()
             except asyncio.QueueEmpty:
                 return
+
+    async def _hangup_after_playout(self) -> None:
+        """Wait for the final goodbye audio and then terminate the SIP dialog."""
+        started = time.monotonic()
+        saw_playout = False
+        deadline = started + 20.0
+        while not self._closed.is_set() and time.monotonic() < deadline:
+            busy = (
+                self._tts_jobs_inflight > 0
+                or not self.outbound_audio_queue.empty()
+                or self._bot_speaking
+            )
+            if busy:
+                saw_playout = True
+            elif saw_playout or time.monotonic() - started >= 2.0:
+                await asyncio.sleep(0.35)
+                logger.info(
+                    "sip_end_call_playout_finished",
+                    extra={"call_id": self.call_id, "reason": self._end_call_reason},
+                )
+                if self._on_hangup_requested is not None:
+                    result = self._on_hangup_requested(self, self._end_call_reason)
+                    if asyncio.iscoroutine(result):
+                        await result
+                else:
+                    await self.close(f"assistant_{self._end_call_reason}")
+                return
+            await asyncio.sleep(0.05)
+        if not self._closed.is_set():
+            logger.warning(
+                "sip_end_call_playout_timeout",
+                extra={"call_id": self.call_id, "reason": self._end_call_reason},
+            )
+            if self._on_hangup_requested is not None:
+                result = self._on_hangup_requested(self, self._end_call_reason)
+                if asyncio.iscoroutine(result):
+                    await result
+            else:
+                await self.close(f"assistant_{self._end_call_reason}")
 
     async def _max_duration_watchdog(self) -> None:
         await asyncio.sleep(self.settings.max_call_seconds)

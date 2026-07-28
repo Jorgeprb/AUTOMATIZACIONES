@@ -117,7 +117,6 @@ function buildConfigPayload(
 ): AssistantConfigPayload {
   return {
     ...values,
-    ask_patient_phone: true,
     // The stable local bridge supports both OpenAI audio and external TTS.
     // Keep the routing decision out of the user-facing configuration.
     call_audio_mode: "vps_media_bridge",
@@ -498,7 +497,7 @@ export function AssistantConfigForm({
               {...register("temperature")}
             />
             <p className="mt-1 text-xs text-[#657087]">
-              En gpt-realtime-2 este valor ajusta la variación del lenguaje mediante instrucciones; la API ya no acepta session.temperature.
+              0.80 es equilibrada; valores bajos son más consistentes y los altos más variados.
             </p>
             <FieldError message={errors.temperature?.message} />
           </div>
@@ -525,18 +524,6 @@ export function AssistantConfigForm({
               <option value="natural">Naturales</option>
               <option value="slow">Pausadas</option>
             </Select>
-          </div>
-          <div>
-            <Label>Cómo debe decir las horas</Label>
-            <Select {...register("time_reading_style")}>
-              <option value="natural_quarters">
-                Natural: cinco en punto, y cuarto, y media
-              </option>
-              <option value="numeric">Numérica: 17:00, 17:15, 17:30</option>
-            </Select>
-            <p className="mt-1 text-xs text-[#657087]">
-              También usa «menos cuarto» para los minutos 45.
-            </p>
           </div>
           <div>
             <Label>Preguntas seguidas como máximo</Label>
@@ -633,29 +620,40 @@ export function AssistantConfigForm({
             checked={watch("ask_patient_name")}
             onChange={(checked) => setValue("ask_patient_name", checked)}
           />
+          <SwitchField
+            label="Pedir o confirmar el teléfono"
+            checked={watch("ask_patient_phone")}
+            onChange={(checked) => setValue("ask_patient_phone", checked)}
+          />
           <div className="rounded-xl border border-[#e4e8ef] bg-white p-4">
-            <Label htmlFor="caller-phone-policy">Teléfono desde el que llama</Label>
+            <Label>Cómo identificar el servicio</Label>
             <Select
-              id="caller-phone-policy"
               className="mt-2"
-              {...register("caller_phone_policy")}
+              {...register("service_prompt_mode")}
+              onChange={(event) => {
+                const mode = event.target.value as
+                  | "list_services"
+                  | "ask_open"
+                  | "infer_confirm";
+                setValue("service_prompt_mode", mode);
+                setValue("ask_service", mode !== "infer_confirm");
+              }}
             >
-              <option value="ask_before_use">
-                Preguntar si puede utilizarse para la cita
+              <option value="list_services">
+                Listar los servicios disponibles
               </option>
-              <option value="use_directly">
-                Utilizarlo directamente sin preguntar
+              <option value="ask_open">
+                Preguntar qué servicio necesita
+              </option>
+              <option value="infer_confirm">
+                Inferirlo y confirmarlo: «¿Para cortar el pelo?»
               </option>
             </Select>
             <p className="mt-2 text-xs leading-5 text-[#748095]">
-              Si el número está oculto o la persona facilita otro, el asistente pedirá el nuevo.
+              En el modo inferido solo confirma un servicio cuando la intención es
+              clara; si no, pregunta sin inventar.
             </p>
           </div>
-          <SwitchField
-            label="Preguntar el servicio"
-            checked={watch("ask_service")}
-            onChange={(checked) => setValue("ask_service", checked)}
-          />
           <SwitchField
             label="Pedir un motivo general"
             description="Solo una descripción breve; nunca historia clínica."
@@ -675,54 +673,90 @@ export function AssistantConfigForm({
             onChange={(checked) => setValue("strict_calendar_mode", checked)}
           />
         </div>
-        <div className="mt-5 max-w-xs">
-          <Label>Alternativas máximas cuando una hora no esté libre</Label>
-          <Input
-            type="number"
-            min={1}
-            max={5}
-            {...register("max_proposed_slots", { valueAsNumber: true })}
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <div>
+            <Label>Intervalo entre horas que se pueden ofrecer</Label>
+            <Select
+              className="mt-2"
+              {...register("slot_interval_minutes", { valueAsNumber: true })}
+            >
+              <option value={5}>Cada 5 minutos</option>
+              <option value={10}>Cada 10 minutos</option>
+              <option value={15}>Cada 15 minutos</option>
+              <option value={20}>Cada 20 minutos</option>
+              <option value={30}>Cada 30 minutos</option>
+              <option value={60}>Cada 60 minutos</option>
+            </Select>
+            <p className="mt-2 text-xs leading-5 text-[#748095]">
+              Por ejemplo, con 30 minutos solo se ofrecerán horas en punto y a y
+              media; nunca a y cuarto.
+            </p>
+          </div>
+          <div>
+            <Label>Alternativas máximas cuando una hora no esté libre</Label>
+            <Input
+              className="mt-2"
+              type="number"
+              min={1}
+              max={10}
+              {...register("max_proposed_slots", { valueAsNumber: true })}
+            />
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          <SwitchField
+            label="Responder directamente al consultar disponibilidad"
+            description="Evita frases como «voy a comprobarlo» o «ya he revisado los huecos» y responde directamente con el resultado."
+            checked={watch("direct_availability_response")}
+            onChange={(checked) =>
+              setValue("direct_availability_response", checked)
+            }
+          />
+          <SwitchField
+            label="Responder directamente al reservar"
+            description="Evita «voy a reservarla» y confirma la cita solo cuando el calendario devuelve éxito."
+            checked={watch("direct_booking_response")}
+            onChange={(checked) => setValue("direct_booking_response", checked)}
+          />
+          <SwitchField
+            label="Confirmar la fecha y hora completas al reservar"
+            description="Ej.: «Queda reservada para el 26 de agosto a las doce de la mañana»."
+            checked={watch("booking_confirmation_datetime_enabled")}
+            onChange={(checked) =>
+              setValue("booking_confirmation_datetime_enabled", checked)
+            }
+          />
+          <SwitchField
+            label="Preguntar si necesita algo más después de reservar"
+            description="Si responde que sí, continúa ayudando y vuelve a preguntar al terminar."
+            checked={watch("post_booking_followup_enabled")}
+            onChange={(checked) =>
+              setValue("post_booking_followup_enabled", checked)
+            }
+          />
+          <SwitchField
+            label="Colgar cuando confirme que no necesita nada más"
+            description="Reproduce la despedida y finaliza la llamada automáticamente."
+            checked={watch("hangup_after_no_more_help")}
+            onChange={(checked) => setValue("hangup_after_no_more_help", checked)}
+          />
+          <SwitchField
+            label="Colgar ante una despedida natural"
+            description="Reconoce expresiones como «adiós», «chao», «hasta luego» o «gracias, nada más»."
+            checked={watch("hangup_on_natural_goodbye")}
+            onChange={(checked) => setValue("hangup_on_natural_goodbye", checked)}
           />
         </div>
-      </Section>
-
-      <Section
-        title="Evento de Google Calendar"
-        description="Personaliza el título y la descripción de las citas creadas automáticamente."
-      >
-        <div className="space-y-5">
-          <div>
-            <Label htmlFor="calendar-event-title">Plantilla del título</Label>
+        {watch("post_booking_followup_enabled") ? (
+          <div className="mt-4">
+            <Label>Pregunta después de reservar</Label>
             <Input
-              id="calendar-event-title"
-              {...register("calendar_event_title_template")}
-              placeholder="Cita - {patient_name}"
-            />
-            <FieldError message={errors.calendar_event_title_template?.message} />
-          </div>
-          <div>
-            <Label htmlFor="calendar-event-description">
-              Plantilla de la descripción
-            </Label>
-            <Textarea
-              id="calendar-event-description"
-              rows={8}
-              {...register("calendar_event_description_template")}
-            />
-            <FieldError
-              message={errors.calendar_event_description_template?.message}
+              {...register("post_booking_followup_message")}
+              placeholder="¿Puedo ayudarte con algo más?"
             />
           </div>
-          <div className="rounded-xl border border-[#dce5ff] bg-[#f6f8ff] p-4 text-xs leading-6 text-[#526078]">
-            <p className="font-semibold text-[#27334a]">Variables disponibles</p>
-            <code className="mt-2 block whitespace-pre-wrap break-words">
-              {`{patient_name}  {patient_phone}  {reason}  {service_name}
-{worker_name}  {clinic_name}  {start_date}  {start_time}
-{end_date}  {end_time}  {start_datetime}  {end_datetime}
-{appointment_id}  {call_session_id}`}
-            </code>
-          </div>
-        </div>
+        ) : null}
       </Section>
 
       <Section
@@ -762,19 +796,6 @@ export function AssistantConfigForm({
         description="Añade únicamente reglas específicas de tu negocio. El prompt general ya está optimizado para sonar natural."
       >
         <div className="space-y-5">
-          <div>
-            <Label htmlFor="general-system-prompt">Prompt general</Label>
-            <Textarea
-              id="general-system-prompt"
-              rows={8}
-              {...register("system_prompt")}
-              placeholder="Describe el papel general del asistente y las reglas propias del negocio."
-            />
-            <p className="mt-1 text-xs leading-5 text-[#748095]">
-              Se incorpora al prompt optimizado de naturalidad, agenda y seguridad. No incluyas claves ni datos secretos.
-            </p>
-            <FieldError message={errors.system_prompt?.message} />
-          </div>
           <div>
             <Label>Instrucciones adicionales</Label>
             <Textarea

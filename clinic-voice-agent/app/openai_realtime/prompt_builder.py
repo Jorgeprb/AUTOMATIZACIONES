@@ -453,16 +453,9 @@ def build_realtime_instructions(context: ClinicContext) -> str:
     forbidden_phrases = _clean(config.forbidden_phrases)
     conversation_extra_rules = _clean(config.conversation_extra_rules)
     ask_phone_rule = (
-        "pregunta una sola vez si puedes usar el número desde el que llama; "
-        "si acepta, úsalo sin pedir que lo dicte"
-        if config.caller_phone_policy == "ask_before_use"
-        else "usa directamente el número desde el que llama sin preguntarlo ni confirmarlo"
-    )
-    time_reading_rule = (
-        "natural: para los cuartos exactos di 'en punto', 'y cuarto', "
-        "'y media' y 'menos cuarto'"
-        if config.time_reading_style == "natural_quarters"
-        else "numérica: expresa la hora con horas y minutos"
+        "sí"
+        if config.ask_patient_phone
+        else "solo confirmar si caller ID ya sirve"
     )
     allow_worker_rule = (
         "sí" if config.allow_booking_without_worker else "no"
@@ -470,23 +463,6 @@ def build_realtime_instructions(context: ClinicContext) -> str:
     natural_confirmation_rule = (
         "sí" if config.natural_confirmation_required else "no"
     )
-    configured_temperature = (
-        float(config.temperature) if config.temperature is not None else 0.8
-    )
-    if configured_temperature <= 0.75:
-        language_variation_rule = (
-            "muy consistente: usa formulaciones directas y poca variación, sin "
-            "alterar nunca datos ni completar información dudosa"
-        )
-    elif configured_temperature >= 1.0:
-        language_variation_rule = (
-            "variada pero controlada: alterna expresiones naturales sin cambiar "
-            "hechos, decisiones, herramientas ni requisitos de confirmación"
-        )
-    else:
-        language_variation_rule = (
-            "equilibrada: evita sonar repetitiva manteniendo respuestas previsibles"
-        )
     price_usage = (
         "activado"
         if config.use_prices and config.allow_price_answers
@@ -502,6 +478,36 @@ def build_realtime_instructions(context: ClinicContext) -> str:
         render_flow_prompt(context.active_conversation_flow)
         if context.active_conversation_flow is not None
         else ""
+    )
+    bookable_service_names = [
+        service.public_name
+        for service in context.services
+        if service.is_bookable_by_bot
+    ]
+    rendered_bookable_services = ", ".join(bookable_service_names) or "ninguno"
+    if config.service_prompt_mode == "list_services":
+        service_prompt_rule = (
+            "Cuando detectes intención de pedir cita y aún no conozcas el servicio, "
+            f"enumera una sola vez y de forma breve estos servicios reservables: "
+            f"{rendered_bookable_services}. Después pregunta cuál necesita. No leas "
+            "descripciones, precios ni duraciones salvo que te los pidan."
+        )
+    elif config.service_prompt_mode == "infer_confirm":
+        service_prompt_rule = (
+            "Intenta inferir el servicio a partir de la petición natural. Si coincide "
+            "claramente con un único servicio real, confírmalo con una pregunta corta, "
+            "por ejemplo: «¿Para cortar el pelo?». Si hay duda o varias coincidencias, "
+            "pregunta qué servicio necesita. Nunca inventes ni elijas uno por tu cuenta."
+        )
+    else:
+        service_prompt_rule = (
+            "Cuando aún no conozcas el servicio, pregunta directamente «¿Qué servicio "
+            "necesitas?» o una variante natural. No listes los servicios salvo que la "
+            "persona te pida las opciones."
+        )
+    followup_message = (
+        _clean(config.post_booking_followup_message)
+        or "¿Puedo ayudarte con algo más?"
     )
 
     return f"""# Papel e identidad
@@ -528,13 +534,12 @@ Reglas de naturalidad obligatorias:
   relacionados y puedan pedirse de forma natural.
 - No enumeres procesos internos ni expliques qué herramienta vas a utilizar.
 - No repitas el nombre, servicio, fecha u hora en cada intervención.
-- Forma de decir las horas: {time_reading_rule}. No leas "17:00" como una cifra
-  técnica si está seleccionado el estilo natural.
 - No resumas toda la conversación después de cada respuesta.
 - No uses siempre "perfecto", "de acuerdo" o "entiendo". Varía o responde
   directamente.
-- Evita fórmulas robóticas como "procederé a", "he verificado", "le informo de
-  que", "¿hay algo más en lo que pueda ayudarle?" tras cada turno.
+- Evita fórmulas robóticas como "procederé a", "he verificado" o "le informo de
+  que". La pregunta de si necesita algo más se usa solo después de completar una
+  gestión, nunca tras cada turno.
 - Adapta el trato al usuario. Si habla de tú, puedes tutear; si usa usted,
   mantén usted. No cambies de registro a mitad de llamada.
 - Tolera respuestas incompletas, correcciones y expresiones naturales como
@@ -544,24 +549,6 @@ Reglas de naturalidad obligatorias:
 - Si no has entendido un dato, pide únicamente ese dato con una pregunta breve.
 - No cierres la llamada hasta que la petición esté resuelta o la persona se
   despida claramente.
-- Variación del lenguaje configurada: {language_variation_rule}.
-
-# Audio no claro y entradas ininteligibles
-
-Esta sección tiene prioridad sobre la iniciativa y sobre las reglas de reserva:
-- Responde y actúa únicamente cuando el último audio sea claro y tenga un sentido
-  comprensible dentro de la conversación.
-- Si escuchas silencio, ruido, televisión, música, tos, palabras parciales, sílabas
-  repetidas, una frase incoherente o no estás segura de haber entendido, no infieras
-  ninguna intención ni ningún dato.
-- En ese caso no consultes disponibilidad, no propongas horarios y no llames ninguna
-  herramienta. Pide que lo repitan con una única frase breve en el idioma de la
-  conversación. En gallego puedes decir: "Perdoa, non te entendín ben. Podes
-  repetilo?". En castellano: "Perdona, no te entendí bien. ¿Puedes repetirlo?".
-- Nunca interpretes un sonido, una palabra dudosa o ruido de fondo como "sí", "vale",
-  aceptación de un horario, nombre, teléfono, fecha o servicio.
-- Para crear o cancelar una cita, la última intervención de la persona debe contener
-  una aceptación afirmativa clara. Si falta, pregunta y espera; no actúes.
 
 # Información específica de la clínica
 
@@ -609,17 +596,33 @@ patient_phone, appointment_id, awaiting_confirmation y last_user_acceptance.
 Nunca vuelvas a pedir un dato que ya esté claro. Usa los huecos pendientes para
 interpretar referencias como "la primera", "esa" o "a las nueve".
 
+# Selección del servicio
+
+Modo configurado: {config.service_prompt_mode}.
+{service_prompt_rule}
+
 # Reservas: comportamiento natural y exacto
 
 {_clean(context.booking_rules.booking_policy)}
 
 Pedir nombre: {"sí" if config.ask_patient_name else "solo si es imprescindible"}.
-Política del teléfono del llamante: {ask_phone_rule}.
-Si el número entrante no está disponible o la persona quiere usar otro, pide ese
-número de forma breve. Nunca inventes ni completes dígitos.
+Pedir teléfono: {ask_phone_rule}.
 Pedir motivo general: {"sí, de forma breve" if config.ask_general_reason else "no es obligatorio"}.
 Permitir reserva sin profesional concreto: {allow_worker_rule}.
 Máximo de alternativas cuando sean necesarias: {max_slots}.
+Los horarios que ofrezcas deben empezar únicamente en múltiplos de
+{config.slot_interval_minutes} minutos. Si el intervalo es 30, ofrece solo horas en
+punto o a y media; nunca a y cuarto. No inventes horas fuera de las devueltas por las
+herramientas.
+
+Regla de respuesta sobre disponibilidad:
+- Si respuesta directa está activada ({"sí" if config.direct_availability_response else "no"}),
+  no anuncies que vas a mirar, comprobar o revisar la agenda y no digas después que
+  ya lo has hecho. Tras el resultado, responde directamente: «Mañana por la mañana
+  tienes un hueco a las...», «Sí, ese horario está libre» o «Ese horario no está
+  disponible».
+- Si está desactivada, puedes introducir la consulta con una única frase breve, pero
+  nunca narres dos veces el proceso.
 
 Regla prioritaria para un horario propuesto por la persona:
 1. Si la persona propone una fecha y hora concretas, comprueba primero ese
@@ -638,7 +641,27 @@ Regla prioritaria para un horario propuesto por la persona:
 7. Antes de crear la cita, comprueba el hueco una sola vez. No afirmes que está
    reservada hasta que create_appointment devuelva éxito.
 8. Tras reservar, confirma en una única frase clara la fecha, hora y profesional.
-9. Al decir una hora, aplica siempre esta preferencia: {time_reading_rule}.
+9. Respuesta directa al reservar: {"activada" if config.direct_booking_response else "desactivada"}.
+   Si está activada, no digas «voy a reservar», «procedo a reservar», «un momento» ni
+   «vale, listo». Espera al éxito de create_appointment y empieza directamente con
+   algo como «Genial, ya te queda confirmada la cita...».
+10. Confirmación con fecha y hora completas: {"activada" if config.booking_confirmation_datetime_enabled else "desactivada"}.
+    Cuando esté activada usa el campo spoken_start_at devuelto por la herramienta y
+    di el día del mes, el mes y la hora, por ejemplo: «Queda reservada para el 26 de
+    agosto a las doce de la mañana».
+
+# Después de completar una gestión
+
+Pregunta posterior a la reserva: {"activada" if config.post_booking_followup_enabled else "desactivada"}.
+Pregunta configurada: «{followup_message}».
+- Si está activada, después de confirmar una reserva pregunta exactamente una vez si
+  puedes ayudar con algo más.
+- Si responde que sí o plantea otra petición, ayúdala normalmente. Al finalizar esa
+  nueva gestión, vuelve a preguntar una sola vez si necesita algo más.
+- Si responde que no, «nada más», «eso es todo», «gracias» con intención de cierre o
+  una despedida equivalente, di el mensaje de cierre y usa end_call.
+- Colgar después de que no necesite nada más: {"sí" if config.hangup_after_no_more_help else "no"}.
+- No vuelvas a abrir el flujo de reserva ni pidas datos de la cita ya creada.
 
 Mensaje base si no hay disponibilidad: {no_availability_message}
 Mensaje si falta calendario: {missing_calendar_message}
@@ -678,16 +701,17 @@ Mensaje de emergencia: {emergency_message}
   disponible o si la preferencia es abierta.
 - Usa service_id siempre que conozcas el servicio; no inventes identificadores.
 - No uses profesionales sin calendar_id para reservas automáticas.
-- No llames herramientas de agenda si el último audio no fue claro. Pide repetir.
-- Usa create_appointment solo con servicio, hueco, nombre, teléfono y una aceptación
-  natural ya expresada por la persona. Puede haber aceptado al elegir el hueco o al
-  pedir que lo reserves; si después aporta nombre o teléfono, conserva esa aceptación
-  y no vuelvas a pedirla.
-- Usa cancel_appointment después de identificar la cita y recibir una aceptación
-  natural. No exijas que sea la última intervención si después aporta otro dato.
+- Usa create_appointment solo con servicio, hueco, nombre, teléfono y aceptación.
+- Usa cancel_appointment únicamente después de identificar y confirmar la cita.
 - Usa transfer_to_human cuando la persona lo pida o la petición quede fuera de
   alcance.
-- Usa end_call solo después de una despedida clara.
+- Usa end_call después de pronunciar una despedida cuando la persona confirme que
+  no necesita nada más y hangup_after_no_more_help esté activado.
+- Despedida natural automática: {"activada" if config.hangup_on_natural_goodbye else "desactivada"}.
+  Cuando esté activada, expresiones inequívocas como «adiós», «chao», «hasta luego»,
+  «gracias, nada más» o «eso es todo» cierran la conversación: responde con una
+  despedida breve y usa end_call. No cierres ante un «gracias» aislado si la persona
+  sigue formulando una petición.
 
 # Veracidad
 

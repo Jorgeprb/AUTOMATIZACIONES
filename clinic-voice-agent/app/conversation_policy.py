@@ -38,6 +38,14 @@ class ConversationPolicy(BaseModel):
     ask_patient_phone: bool = True
     ask_general_reason: bool = True
     ask_service: bool = True
+    service_prompt_mode: Literal[
+        "list_services", "ask_open", "infer_confirm"
+    ] = "ask_open"
+    direct_availability_response: bool = True
+    direct_booking_response: bool = True
+    post_booking_followup_enabled: bool = True
+    hangup_after_no_more_help: bool = True
+    hangup_on_natural_goodbye: bool = True
     commercial_call_handling: Literal[
         "declinar", "transferir", "responder_basico"
     ] = "declinar"
@@ -82,6 +90,12 @@ def conversation_policy_from_config(config: AssistantConfig) -> ConversationPoli
         ask_patient_phone=config.ask_patient_phone,
         ask_general_reason=config.ask_general_reason,
         ask_service=config.ask_service,
+        service_prompt_mode=config.service_prompt_mode,
+        direct_availability_response=config.direct_availability_response,
+        direct_booking_response=config.direct_booking_response,
+        post_booking_followup_enabled=config.post_booking_followup_enabled,
+        hangup_after_no_more_help=config.hangup_after_no_more_help,
+        hangup_on_natural_goodbye=config.hangup_on_natural_goodbye,
         commercial_call_handling=config.commercial_call_handling,
         human_transfer_rules=config.human_transfer_rules,
         commercial_call_message=config.commercial_call_message,

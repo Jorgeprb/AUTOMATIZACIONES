@@ -80,8 +80,6 @@ function formValues(config: AssistantConfig): AssistantConfigFormValues {
     pause_style: config.pause_style,
     phone_reading_style: config.phone_reading_style,
     date_reading_style: config.date_reading_style,
-    time_reading_style: config.time_reading_style ?? "natural_quarters",
-    caller_phone_policy: config.caller_phone_policy ?? "ask_before_use",
     price_reading_style: config.price_reading_style,
     allow_interruptions: config.allow_interruptions,
     turn_end_silence_ms: String(config.turn_end_silence_ms ?? 350),
@@ -95,10 +93,6 @@ function formValues(config: AssistantConfig): AssistantConfigFormValues {
     system_prompt: config.system_prompt,
     safety_prompt: config.safety_prompt,
     booking_policy_prompt: config.booking_policy_prompt,
-    calendar_event_title_template:
-      config.calendar_event_title_template ?? "Cita - {patient_name}",
-    calendar_event_description_template:
-      config.calendar_event_description_template ?? "",
     cancellation_policy_prompt: config.cancellation_policy_prompt,
     transfer_policy_prompt: config.transfer_policy_prompt,
     tone: config.tone,
@@ -110,6 +104,17 @@ function formValues(config: AssistantConfig): AssistantConfigFormValues {
     allow_bookings: config.allow_bookings,
     allow_price_answers: config.allow_price_answers,
     ask_service: config.ask_service,
+    service_prompt_mode: config.service_prompt_mode ?? "ask_open",
+    slot_interval_minutes: config.slot_interval_minutes ?? 15,
+    direct_availability_response: config.direct_availability_response ?? true,
+    direct_booking_response: config.direct_booking_response ?? true,
+    booking_confirmation_datetime_enabled:
+      config.booking_confirmation_datetime_enabled ?? true,
+    post_booking_followup_enabled: config.post_booking_followup_enabled ?? true,
+    post_booking_followup_message:
+      config.post_booking_followup_message ?? "¿Puedo ayudarte con algo más?",
+    hangup_after_no_more_help: config.hangup_after_no_more_help ?? true,
+    hangup_on_natural_goodbye: config.hangup_on_natural_goodbye ?? true,
     max_proposed_slots: config.max_proposed_slots,
     max_consecutive_questions: config.max_consecutive_questions,
     conversation_style: config.conversation_style,
@@ -153,7 +158,6 @@ function payload(
   return {
     ...values,
     is_active: isActive,
-    ask_patient_phone: true,
     call_audio_mode: externalVoice ? "vps_media_bridge" : values.call_audio_mode,
     speech_speed: speechSpeedForMultiplier(values.voice_speed),
     temperature: values.temperature || null,

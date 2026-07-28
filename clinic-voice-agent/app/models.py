@@ -404,6 +404,14 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="valid_assistant_max_proposed_slots",
         ),
         CheckConstraint(
+            "service_prompt_mode IN ('list_services', 'ask_open', 'infer_confirm')",
+            name="valid_assistant_service_prompt_mode",
+        ),
+        CheckConstraint(
+            "slot_interval_minutes IN (5, 10, 15, 20, 30, 60)",
+            name="valid_assistant_slot_interval_minutes",
+        ),
+        CheckConstraint(
             (
                 "conversation_style IN "
                 "('natural', 'formal', 'comercial', 'breve')"
@@ -442,14 +450,6 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="valid_assistant_date_reading_style",
         ),
         CheckConstraint(
-            "time_reading_style IN ('natural_quarters', 'numeric')",
-            name="valid_assistant_time_reading_style",
-        ),
-        CheckConstraint(
-            "caller_phone_policy IN ('ask_before_use', 'use_directly')",
-            name="valid_assistant_caller_phone_policy",
-        ),
-        CheckConstraint(
             "price_reading_style IN ('brief', 'clear', 'detailed')",
             name="valid_assistant_price_reading_style",
         ),
@@ -480,7 +480,7 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="valid_assistant_voice_provider",
         ),
         CheckConstraint(
-            "voice_speed BETWEEN 0.50 AND 2.00",
+            "voice_speed BETWEEN 0.25 AND 4.00",
             name="valid_assistant_voice_speed",
         ),
         CheckConstraint(
@@ -613,18 +613,6 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default="natural",
         nullable=False,
     )
-    time_reading_style: Mapped[str] = mapped_column(
-        String(24),
-        server_default=text("'natural_quarters'"),
-        default="natural_quarters",
-        nullable=False,
-    )
-    caller_phone_policy: Mapped[str] = mapped_column(
-        String(24),
-        server_default=text("'ask_before_use'"),
-        default="ask_before_use",
-        nullable=False,
-    )
     price_reading_style: Mapped[str] = mapped_column(
         String(16),
         server_default=text("'clear'"),
@@ -666,36 +654,6 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     safety_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     booking_policy_prompt: Mapped[str] = mapped_column(Text, nullable=False)
-    calendar_event_title_template: Mapped[str] = mapped_column(
-        Text,
-        server_default=text("'Cita - {patient_name}'"),
-        default="Cita - {patient_name}",
-        nullable=False,
-    )
-    calendar_event_description_template: Mapped[str] = mapped_column(
-        Text,
-        server_default=text(
-            "'Reserva creada por asistente telefónico.\n"
-            "Paciente: {patient_name}\n"
-            "Teléfono: {patient_phone}\n"
-            "Servicio: {service_name}\n"
-            "Profesional: {worker_name}\n"
-            "Fecha: {start_date}\n"
-            "Hora: {start_time}\n"
-            "Motivo general: {reason}'"
-        ),
-        default=(
-            "Reserva creada por asistente telefónico.\n"
-            "Paciente: {patient_name}\n"
-            "Teléfono: {patient_phone}\n"
-            "Servicio: {service_name}\n"
-            "Profesional: {worker_name}\n"
-            "Fecha: {start_date}\n"
-            "Hora: {start_time}\n"
-            "Motivo general: {reason}"
-        ),
-        nullable=False,
-    )
     cancellation_policy_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     transfer_policy_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     tone: Mapped[str] = mapped_column(
@@ -747,6 +705,58 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
     )
     ask_service: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    service_prompt_mode: Mapped[str] = mapped_column(
+        String(32),
+        server_default=text("'ask_open'"),
+        default="ask_open",
+        nullable=False,
+    )
+    slot_interval_minutes: Mapped[int] = mapped_column(
+        Integer,
+        server_default=text("15"),
+        default=15,
+        nullable=False,
+    )
+    direct_availability_response: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    direct_booking_response: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    booking_confirmation_datetime_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    post_booking_followup_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    post_booking_followup_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    hangup_after_no_more_help: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
+    hangup_on_natural_goodbye: Mapped[bool] = mapped_column(
         Boolean,
         server_default=text("true"),
         default=True,
@@ -1335,13 +1345,7 @@ class AdminUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     username: Mapped[str] = mapped_column(String(160), nullable=False)
-    email: Mapped[str | None] = mapped_column(String(320), unique=True, index=True, nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    avatar_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    google_subject: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
-    auth_provider: Mapped[str] = mapped_column(
-        String(32), server_default=text("'password'"), default="password", nullable=False
-    )
     password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
     role: Mapped[AdminRole] = mapped_column(
         Enum(
@@ -1438,25 +1442,6 @@ class AdminSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     user: Mapped[AdminUser] = relationship(back_populates="sessions")
 
-
-
-
-class OAuthLoginState(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    """Short-lived OAuth login transaction with PKCE and nonce protection."""
-
-    __tablename__ = "oauth_login_states"
-    __table_args__ = (
-        UniqueConstraint("state_hash", name="uq_oauth_login_states_state_hash"),
-        Index("ix_oauth_login_states_expiry", "expires_at"),
-    )
-
-    state_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    nonce: Mapped[str] = mapped_column(String(128), nullable=False)
-    code_verifier: Mapped[str] = mapped_column(String(256), nullable=False)
-    redirect_uri: Mapped[str] = mapped_column(String(1000), nullable=False)
-    portal: Mapped[str] = mapped_column(String(24), nullable=False)
-    return_to: Mapped[str] = mapped_column(String(1000), server_default=text("'/'"), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 class AdminAuditLog(UUIDPrimaryKeyMixin, Base):
     """Immutable audit trail for administrative actions."""

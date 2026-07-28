@@ -65,6 +65,8 @@ class GatewaySettings(BaseSettings):
     jitter_flush_ms: int = 80
     openai_queue_max_items: int = 500
     openai_input_batch_ms: int = 40
+    external_tts_half_duplex: bool = True
+    echo_suppression_tail_ms: int = 800
 
     @field_validator("sip_port", "rtp_port_min", "rtp_port_max", "health_port")
     @classmethod
@@ -125,6 +127,7 @@ class GatewaySettings(BaseSettings):
         "jitter_flush_ms",
         "openai_queue_max_items",
         "openai_input_batch_ms",
+        "echo_suppression_tail_ms",
         "barge_in_min_frames",
         "barge_in_cooldown_ms",
         "barge_in_start_guard_ms",

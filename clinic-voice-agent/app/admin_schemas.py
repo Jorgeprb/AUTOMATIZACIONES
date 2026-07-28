@@ -21,11 +21,6 @@ from app.call_audio import (
     normalize_call_audio_mode,
     requires_external_voice_legal_confirmation,
 )
-from app.calendar.event_templates import (
-    DEFAULT_CALENDAR_EVENT_DESCRIPTION_TEMPLATE,
-    DEFAULT_CALENDAR_EVENT_TITLE_TEMPLATE,
-    validate_calendar_event_template,
-)
 from app.conversation_flows import validate_flow_json
 from app.models import (
     AppointmentSource,
@@ -328,12 +323,6 @@ class AssistantConfigBase(BaseModel):
     pause_style: Literal["short", "natural", "slow"] = "natural"
     phone_reading_style: Literal["digits", "groups", "natural"] = "groups"
     date_reading_style: Literal["natural", "numeric"] = "natural"
-    time_reading_style: Literal["natural_quarters", "numeric"] = (
-        "natural_quarters"
-    )
-    caller_phone_policy: Literal["ask_before_use", "use_directly"] = (
-        "ask_before_use"
-    )
     price_reading_style: Literal["brief", "clear", "detailed"] = "clear"
     allow_interruptions: bool = True
     idle_timeout_ms: int | None = Field(default=None, ge=1000, le=60000)
@@ -351,15 +340,6 @@ class AssistantConfigBase(BaseModel):
     system_prompt: str = Field(min_length=1, max_length=12000)
     safety_prompt: str = Field(min_length=1)
     booking_policy_prompt: str = Field(min_length=1)
-    calendar_event_title_template: str = Field(
-        default=DEFAULT_CALENDAR_EVENT_TITLE_TEMPLATE,
-        min_length=1,
-        max_length=500,
-    )
-    calendar_event_description_template: str = Field(
-        default=DEFAULT_CALENDAR_EVENT_DESCRIPTION_TEMPLATE,
-        max_length=5000,
-    )
     cancellation_policy_prompt: str = Field(min_length=1)
     transfer_policy_prompt: str = Field(min_length=1)
     tone: Literal["profesional", "cercano", "comercial", "breve", "formal"] = (
@@ -373,6 +353,17 @@ class AssistantConfigBase(BaseModel):
     allow_bookings: bool = True
     allow_price_answers: bool = True
     ask_service: bool = True
+    service_prompt_mode: Literal[
+        "list_services", "ask_open", "infer_confirm"
+    ] = "ask_open"
+    slot_interval_minutes: Literal[5, 10, 15, 20, 30, 60] = 15
+    direct_availability_response: bool = True
+    direct_booking_response: bool = True
+    booking_confirmation_datetime_enabled: bool = True
+    post_booking_followup_enabled: bool = True
+    post_booking_followup_message: str | None = Field(default=None, max_length=300)
+    hangup_after_no_more_help: bool = True
+    hangup_on_natural_goodbye: bool = True
     max_proposed_slots: int = Field(default=3, ge=1, le=10)
     max_consecutive_questions: int = Field(default=2, ge=1, le=5)
     conversation_style: Literal["natural", "formal", "comercial", "breve"] = "natural"
@@ -402,19 +393,6 @@ class AssistantConfigBase(BaseModel):
     conversation_retention_days: int = Field(default=30, ge=1, le=3650)
     conversation_flow_id: uuid.UUID | None = None
     is_active: bool = False
-
-
-    @field_validator("calendar_event_title_template")
-    @classmethod
-    def validate_calendar_title_template(cls, value: str) -> str:
-        """Reject unsupported or unsafe title placeholders."""
-        return validate_calendar_event_template(value, label="title")
-
-    @field_validator("calendar_event_description_template")
-    @classmethod
-    def validate_calendar_description_template(cls, value: str) -> str:
-        """Reject unsupported or unsafe description placeholders."""
-        return validate_calendar_event_template(value, label="description")
 
     @model_validator(mode="after")
     def validate_dual_call_audio_policy(self) -> AssistantConfigBase:
@@ -479,8 +457,6 @@ class AssistantConfigUpdate(BaseModel):
     pause_style: Literal["short", "natural", "slow"] | None = None
     phone_reading_style: Literal["digits", "groups", "natural"] | None = None
     date_reading_style: Literal["natural", "numeric"] | None = None
-    time_reading_style: Literal["natural_quarters", "numeric"] | None = None
-    caller_phone_policy: Literal["ask_before_use", "use_directly"] | None = None
     price_reading_style: Literal["brief", "clear", "detailed"] | None = None
     allow_interruptions: bool | None = None
     idle_timeout_ms: int | None = Field(default=None, ge=1000, le=60000)
@@ -498,15 +474,6 @@ class AssistantConfigUpdate(BaseModel):
     system_prompt: str | None = Field(default=None, min_length=1, max_length=12000)
     safety_prompt: str | None = Field(default=None, min_length=1)
     booking_policy_prompt: str | None = Field(default=None, min_length=1)
-    calendar_event_title_template: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=500,
-    )
-    calendar_event_description_template: str | None = Field(
-        default=None,
-        max_length=5000,
-    )
     cancellation_policy_prompt: str | None = Field(default=None, min_length=1)
     transfer_policy_prompt: str | None = Field(default=None, min_length=1)
     tone: (
@@ -520,6 +487,17 @@ class AssistantConfigUpdate(BaseModel):
     allow_bookings: bool | None = None
     allow_price_answers: bool | None = None
     ask_service: bool | None = None
+    service_prompt_mode: Literal[
+        "list_services", "ask_open", "infer_confirm"
+    ] | None = None
+    slot_interval_minutes: Literal[5, 10, 15, 20, 30, 60] | None = None
+    direct_availability_response: bool | None = None
+    direct_booking_response: bool | None = None
+    booking_confirmation_datetime_enabled: bool | None = None
+    post_booking_followup_enabled: bool | None = None
+    post_booking_followup_message: str | None = Field(default=None, max_length=300)
+    hangup_after_no_more_help: bool | None = None
+    hangup_on_natural_goodbye: bool | None = None
     max_proposed_slots: int | None = Field(default=None, ge=1, le=10)
     max_consecutive_questions: int | None = Field(default=None, ge=1, le=5)
     conversation_style: (
@@ -556,24 +534,6 @@ class AssistantConfigUpdate(BaseModel):
     conversation_flow_id: uuid.UUID | None = None
     is_active: bool | None = None
 
-    @field_validator("calendar_event_title_template")
-    @classmethod
-    def validate_optional_calendar_title_template(cls, value: str | None) -> str | None:
-        """Validate a supplied partial title template."""
-        if value is None:
-            return None
-        return validate_calendar_event_template(value, label="title")
-
-    @field_validator("calendar_event_description_template")
-    @classmethod
-    def validate_optional_calendar_description_template(
-        cls,
-        value: str | None,
-    ) -> str | None:
-        """Validate a supplied partial description template."""
-        if value is None:
-            return None
-        return validate_calendar_event_template(value, label="description")
 
 class AssistantConfigRead(AssistantConfigBase, ORMReadModel):
     """Administrative assistant configuration representation."""
@@ -775,12 +735,6 @@ class AssistantRecommendedTemplateResponse(BaseModel):
     pause_style: Literal["short", "natural", "slow"] = "natural"
     phone_reading_style: Literal["digits", "groups", "natural"] = "groups"
     date_reading_style: Literal["natural", "numeric"] = "natural"
-    time_reading_style: Literal["natural_quarters", "numeric"] = (
-        "natural_quarters"
-    )
-    caller_phone_policy: Literal["ask_before_use", "use_directly"] = (
-        "ask_before_use"
-    )
     price_reading_style: Literal["brief", "clear", "detailed"] = "clear"
     allow_interruptions: bool = True
     idle_timeout_ms: int | None = Field(default=None, ge=1000, le=60000)
@@ -796,6 +750,17 @@ class AssistantRecommendedTemplateResponse(BaseModel):
     allow_bookings: bool
     allow_price_answers: bool
     ask_service: bool
+    service_prompt_mode: Literal[
+        "list_services", "ask_open", "infer_confirm"
+    ] = "ask_open"
+    slot_interval_minutes: Literal[5, 10, 15, 20, 30, 60] = 15
+    direct_availability_response: bool = True
+    direct_booking_response: bool = True
+    booking_confirmation_datetime_enabled: bool = True
+    post_booking_followup_enabled: bool = True
+    post_booking_followup_message: str = "¿Puedo ayudarte con algo más?"
+    hangup_after_no_more_help: bool = True
+    hangup_on_natural_goodbye: bool = True
     max_proposed_slots: int = Field(ge=1, le=10)
     max_consecutive_questions: int = Field(ge=1, le=5)
     conversation_style: Literal["natural", "formal", "comercial", "breve"]

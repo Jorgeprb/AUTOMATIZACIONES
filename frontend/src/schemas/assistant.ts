@@ -29,40 +29,6 @@ export const clonedOrCustomVoiceProviders = [
 
 const clonedOrCustomProviderSet = new Set<string>(clonedOrCustomVoiceProviders);
 
-
-const calendarTemplateFields = new Set([
-  "appointment_id",
-  "call_session_id",
-  "clinic_name",
-  "patient_name",
-  "patient_phone",
-  "reason",
-  "service_name",
-  "worker_name",
-  "start_date",
-  "start_time",
-  "end_date",
-  "end_time",
-  "start_datetime",
-  "end_datetime",
-]);
-
-function calendarTemplateString(label: string, max: number, required: boolean) {
-  return z
-    .string()
-    .max(max, `${label} es demasiado larga`)
-    .refine((value) => !required || value.trim().length > 0, `${label} es obligatoria`)
-    .refine((value) => {
-      const withoutEscapedBraces = value.replace(/\{\{/g, "").replace(/\}\}/g, "");
-      const matches = withoutEscapedBraces.matchAll(/\{([^{}]+)\}/g);
-      for (const match of matches) {
-        const field = match[1];
-        if (!field || !calendarTemplateFields.has(field)) return false;
-      }
-      return !/[{}]/.test(withoutEscapedBraces.replace(/\{[^{}]+\}/g, ""));
-    }, `${label} contiene una variable no permitida o llaves inválidas`);
-}
-
 function requiredDecimalString(
   label: string,
   min: number,
@@ -129,8 +95,6 @@ export const assistantConfigFormSchema = z
   pause_style: z.enum(["short", "natural", "slow"]),
   phone_reading_style: z.enum(["digits", "groups", "natural"]),
   date_reading_style: z.enum(["natural", "numeric"]),
-  time_reading_style: z.enum(["natural_quarters", "numeric"]),
-  caller_phone_policy: z.enum(["ask_before_use", "use_directly"]),
   price_reading_style: z.enum(["brief", "clear", "detailed"]),
   allow_interruptions: z.boolean(),
   turn_end_silence_ms: z
@@ -180,16 +144,6 @@ export const assistantConfigFormSchema = z
     .string()
     .trim()
     .min(1, "La política de reservas es obligatoria"),
-  calendar_event_title_template: calendarTemplateString(
-    "La plantilla del título",
-    500,
-    true,
-  ),
-  calendar_event_description_template: calendarTemplateString(
-    "La plantilla de la descripción",
-    5000,
-    false,
-  ),
   cancellation_policy_prompt: z
     .string()
     .trim()
@@ -207,6 +161,26 @@ export const assistantConfigFormSchema = z
   allow_bookings: z.boolean(),
   allow_price_answers: z.boolean(),
   ask_service: z.boolean(),
+  service_prompt_mode: z.enum([
+    "list_services",
+    "ask_open",
+    "infer_confirm",
+  ]),
+  slot_interval_minutes: z.union([
+    z.literal(5),
+    z.literal(10),
+    z.literal(15),
+    z.literal(20),
+    z.literal(30),
+    z.literal(60),
+  ]),
+  direct_availability_response: z.boolean(),
+  direct_booking_response: z.boolean(),
+  booking_confirmation_datetime_enabled: z.boolean(),
+  post_booking_followup_enabled: z.boolean(),
+  post_booking_followup_message: z.string().max(300),
+  hangup_after_no_more_help: z.boolean(),
+  hangup_on_natural_goodbye: z.boolean(),
   max_proposed_slots: z.number().int().min(1).max(10),
   max_consecutive_questions: z.number().int().min(1).max(5),
   conversation_style: z.enum(["natural", "formal", "comercial", "breve"]),
@@ -325,8 +299,6 @@ export const assistantConfigDefaults: AssistantConfigFormValues = {
   pause_style: "natural",
   phone_reading_style: "groups",
   date_reading_style: "natural",
-  time_reading_style: "natural_quarters",
-  caller_phone_policy: "ask_before_use",
   price_reading_style: "clear",
   allow_interruptions: true,
   turn_end_silence_ms: "350",
@@ -344,9 +316,6 @@ export const assistantConfigDefaults: AssistantConfigFormValues = {
     "No diagnostiques ni recomiendes medicación. Ante una urgencia, indica llamar al 112 o acudir a urgencias.",
   booking_policy_prompt:
     "Recoge los datos mínimos, ofrece hasta tres huecos reales y reserva cuando el cliente acepte un hueco de forma natural.",
-  calendar_event_title_template: "Cita - {patient_name}",
-  calendar_event_description_template:
-    "Reserva creada por asistente telefónico.\nPaciente: {patient_name}\nTeléfono: {patient_phone}\nServicio: {service_name}\nProfesional: {worker_name}\nFecha: {start_date}\nHora: {start_time}\nMotivo general: {reason}",
   cancellation_policy_prompt:
     "Identifica la cita correcta y confirma con la persona antes de cancelarla.",
   transfer_policy_prompt:
@@ -360,6 +329,15 @@ export const assistantConfigDefaults: AssistantConfigFormValues = {
   allow_bookings: true,
   allow_price_answers: true,
   ask_service: true,
+  service_prompt_mode: "ask_open",
+  slot_interval_minutes: 15,
+  direct_availability_response: true,
+  direct_booking_response: true,
+  booking_confirmation_datetime_enabled: true,
+  post_booking_followup_enabled: true,
+  post_booking_followup_message: "¿Puedo ayudarte con algo más?",
+  hangup_after_no_more_help: true,
+  hangup_on_natural_goodbye: true,
   max_proposed_slots: 3,
   max_consecutive_questions: 2,
   conversation_style: "natural",
