@@ -226,7 +226,7 @@ def _caller_phone_instruction(config: AssistantConfig, caller_phone: str) -> str
             "No hay un número entrante utilizable. Si la reserva necesita teléfono, "
             "pídelo una sola vez."
         )
-    if getattr(config, "caller_phone_policy", "ask_before_use") == "use_directly":
+    if config.caller_phone_policy == "use_directly":
         return (
             "# Teléfono para la cita\n"
             f"Número entrante de confianza: {normalized}. Úsalo directamente como "

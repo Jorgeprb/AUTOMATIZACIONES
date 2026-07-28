@@ -480,7 +480,7 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="valid_assistant_voice_provider",
         ),
         CheckConstraint(
-            "voice_speed BETWEEN 0.50 AND 2.00",
+            "voice_speed BETWEEN 0.25 AND 4.00",
             name="valid_assistant_voice_speed",
         ),
         CheckConstraint(
@@ -619,36 +619,6 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default="clear",
         nullable=False,
     )
-    time_reading_style: Mapped[str] = mapped_column(
-        String(32),
-        default="natural_quarters",
-        nullable=False,
-    )
-    caller_phone_policy: Mapped[str] = mapped_column(
-        String(32),
-        default="ask_before_use",
-        nullable=False,
-    )
-    calendar_event_title_template: Mapped[str] = mapped_column(
-        Text,
-        default="Cita - {patient_name}",
-        nullable=False,
-    )
-    calendar_event_description_template: Mapped[str] = mapped_column(
-        Text,
-        default=(
-            "Reserva creada por asistente telefónico.\n"
-            "Paciente: {patient_name}\n"
-            "Teléfono: {patient_phone}\n"
-            "Servicio: {service_name}\n"
-            "Profesional: {worker_name}\n"
-            "Fecha: {start_date}\n"
-            "Hora: {start_time}\n"
-            "Motivo general: {reason}"
-        ),
-        nullable=False,
-    )
-
     allow_interruptions: Mapped[bool] = mapped_column(
         Boolean,
         server_default=text("true"),
@@ -1406,11 +1376,6 @@ class AdminUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
-
-    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
-    avatar_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    google_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    auth_provider: Mapped[str] = mapped_column(String(32), nullable=False, server_default='password')
     sessions: Mapped[list[AdminSession]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
