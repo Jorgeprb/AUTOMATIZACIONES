@@ -9,7 +9,13 @@ describe("WorkerForm", () => {
     const onSubmit = vi.fn();
     render(
       <WorkerForm
-        defaultValues={{ ...workerDefaults, name: "Ana", role: "Doctora" }}
+        defaultValues={{
+          ...workerDefaults,
+          name: "Ana",
+          role: "Doctora",
+          inherit_clinic_hours: false,
+        }}
+        clinicHours={workerDefaults.working_hours_json}
         onSubmit={onSubmit}
         onCancel={() => undefined}
         isPending={false}
