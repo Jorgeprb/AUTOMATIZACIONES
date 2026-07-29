@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from functools import cached_property
 import ipaddress
+from functools import cached_property
 
 from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -149,7 +149,7 @@ class GatewaySettings(BaseSettings):
         return value
 
     @model_validator(mode="after")
-    def validate_production_network_policy(self) -> "GatewaySettings":
+    def validate_production_network_policy(self) -> GatewaySettings:
         if (
             self.app_environment.strip().casefold() == "production"
             and self.sip_require_allowlist
@@ -161,7 +161,9 @@ class GatewaySettings(BaseSettings):
         return self
 
     @staticmethod
-    def _parse_networks(raw: str) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    def _parse_networks(
+        raw: str,
+    ) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
         networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
         for item in raw.split(","):
             value = item.strip()
@@ -171,18 +173,24 @@ class GatewaySettings(BaseSettings):
         return tuple(networks)
 
     @cached_property
-    def allowed_networks(self) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    def allowed_networks(
+        self,
+    ) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
         """Return configured SIP source networks, supporting addresses and CIDRs."""
         return self._parse_networks(self.sip_allowed_ips)
 
     @cached_property
-    def rtp_allowed_networks(self) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    def rtp_allowed_networks(
+        self,
+    ) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
         """Return explicit RTP networks; SDP source remains allowed separately."""
         return self._parse_networks(self.rtp_allowed_ips)
 
     def sip_ip_allowed(self, raw_ip: str) -> bool:
         if not self.allowed_networks:
-            return not self.sip_require_allowlist or self.app_environment != "production"
+            return (
+                not self.sip_require_allowlist or self.app_environment != "production"
+            )
         address = ipaddress.ip_address(raw_ip)
         return any(address in network for network in self.allowed_networks)
 

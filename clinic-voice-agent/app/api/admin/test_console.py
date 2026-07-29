@@ -16,6 +16,7 @@ from app.admin_schemas import (
     TestSessionRead,
     TestSessionTTSRequest,
 )
+from app.auth import AdminPrincipal
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import CallSession, TestSession
@@ -27,6 +28,7 @@ from app.test_console import (
     send_test_message,
     synthesize_test_session_audio,
 )
+from app.utils.security import require_admin_access
 
 router = APIRouter(prefix="/admin")
 
@@ -38,6 +40,24 @@ def _factory(session: Session) -> sessionmaker[Session]:
         class_=Session,
         expire_on_commit=False,
     )
+
+
+def _require_test_session_access(
+    test_session: TestSession,
+    principal: AdminPrincipal,
+    *,
+    write: bool,
+) -> None:
+    if not principal.can_access_clinic(test_session.clinic_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this clinic.",
+        )
+    if write and not principal.can_write_clinic(test_session.clinic_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You have read-only access to this clinic.",
+        )
 
 
 def _test_session_or_404(
@@ -100,9 +120,11 @@ def send_message(
     payload: TestSessionMessageCreate,
     session: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> TestSessionRead:
     """Process one patient message with the selected test engine."""
     test_session = _test_session_or_404(session, session_id, for_update=True)
+    _require_test_session_access(test_session, principal, write=True)
     try:
         updated = send_test_message(
             session,
@@ -128,13 +150,13 @@ def send_message(
 def get_test_session(
     session_id: uuid.UUID,
     session: Annotated[Session, Depends(get_db)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> TestSessionRead:
     """Return the prompt, messages, tools, and extracted state."""
     try:
-        return render_test_session(
-            session,
-            _test_session_or_404(session, session_id),
-        )
+        test_session = _test_session_or_404(session, session_id)
+        _require_test_session_access(test_session, principal, write=False)
+        return render_test_session(session, test_session)
     except TestConsoleError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -150,9 +172,11 @@ def get_test_session(
 def close_session(
     session_id: uuid.UUID,
     session: Annotated[Session, Depends(get_db)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> TestSessionRead:
     """Close a browser test conversation without deleting its trace."""
     test_session = _test_session_or_404(session, session_id, for_update=True)
+    _require_test_session_access(test_session, principal, write=True)
     try:
         closed = close_test_session(session, test_session)
         return render_test_session(session, closed)
@@ -173,9 +197,11 @@ def synthesize_speech(
     payload: TestSessionTTSRequest,
     session: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> Response:
     """Generate finite TTS audio for one assistant message in the browser."""
     test_session = _test_session_or_404(session, session_id)
+    _require_test_session_access(test_session, principal, write=True)
     try:
         generated = synthesize_test_session_audio(
             session,
@@ -204,9 +230,11 @@ def synthesize_speech(
 def delete_test_session(
     session_id: uuid.UUID,
     session: Annotated[Session, Depends(get_db)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> DeleteResponse:
     """Delete browser state; real appointments remain untouched."""
     test_session = _test_session_or_404(session, session_id)
+    _require_test_session_access(test_session, principal, write=True)
     raw_call_id = test_session.state_json.get("call_session_id")
     try:
         call_id = uuid.UUID(str(raw_call_id))

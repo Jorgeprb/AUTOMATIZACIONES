@@ -140,9 +140,7 @@ async def _start(
 
 def _complete_request() -> str:
     """Return a message with all data required to propose slots."""
-    tomorrow = (
-        datetime.now(ZoneInfo("Europe/Madrid")) + timedelta(days=1)
-    ).date()
+    tomorrow = (datetime.now(ZoneInfo("Europe/Madrid")) + timedelta(days=1)).date()
     return (
         "Quiero una cita de Consulta general con Ana "
         f"el {tomorrow.isoformat()} por la mañana. "
@@ -262,8 +260,7 @@ async def test_console_emergency_never_calls_booking_tool(
             headers=ADMIN_HEADERS,
             json={
                 "message": (
-                    "Tengo dolor fuerte y dificultad para respirar. "
-                    "Quiero una cita."
+                    "Tengo dolor fuerte y dificultad para respirar. Quiero una cita."
                 )
             },
         )
@@ -272,8 +269,7 @@ async def test_console_emergency_never_calls_booking_tool(
         assert "112" in body["messages"][-1]["content"]
         assert body["state"]["emergency_detected"] is True
         assert not any(
-            trace["name"] == "create_appointment"
-            for trace in body["tool_calls"]
+            trace["name"] == "create_appointment" for trace in body["tool_calls"]
         )
 
         deleted = await client.delete(
@@ -284,10 +280,7 @@ async def test_console_emergency_never_calls_booking_tool(
 
     with _factory(database_engine)() as session:
         assert session.scalar(select(func.count()).select_from(Appointment)) == 0
-        assert (
-            session.scalar(select(func.count()).select_from(SessionRecord))
-            == 0
-        )
+        assert session.scalar(select(func.count()).select_from(SessionRecord)) == 0
         booking_events = session.scalar(
             select(func.count())
             .select_from(CallEvent)
@@ -353,9 +346,7 @@ async def test_console_openai_overrides_wrong_model_clinic_id(
     class FunctionCall:
         type = "function_call"
         name = "get_clinic_info"
-        arguments = (
-            '{"clinic_id":"00000000-0000-0000-0000-000000000000"}'
-        )
+        arguments = '{"clinic_id":"00000000-0000-0000-0000-000000000000"}'
         call_id = "call-tool-1"
 
     responses = iter(
@@ -498,9 +489,7 @@ async def test_console_warns_when_worker_has_no_calendar(
     worker = db_session.scalar(select(Worker).where(Worker.clinic_id == clinic.id))
     assert worker is not None
     db_session.execute(
-        update(Worker)
-        .where(Worker.id == worker.id)
-        .values(calendar_id=None)
+        update(Worker).where(Worker.id == worker.id).values(calendar_id=None)
     )
     db_session.commit()
     with _factory(database_engine)() as check_session:

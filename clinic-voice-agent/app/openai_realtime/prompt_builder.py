@@ -357,7 +357,10 @@ def build_realtime_instructions(context: ClinicContext) -> str:
         aliases = ", ".join(service.aliases_json or []) or "ninguno"
         phrases = ", ".join(service.common_phrases_json or []) or "ninguna"
         keywords = ", ".join(service.keywords_json or []) or "ninguna"
-        disambiguation = _clean(service.disambiguation_instructions) or "Pregunta cuál quiere si hay ambigüedad."
+        disambiguation = (
+            _clean(service.disambiguation_instructions)
+            or "Pregunta cuál quiere si hay ambigüedad."
+        )
         service_lines.append(
             f"- {service.public_name}: service_id real={service.id}. "
             f"{description} "
@@ -434,12 +437,9 @@ def build_realtime_instructions(context: ClinicContext) -> str:
         _clean(config.missing_calendar_message)
         or "Falta enlazar el calendario del trabajador; recepción debe revisarlo."
     )
-    human_transfer_message = (
-        _clean(config.human_transfer_message)
-        or (
-            "Ahora mismo no tengo la transferencia configurada, "
-            "pero dejo anotada la petición."
-        )
+    human_transfer_message = _clean(config.human_transfer_message) or (
+        "Ahora mismo no tengo la transferencia configurada, "
+        "pero dejo anotada la petición."
     )
     closing_message = (
         _clean(config.closing_message) or "Gracias por llamar. Hasta luego."
@@ -448,38 +448,25 @@ def build_realtime_instructions(context: ClinicContext) -> str:
         _clean(config.human_transfer_rules)
         or "Transfiere si el usuario lo pide o si la petición queda fuera de alcance."
     )
-    commercial_call_message = (
-        _clean(config.commercial_call_message)
-        or (
-            "Gracias, pero este número es para pacientes y gestión de citas. "
-            "No podemos atender llamadas comerciales por esta vía."
-        )
+    commercial_call_message = _clean(config.commercial_call_message) or (
+        "Gracias, pero este número es para pacientes y gestión de citas. "
+        "No podemos atender llamadas comerciales por esta vía."
     )
     additional_instructions = _clean(config.additional_instructions)
     forbidden_phrases = _clean(config.forbidden_phrases)
     conversation_extra_rules = _clean(config.conversation_extra_rules)
     ask_phone_rule = (
-        "sí"
-        if config.ask_patient_phone
-        else "solo confirmar si caller ID ya sirve"
+        "sí" if config.ask_patient_phone else "solo confirmar si caller ID ya sirve"
     )
-    allow_worker_rule = (
-        "sí" if config.allow_booking_without_worker else "no"
-    )
-    natural_confirmation_rule = (
-        "sí" if config.natural_confirmation_required else "no"
-    )
+    allow_worker_rule = "sí" if config.allow_booking_without_worker else "no"
+    natural_confirmation_rule = "sí" if config.natural_confirmation_required else "no"
     price_usage = (
         "activado"
         if config.use_prices and config.allow_price_answers
         else "desactivado; no menciones precios"
     )
-    knowledge_usage = (
-        "activado" if config.use_knowledge_base else "desactivado"
-    )
-    strict_calendar_usage = (
-        "activado" if config.strict_calendar_mode else "desactivado"
-    )
+    knowledge_usage = "activado" if config.use_knowledge_base else "desactivado"
+    strict_calendar_usage = "activado" if config.strict_calendar_mode else "desactivado"
     flow_guidance = (
         render_flow_prompt(context.active_conversation_flow)
         if context.active_conversation_flow is not None
@@ -512,8 +499,7 @@ def build_realtime_instructions(context: ClinicContext) -> str:
             "persona te pida las opciones."
         )
     followup_message = (
-        _clean(config.post_booking_followup_message)
-        or "¿Puedo ayudarte con algo más?"
+        _clean(config.post_booking_followup_message) or "¿Puedo ayudarte con algo más?"
     )
 
     return f"""# Papel e identidad

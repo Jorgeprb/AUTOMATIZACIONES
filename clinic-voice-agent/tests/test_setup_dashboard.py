@@ -80,9 +80,7 @@ def _ready_clinic(session: Session) -> Clinic:
         website="https://lista.example.test",
         email="hola@lista.example.test",
         description="Clínica lista para pruebas.",
-        opening_hours_json={
-            "monday": [{"start": "09:00", "end": "18:00"}]
-        },
+        opening_hours_json={"monday": [{"start": "09:00", "end": "18:00"}]},
         emergency_message="Llama al 112.",
     )
     worker = Worker(
@@ -90,9 +88,7 @@ def _ready_clinic(session: Session) -> Clinic:
         name="Ana",
         role="Médica",
         calendar_id="ana@lista.example.test",
-        working_hours_json={
-            "monday": [{"start": "09:00", "end": "18:00"}]
-        },
+        working_hours_json={"monday": [{"start": "09:00", "end": "18:00"}]},
     )
     service = Service(
         clinic=clinic,
@@ -222,9 +218,9 @@ async def test_setup_status_detects_incomplete_clinic(
     body = response.json()
     assert body["completed"] is False
     assert body["blocking_errors"]
-    assert not next(
-        item for item in body["items"] if item["key"] == "google_calendar"
-    )["completed"]
+    assert not next(item for item in body["items"] if item["key"] == "google_calendar")[
+        "completed"
+    ]
 
 
 @pytest.mark.anyio

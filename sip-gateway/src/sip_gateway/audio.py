@@ -32,7 +32,7 @@ class StatefulPcm16Resampler:
     def __init__(self, source_rate: int, target_rate: int) -> None:
         self.source_rate = source_rate
         self.target_rate = target_rate
-        self._state: object | None = None
+        self._state: tuple[int, tuple[tuple[int, int], ...]] | None = None
 
     def convert(self, data: bytes) -> bytes:
         if self.source_rate == self.target_rate:
@@ -123,18 +123,28 @@ def tts_audio_to_g711_8k(
     """Convert backend TTS audio directly to raw PCMA/PCMU payload bytes."""
     normalized = media_type.casefold()
     codec = telephony_codec.casefold()
-    if payload_type == PAYLOAD_PCMA and normalized in {
-        "audio/pcma",
-        "audio/x-alaw",
-        "application/octet-stream",
-    } and codec == "pcma":
+    if (
+        payload_type == PAYLOAD_PCMA
+        and normalized
+        in {
+            "audio/pcma",
+            "audio/x-alaw",
+            "application/octet-stream",
+        }
+        and codec == "pcma"
+    ):
         return data
-    if payload_type == PAYLOAD_PCMU and normalized in {
-        "audio/pcmu",
-        "audio/basic",
-        "audio/x-mulaw",
-        "application/octet-stream",
-    } and codec == "pcmu":
+    if (
+        payload_type == PAYLOAD_PCMU
+        and normalized
+        in {
+            "audio/pcmu",
+            "audio/basic",
+            "audio/x-mulaw",
+            "application/octet-stream",
+        }
+        and codec == "pcmu"
+    ):
         return data
     pcm16 = tts_audio_to_pcm16_8k(
         data,

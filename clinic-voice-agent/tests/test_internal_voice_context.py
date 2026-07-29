@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.internal_voice import VoiceContextRequest, create_voice_context
+from app.config import get_settings
 from app.models import AssistantConfig, Clinic, PhoneNumber, PhoneProvider
 
 
@@ -75,6 +76,7 @@ def test_context_accepts_sip_metadata_and_returns_sabela_config(
             provider_call_id="sip-call-id",
         ),
         db_session,
+        get_settings(),
     )
 
     assert response.clinic_id == clinic.id
@@ -117,6 +119,7 @@ def test_context_uses_single_clinic_fallback_only_when_safe(
             provider_call_id="sip-fallback-id",
         ),
         db_session,
+        get_settings(),
     )
 
     assert response.clinic_id == clinic.id
@@ -151,6 +154,7 @@ def test_context_rejects_unsafe_fallback_with_multiple_active_clinics(
                 provider_call_id="sip-unsafe-id",
             ),
             db_session,
+            get_settings(),
         )
 
     assert exc_info.value.status_code == 404

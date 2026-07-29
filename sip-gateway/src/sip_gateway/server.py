@@ -9,7 +9,7 @@ import re
 import time
 import uuid
 import zlib
-from collections import OrderedDict, defaultdict, deque
+from collections import OrderedDict, deque
 
 from sip_gateway.backend import BackendClient, BackendRequestError
 from sip_gateway.config import GatewaySettings
@@ -85,8 +85,8 @@ class SipGateway:
         self.calls_by_id: dict[str, GatewayCallSession] = {}
         self.calls_by_branch: dict[str, GatewayCallSession] = {}
         self._tasks: set[asyncio.Task[None]] = set()
-        self._datagram_queue: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(
-            maxsize=settings.sip_datagram_queue_size
+        self._datagram_queue: asyncio.Queue[tuple[bytes, tuple[str, int]]] = (
+            asyncio.Queue(maxsize=settings.sip_datagram_queue_size)
         )
         self._workers: list[asyncio.Task[None]] = []
         self._accepting = True
@@ -114,7 +114,9 @@ class SipGateway:
             try:
                 await self.handle_datagram(data, addr)
             except Exception:
-                logger.exception("sip_datagram_handler_failed", extra={"source_ip": addr[0]})
+                logger.exception(
+                    "sip_datagram_handler_failed", extra={"source_ip": addr[0]}
+                )
             finally:
                 self._datagram_queue.task_done()
 
@@ -201,7 +203,6 @@ class SipGateway:
             "health_port": self.settings.health_port,
         }
 
-
     def prometheus_metrics(self) -> str:
         """Render dependency-free OpenMetrics counters and gauges."""
         snapshot = self.metrics_snapshot()
@@ -240,7 +241,9 @@ class SipGateway:
             if path == "/metrics":
                 body = self.prometheus_metrics()
                 status = "200 OK"
-                content_type = "application/openmetrics-text; version=1.0.0; charset=utf-8"
+                content_type = (
+                    "application/openmetrics-text; version=1.0.0; charset=utf-8"
+                )
             elif path in {"/health/live", "/health/ready"}:
                 snapshot = self.metrics_snapshot()
                 body = json.dumps(snapshot, separators=(",", ":"))
@@ -286,11 +289,23 @@ class SipGateway:
         method = message.method
         if method == "INVITE":
             if not self._accepting:
-                self._send(message, 503, "Service Unavailable", addr, extra_headers={"Retry-After": "30"})
+                self._send(
+                    message,
+                    503,
+                    "Service Unavailable",
+                    addr,
+                    extra_headers={"Retry-After": "30"},
+                )
                 return
             if not self.rate_limiter.allow(ip):
                 logger.warning("sip_rate_limited", extra={"source_ip": ip})
-                self._send(message, 503, "Service Unavailable", addr, extra_headers={"Retry-After": "60"})
+                self._send(
+                    message,
+                    503,
+                    "Service Unavailable",
+                    addr,
+                    extra_headers={"Retry-After": "60"},
+                )
                 return
             await self._handle_invite(message, addr)
         elif method == "ACK":
@@ -317,10 +332,15 @@ class SipGateway:
         This prevents OpenAI Hosted SIP attempts from consuming local RTP ports
         and prevents leaked ports when prepare() fails after lease().
         """
-        existing = self.calls_by_id.get(message.call_id) or self.calls_by_branch.get(message.branch)
+        existing = self.calls_by_id.get(message.call_id) or self.calls_by_branch.get(
+            message.branch
+        )
         if existing is not None:
             if existing.sip_addr != addr:
-                logger.warning("sip_dialog_source_mismatch", extra={"call_id": message.call_id, "source_ip": addr[0]})
+                logger.warning(
+                    "sip_dialog_source_mismatch",
+                    extra={"call_id": message.call_id, "source_ip": addr[0]},
+                )
                 return
             if existing.last_invite_response is not None and self.transport is not None:
                 self.transport.sendto(existing.last_invite_response, addr)
@@ -514,7 +534,10 @@ class SipGateway:
             extra={"call_id": provider_call_id, "clinic_id": context.clinic_id},
         )
 
-        if sum(not call._closed.is_set() for call in self.calls_by_id.values()) >= self.settings.max_concurrent_calls:
+        if (
+            sum(not call._closed.is_set() for call in self.calls_by_id.values())
+            >= self.settings.max_concurrent_calls
+        ):
             self._send(message, 486, "Busy Here", addr)
             return
 
@@ -599,25 +622,14 @@ class SipGateway:
             return False
 
         invite_from_tag = call.invite.from_tag
-        if (
-            invite_from_tag
-            and message.from_tag
-            and message.from_tag != invite_from_tag
-        ):
+        if invite_from_tag and message.from_tag and message.from_tag != invite_from_tag:
             return False
 
         if message.to_tag and message.to_tag != call.local_tag:
             return False
 
         cseq_parts = message.cseq.split()
-        if (
-            len(cseq_parts) >= 2
-            and message.method
-            and cseq_parts[1].upper() != message.method
-        ):
-            return False
-
-        return True
+        return not (len(cseq_parts) >= 2 and message.method and cseq_parts[1].upper() != message.method)
 
     async def _handle_ack(self, message: SipMessage, addr: tuple[str, int]) -> None:
         call = self.calls_by_id.get(message.call_id)
@@ -692,7 +704,13 @@ class SipGateway:
             )
         if call is not None:
             if method == "CANCEL" and not call.media_started:
-                self._send(call.invite, 487, "Request Terminated", call.sip_addr, to_tag=call.local_tag)
+                self._send(
+                    call.invite,
+                    487,
+                    "Request Terminated",
+                    call.sip_addr,
+                    to_tag=call.local_tag,
+                )
             await self._remove_call(call, method.lower())
 
     async def _ack_timeout(self, call: GatewayCallSession) -> None:

@@ -131,7 +131,11 @@ def list_portal_users(
     principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> list[PortalUserRead]:
     _require_super_admin(principal)
-    users = list(session.scalars(select(AdminUser).order_by(AdminUser.display_name, AdminUser.username)))
+    users = list(
+        session.scalars(
+            select(AdminUser).order_by(AdminUser.display_name, AdminUser.username)
+        )
+    )
     return [_serialize(session, user) for user in users]
 
 
@@ -143,9 +147,14 @@ def create_portal_user(
 ) -> PortalUserRead:
     _require_super_admin(principal)
     if session.scalar(select(AdminUser.id).where(AdminUser.email == payload.email)):
-        raise HTTPException(status_code=409, detail="An account already uses this email.")
+        raise HTTPException(
+            status_code=409, detail="An account already uses this email."
+        )
     if payload.role == AdminRole.SUPER_ADMIN and payload.clinic_ids:
-        raise HTTPException(status_code=422, detail="Global administrators do not need clinic memberships.")
+        raise HTTPException(
+            status_code=422,
+            detail="Global administrators do not need clinic memberships.",
+        )
     password_hash = (
         hash_password(payload.temporary_password)
         if payload.temporary_password
@@ -181,11 +190,24 @@ def update_portal_user(
     if user is None:
         raise HTTPException(status_code=404, detail="Account not found.")
     if principal.user_id == user.id and payload.is_active is False:
-        raise HTTPException(status_code=422, detail="You cannot disable your own account.")
+        raise HTTPException(
+            status_code=422, detail="You cannot disable your own account."
+        )
+    if (
+        principal.user_id == user.id
+        and payload.role is not None
+        and payload.role != AdminRole.SUPER_ADMIN
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="You cannot remove your own global administrator role.",
+        )
     if payload.email is not None:
         normalized_email = payload.email.strip().casefold()
         if "@" not in normalized_email:
-            raise HTTPException(status_code=422, detail="A valid email address is required.")
+            raise HTTPException(
+                status_code=422, detail="A valid email address is required."
+            )
         existing = session.scalar(
             select(AdminUser.id).where(
                 AdminUser.email == normalized_email,
@@ -193,7 +215,9 @@ def update_portal_user(
             )
         )
         if existing:
-            raise HTTPException(status_code=409, detail="An account already uses this email.")
+            raise HTTPException(
+                status_code=409, detail="An account already uses this email."
+            )
         user.email = normalized_email
         user.username = normalized_email
     if payload.display_name is not None:
@@ -209,17 +233,23 @@ def update_portal_user(
     if payload.unlink_google:
         user.google_subject = None
         user.avatar_url = None
-        user.auth_provider = "password" if user.password_hash != "!google-only" else "google_invited"
+        user.auth_provider = (
+            "password" if user.password_hash != "!google-only" else "google_invited"
+        )
     if payload.clinic_ids is not None or payload.role is not None:
         current_ids = list(
             session.scalars(
-                select(AdminMembership.clinic_id).where(AdminMembership.user_id == user.id)
+                select(AdminMembership.clinic_id).where(
+                    AdminMembership.user_id == user.id
+                )
             )
         )
         _replace_memberships(
             session,
             user=user,
-            clinic_ids=payload.clinic_ids if payload.clinic_ids is not None else current_ids,
+            clinic_ids=payload.clinic_ids
+            if payload.clinic_ids is not None
+            else current_ids,
         )
     session.commit()
     session.refresh(user)
@@ -234,7 +264,9 @@ def delete_portal_user(
 ) -> None:
     _require_super_admin(principal)
     if principal.user_id == user_id:
-        raise HTTPException(status_code=422, detail="You cannot delete your own account.")
+        raise HTTPException(
+            status_code=422, detail="You cannot delete your own account."
+        )
     user = session.get(AdminUser, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="Account not found.")

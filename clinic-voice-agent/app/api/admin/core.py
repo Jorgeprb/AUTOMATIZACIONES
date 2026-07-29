@@ -49,6 +49,7 @@ from app.api.admin.common import (
 from app.api.calendar import calendar_status, list_calendars
 from app.api.workers import create_worker_calendar, link_worker_calendar
 from app.audio import TTSGenerationError, synthesize_speech
+from app.auth import AdminPrincipal
 from app.calendar.auth import (
     GoogleOAuthConfigurationError,
     create_google_authorization_request,
@@ -63,7 +64,6 @@ from app.call_audio import (
     normalize_call_audio_mode,
     requires_external_voice_legal_confirmation,
 )
-from app.auth import AdminPrincipal
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import (
@@ -221,9 +221,7 @@ def _enforce_assistant_voice_policy(
     requested_mode = str(
         values.get(
             "call_audio_mode",
-            current.call_audio_mode
-            if current is not None
-            else "openai_hosted_sip",
+            current.call_audio_mode if current is not None else "openai_hosted_sip",
         )
     )
     values["call_audio_mode"] = normalize_call_audio_mode(
@@ -924,8 +922,14 @@ def list_admin_provider_voices(
 def sync_admin_voice_providers(
     session: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> VoiceProviderSyncResponse:
     """Sync static and official provider catalogs into the database."""
+    if not principal.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a global administrator can synchronize voice providers.",
+        )
     synced = sync_voice_catalog(session, settings)
     return VoiceProviderSyncResponse(ok=True, synced=synced)
 
@@ -1118,9 +1122,7 @@ def preview_assistant_voice(
         voice = effective_preview_voice(payload)
     else:
         voice = (
-            payload.tts_preview_voice
-            or payload.voice_id
-            or payload.realtime_voice
+            payload.tts_preview_voice or payload.voice_id or payload.realtime_voice
         ).strip()
     instructions = build_voice_instruction_block(payload)
     try:

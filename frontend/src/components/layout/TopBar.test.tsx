@@ -7,7 +7,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TopBar } from "@/components/layout/TopBar";
 import { logout } from "@/lib/auth";
 
-vi.mock("@/lib/auth", () => ({ logout: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@/lib/auth", () => ({
+  getCurrentAdmin: vi.fn().mockResolvedValue({ username: "admin", role: "super_admin", clinic_ids: [] }),
+  logout: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/hooks/useActiveClinic", () => ({
   useActiveClinic: () => ({
     clinics: [], activeClinic: null, activeClinicId: null,

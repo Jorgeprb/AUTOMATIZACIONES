@@ -43,7 +43,9 @@ class PublicRateLimitMiddleware(BaseHTTPMiddleware):
         direct = request.client.host if request.client is not None else "unknown"
         try:
             direct_address = ipaddress.ip_address(direct)
-            trusted = any(direct_address in network for network in self._trusted_proxies)
+            trusted = any(
+                direct_address in network for network in self._trusted_proxies
+            )
         except ValueError:
             trusted = False
         forwarded = request.headers.get("x-forwarded-for")
@@ -60,7 +62,13 @@ class PublicRateLimitMiddleware(BaseHTTPMiddleware):
         """Return a limit only for public mutable/integration routes."""
         if path == "/webhooks/openai/realtime":
             return self._settings.webhook_rate_limit_per_minute
-        if path in {"/auth/login", "/auth/register", "/auth/forgot-password", "/auth/resend-verification", "/auth/reset-password"}:
+        if path in {
+            "/auth/login",
+            "/auth/register",
+            "/auth/forgot-password",
+            "/auth/resend-verification",
+            "/auth/reset-password",
+        }:
             return min(20, self._settings.public_rate_limit_per_minute)
         if path == "/api/webhooks/stripe":
             return self._settings.webhook_rate_limit_per_minute

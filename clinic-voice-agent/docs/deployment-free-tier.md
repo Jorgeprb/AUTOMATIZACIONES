@@ -40,13 +40,13 @@ OpenAI Realtime SIP
 Ejemplo direct connection:
 
 ```text
-postgresql://postgres:PASSWORD@db.PROJECT.supabase.co:5432/postgres
+postgresql://db.PROJECT.supabase.co:5432/postgres
 ```
 
 Ejemplo pooler:
 
 ```text
-postgresql://postgres.PROJECT:PASSWORD@aws-0-eu-west-1.pooler.supabase.com:6543/postgres
+postgresql://aws-0-eu-west-1.pooler.supabase.com:6543/postgres
 ```
 
 La aplicación acepta `postgresql://` y `postgres://`, los convierte a

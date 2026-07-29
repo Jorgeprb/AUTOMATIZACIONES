@@ -16,6 +16,11 @@ _SECRET_KEYS = ("password", "secret", "token", "authorization", "api_key", "cook
 _TEXT_KEYS = ("transcript", "instructions", "prompt", "body", "payload")
 _PHONE_RE = re.compile(r"(?<!\w)(\+?\d[\d .()\-]{7,}\d)(?!\w)")
 _SIP_USER_RE = re.compile(r"(sip:)([^@;>\s]+)", flags=re.IGNORECASE)
+_EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
+_QUERY_SECRET_RE = re.compile(
+    r"([?&](?:code|state|token|signature|key|secret|authorization)=)[^&#\s]+",
+    flags=re.IGNORECASE,
+)
 
 
 def _mask_phone(match: re.Match[str]) -> str:
@@ -26,6 +31,8 @@ def _mask_phone(match: re.Match[str]) -> str:
 def redact_text(value: str) -> str:
     """Remove phone numbers and SIP users from a log-safe string."""
     value = _SIP_USER_RE.sub(r"\1***", value)
+    value = _EMAIL_RE.sub("[REDACTED_EMAIL]", value)
+    value = _QUERY_SECRET_RE.sub(r"\1[REDACTED]", value)
     return _PHONE_RE.sub(_mask_phone, value)
 
 
@@ -41,7 +48,10 @@ def redact_value(key: str, value: Any) -> Any:
     if isinstance(value, str):
         return redact_text(value)
     if isinstance(value, dict):
-        return {str(item_key): redact_value(str(item_key), item) for item_key, item in value.items()}
+        return {
+            str(item_key): redact_value(str(item_key), item)
+            for item_key, item in value.items()
+        }
     if isinstance(value, (list, tuple, set)):
         return [redact_value(key, item) for item in value]
     return value

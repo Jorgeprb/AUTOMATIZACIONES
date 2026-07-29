@@ -247,7 +247,11 @@ class JitterBuffer:
 
     def flush(self, *, max_packets: int | None = None) -> list[RTPPacket]:
         """Return buffered packets in extended-sequence order."""
-        count = len(self._heap) if max_packets is None else min(max_packets, len(self._heap))
+        count = (
+            len(self._heap)
+            if max_packets is None
+            else min(max_packets, len(self._heap))
+        )
         ready: list[RTPPacket] = []
         for _ in range(count):
             sequence, _, packet = heapq.heappop(self._heap)

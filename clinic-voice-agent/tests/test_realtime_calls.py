@@ -14,7 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, ConnectError, Request
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -229,7 +229,12 @@ async def test_valid_incoming_webhook_creates_and_accepts_call(
     db_session.commit()
     incoming = _fixture("realtime_call_incoming.json")
     body = json.dumps(incoming, separators=(",", ":")).encode()
-    accept_mock = AsyncMock()
+    accept_mock = AsyncMock(
+        side_effect=[
+            ConnectError("transient", request=Request("POST", "https://example.test")),
+            None,
+        ]
+    )
     control_mock = MagicMock()
     monkeypatch.setattr(webhook, "accept_realtime_call", accept_mock)
     monkeypatch.setattr(webhook, "start_call_control_task", control_mock)
@@ -241,6 +246,12 @@ async def test_valid_incoming_webhook_creates_and_accepts_call(
         transport=ASGITransport(app=app),
         base_url="http://testserver",
     ) as client:
+        failed = await client.post(
+            "/webhooks/openai/realtime",
+            content=body,
+            headers=_webhook_headers(body, valid=True),
+        )
+        assert failed.status_code == 502
         response = await client.post(
             "/webhooks/openai/realtime",
             content=body,
@@ -249,7 +260,7 @@ async def test_valid_incoming_webhook_creates_and_accepts_call(
 
     assert response.status_code == 200
     assert response.json()["status"] == "accepted"
-    accept_mock.assert_awaited_once()
+    assert accept_mock.await_count == 2
     assert accept_mock.await_args is not None
     accept_kwargs = accept_mock.await_args.kwargs
     assert accept_kwargs["call_id"] == incoming["data"]["call_id"]

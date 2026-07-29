@@ -45,7 +45,6 @@ def upgrade() -> None:
         *_timestamps(),
         sa.ForeignKeyConstraint(["owner_user_id"], ["admin_users.id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("stripe_customer_id", name="uq_billing_accounts_stripe_customer_id"),
     )
     op.create_index("ix_billing_accounts_owner_user_id", "billing_accounts", ["owner_user_id"])
     op.create_index("ix_billing_accounts_status", "billing_accounts", ["status"])
@@ -188,6 +187,12 @@ def upgrade() -> None:
 
     # Appointment reporting states and post-call analysis.
     op.drop_constraint("ck_appointments_appointment_status", "appointments", type_="check")
+    op.alter_column(
+        "appointments",
+        "status",
+        existing_type=sa.String(length=9),
+        type_=sa.String(length=11),
+    )
     op.create_check_constraint("appointment_status", "appointments", "status IN ('pending','confirmed','cancelled','failed','completed','no_show','rescheduled')")
     op.create_table(
         "call_analyses",
@@ -233,7 +238,6 @@ def upgrade() -> None:
         *_timestamps(),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("code", name="uq_billing_products_code"),
-        sa.UniqueConstraint("stripe_product_id", name="uq_billing_products_stripe_product_id"),
     )
     op.create_index("ix_billing_products_stripe_product_id", "billing_products", ["stripe_product_id"], unique=True)
     op.create_table(
@@ -251,7 +255,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["product_id"], ["billing_products.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("code", name="uq_billing_prices_code"),
-        sa.UniqueConstraint("stripe_price_id", name="uq_billing_prices_stripe_price_id"),
     )
     op.create_index("ix_billing_prices_product_id", "billing_prices", ["product_id"])
     op.create_index("ix_billing_prices_stripe_price_id", "billing_prices", ["stripe_price_id"], unique=True)
@@ -272,7 +275,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["clinic_id"], ["clinics.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["created_by_user_id"], ["admin_users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("stripe_checkout_session_id", name="uq_purchase_orders_stripe_checkout_session_id"),
     )
     op.create_index("ix_purchase_orders_billing_account_id", "purchase_orders", ["billing_account_id"])
     op.create_index("ix_purchase_orders_clinic_id", "purchase_orders", ["clinic_id"])
@@ -314,8 +316,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["order_id"], ["purchase_orders.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["clinic_id"], ["clinics.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("stripe_payment_intent_id", name="uq_payment_records_stripe_payment_intent_id"),
-        sa.UniqueConstraint("stripe_invoice_id", name="uq_payment_records_stripe_invoice_id"),
     )
     op.create_index("ix_payment_records_billing_account_id", "payment_records", ["billing_account_id"])
     op.create_index("ix_payment_records_clinic_id", "payment_records", ["clinic_id"])
@@ -341,7 +341,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["product_id"], ["billing_products.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["price_id"], ["billing_prices.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("stripe_subscription_id", name="uq_clinic_subscriptions_stripe_subscription_id"),
         sa.UniqueConstraint("stripe_subscription_item_id", name="uq_clinic_subscriptions_stripe_subscription_item_id"),
     )
     op.create_index("ix_clinic_subscriptions_billing_account_id", "clinic_subscriptions", ["billing_account_id"])
@@ -429,7 +428,10 @@ def upgrade() -> None:
             (:monthly_product_id, 'autogal_monthly_service', 'Servicio mensual Autogal',
              'Servicio mensual de asistente de voz por número o licencia.', 'subscription', 'service', 'assistant_production', true, true)
         ON CONFLICT (code) DO NOTHING
-    """).bindparams(phone_product_id=_PHONE_PRODUCT_ID, monthly_product_id=_MONTHLY_PRODUCT_ID))
+    """).bindparams(
+        sa.bindparam("phone_product_id", _PHONE_PRODUCT_ID, type_=sa.Uuid()),
+        sa.bindparam("monthly_product_id", _MONTHLY_PRODUCT_ID, type_=sa.Uuid()),
+    ))
     op.execute(sa.text("""
         INSERT INTO billing_prices
             (id, product_id, code, currency, unit_amount_minor, billing_type, interval, is_active)
@@ -438,10 +440,10 @@ def upgrade() -> None:
             (:monthly_price_id, :monthly_product_id, 'autogal_monthly_eur_50', 'EUR', 5000, 'recurring', 'month', true)
         ON CONFLICT (code) DO NOTHING
     """).bindparams(
-        phone_price_id=_PHONE_PRICE_ID,
-        phone_product_id=_PHONE_PRODUCT_ID,
-        monthly_price_id=_MONTHLY_PRICE_ID,
-        monthly_product_id=_MONTHLY_PRODUCT_ID,
+        sa.bindparam("phone_price_id", _PHONE_PRICE_ID, type_=sa.Uuid()),
+        sa.bindparam("phone_product_id", _PHONE_PRODUCT_ID, type_=sa.Uuid()),
+        sa.bindparam("monthly_price_id", _MONTHLY_PRICE_ID, type_=sa.Uuid()),
+        sa.bindparam("monthly_product_id", _MONTHLY_PRODUCT_ID, type_=sa.Uuid()),
     ))
 
 
@@ -463,8 +465,14 @@ def downgrade() -> None:
         "service_resource_requirements", "clinic_resources",
     ):
         op.drop_table(table)
-    op.drop_constraint("ck_appointments_appointment_status", "appointments", type_="check")
-    op.create_check_constraint("appointment_status", "appointments", "status IN ('pending','confirmed','cancelled','failed')")
+    op.drop_constraint("appointment_status", "appointments", type_="check")
+    op.alter_column(
+        "appointments",
+        "status",
+        existing_type=sa.String(length=11),
+        type_=sa.String(length=9),
+    )
+    op.create_check_constraint("ck_appointments_appointment_status", "appointments", "status IN ('pending','confirmed','cancelled','failed')")
     for name in (
         "ask_worker_preference_enabled", "suggest_preferred_worker_enabled",
         "remember_customer_after_booking", "known_customer_explanation_template",

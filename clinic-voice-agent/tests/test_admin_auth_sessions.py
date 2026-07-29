@@ -18,7 +18,8 @@ from app.config import Settings
 
 
 def test_bootstrap_login_session_and_revocation(
-    db_session: Session, monkeypatch,
+    db_session: Session,
+    monkeypatch,
 ) -> None:
     monkeypatch.setenv("ADMIN_BOOTSTRAP_USERNAME", "admin")
     monkeypatch.setenv("ADMIN_BOOTSTRAP_PASSWORD", "Test-only-password-123!")
@@ -53,6 +54,9 @@ def test_failed_logins_lock_account(db_session: Session, monkeypatch) -> None:
     assert authenticate_admin(db_session, user.username, "wrong-2", settings) is None
     db_session.refresh(user)
     assert user.locked_until is not None
-    assert authenticate_admin(
-        db_session, user.username, "Test-only-password-123!", settings
-    ) is None
+    assert (
+        authenticate_admin(
+            db_session, user.username, "Test-only-password-123!", settings
+        )
+        is None
+    )

@@ -188,8 +188,7 @@ def _audit_warnings(
         for trace in traces
     )
     proposed_slots = any(
-        trace.name == "propose_slots" and trace.result.get("ok")
-        for trace in traces
+        trace.name == "propose_slots" and trace.result.get("ok") for trace in traces
     )
     if context.calendar_settings.workers_without_calendar:
         warnings.extend(
@@ -451,8 +450,7 @@ def _run_openai_turn(
                 result = {
                     "ok": False,
                     "error": (
-                        "Falta aceptación natural previa del paciente para "
-                        "ese hueco."
+                        "Falta aceptación natural previa del paciente para ese hueco."
                     ),
                 }
             else:
@@ -605,9 +603,7 @@ def synthesize_test_session_audio(
     voice = effective_preview_voice(config)
     if config.voice_provider != "openai":
         voice = (
-            config.tts_preview_voice
-            or config.voice_id
-            or config.realtime_voice
+            config.tts_preview_voice or config.voice_id or config.realtime_voice
         ).strip()
     try:
         result = synthesize_speech(

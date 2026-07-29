@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
+    "test": "node scripts/test-public.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -160,8 +160,7 @@ def test_send_pcm16_resamples_8k_to_24k_before_openai() -> None:
             for message in websocket.messages
         )
         audio = b"".join(
-            base64.b64decode(message["audio"])
-            for message in websocket.messages
+            base64.b64decode(message["audio"]) for message in websocket.messages
         )
         assert len(audio) > 640
         assert len(audio) % 2 == 0

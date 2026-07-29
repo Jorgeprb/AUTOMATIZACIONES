@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
+from app.auth import AdminPrincipal
 from app.calendar.auth import (
     GoogleOAuthConfigurationError,
     GoogleOAuthCredentialEncryptionError,
@@ -25,6 +26,7 @@ from app.calendar.auth import (
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import Clinic
+from app.utils.security import require_admin_access
 
 router = APIRouter(prefix="/auth/google", tags=["google-auth"])
 logger = logging.getLogger(__name__)
@@ -102,8 +104,14 @@ def start_google_oauth(
     clinic_id: Annotated[uuid.UUID, Query()],
     session: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> RedirectResponse:
     """Redirect an existing clinic to Google's OAuth consent screen."""
+    if not principal.can_write_clinic(clinic_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have write access to this clinic.",
+        )
     if session.get(Clinic, clinic_id) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

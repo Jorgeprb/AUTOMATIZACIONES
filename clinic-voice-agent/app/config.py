@@ -162,7 +162,9 @@ class Settings(BaseSettings):
         if self.admin_api_key is None:
             raise ValueError("ADMIN_API_KEY is required in production")
         if len(self.admin_bootstrap_password.get_secret_value()) < 10:
-            raise ValueError("ADMIN_BOOTSTRAP_PASSWORD must contain at least 10 characters")
+            raise ValueError(
+                "ADMIN_BOOTSTRAP_PASSWORD must contain at least 10 characters"
+            )
         internal_key = self.internal_api_key.get_secret_value()
         admin_key = self.admin_api_key.get_secret_value()
         if len(internal_key) < 32:
@@ -331,9 +333,7 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         """Return normalized comma-separated browser origins."""
         origins = [
-            origin.strip()
-            for origin in self.cors_origins.split(",")
-            if origin.strip()
+            origin.strip() for origin in self.cors_origins.split(",") if origin.strip()
         ]
         if self.frontend_base_url and self.frontend_base_url not in origins:
             origins.append(self.frontend_base_url)

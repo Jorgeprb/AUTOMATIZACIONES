@@ -14,9 +14,7 @@ from app.voice_providers.base import (
     VoiceProviderInfo,
 )
 
-CARTESIA_STATIC_VOICES = (
-    ("cartesia-sonic-es", "Sonic español", "es-ES", "es", None),
-)
+CARTESIA_STATIC_VOICES = (("cartesia-sonic-es", "Sonic español", "es-ES", "es", None),)
 
 
 class CartesiaTTSProvider:

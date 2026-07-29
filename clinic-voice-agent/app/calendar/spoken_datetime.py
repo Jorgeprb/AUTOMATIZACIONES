@@ -5,20 +5,60 @@ from __future__ import annotations
 from datetime import datetime
 
 _MONTHS_ES = (
-    "enero", "febrero", "marzo", "abril", "mayo", "junio",
-    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
 )
 _MONTHS_GL = (
-    "xaneiro", "febreiro", "marzo", "abril", "maio", "xuño",
-    "xullo", "agosto", "setembro", "outubro", "novembro", "decembro",
+    "xaneiro",
+    "febreiro",
+    "marzo",
+    "abril",
+    "maio",
+    "xuño",
+    "xullo",
+    "agosto",
+    "setembro",
+    "outubro",
+    "novembro",
+    "decembro",
 )
 _HOURS_ES = (
-    "doce", "una", "dos", "tres", "cuatro", "cinco", "seis",
-    "siete", "ocho", "nueve", "diez", "once",
+    "doce",
+    "una",
+    "dos",
+    "tres",
+    "cuatro",
+    "cinco",
+    "seis",
+    "siete",
+    "ocho",
+    "nueve",
+    "diez",
+    "once",
 )
 _HOURS_GL = (
-    "doce", "unha", "dúas", "tres", "catro", "cinco", "seis",
-    "sete", "oito", "nove", "dez", "once",
+    "doce",
+    "unha",
+    "dúas",
+    "tres",
+    "catro",
+    "cinco",
+    "seis",
+    "sete",
+    "oito",
+    "nove",
+    "dez",
+    "once",
 )
 
 
@@ -89,6 +129,5 @@ def format_spoken_appointment(value: datetime, language: str) -> str:
             spoken_clock = f"ás {clock.removeprefix('as ')}"
         return f"o {value.day} de {_MONTHS_GL[value.month - 1]} {spoken_clock}"
     return (
-        f"el {value.day} de {_MONTHS_ES[value.month - 1]} "
-        f"a {_spoken_clock_es(value)}"
+        f"el {value.day} de {_MONTHS_ES[value.month - 1]} a {_spoken_clock_es(value)}"
     )

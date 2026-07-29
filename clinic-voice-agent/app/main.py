@@ -210,7 +210,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             path=request.url.path,
                             status_code=response.status_code,
                             request_id=request_id,
-                            ip_address=(request.client.host if request.client else None),
+                            ip_address=(
+                                request.client.host if request.client else None
+                            ),
                             details_json={"duration_ms": duration_ms},
                         )
                     )

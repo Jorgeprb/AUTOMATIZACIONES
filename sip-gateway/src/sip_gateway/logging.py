@@ -10,7 +10,6 @@ from typing import Any, ClassVar
 
 _SECRET_KEYS = ("password", "secret", "token", "authorization", "api_key", "cookie")
 _TEXT_KEYS = ("transcript", "instructions", "prompt", "body", "payload")
-_PHONE_KEYS = ("phone", "caller", "callee", "called_number", "sip_to", "sip_from")
 _PHONE_RE = re.compile(r"(?<!\w)(\+?\d[\d .()\-]{7,}\d)(?!\w)")
 _SIP_USER_RE = re.compile(r"(sip:)([^@;>\s]+)", flags=re.IGNORECASE)
 
@@ -28,9 +27,7 @@ def _redact(key: str, value: Any) -> Any:
         return "[REDACTED_CONTENT]"
     if isinstance(value, str):
         value = _SIP_USER_RE.sub(r"\1***", value)
-        if any(marker in lowered for marker in _PHONE_KEYS):
-            value = _PHONE_RE.sub(_mask_phone, value)
-        return value
+        return _PHONE_RE.sub(_mask_phone, value)
     if isinstance(value, dict):
         return {str(k): _redact(str(k), v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):
@@ -39,7 +36,9 @@ def _redact(key: str, value: Any) -> Any:
 
 
 class JsonFormatter(logging.Formatter):
-    RESERVED: ClassVar[set[str]] = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__)
+    RESERVED: ClassVar[set[str]] = set(
+        logging.LogRecord("", 0, "", 0, "", (), None).__dict__
+    )
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
@@ -52,11 +51,17 @@ class JsonFormatter(logging.Formatter):
             if key not in self.RESERVED and not key.startswith("_"):
                 payload[key] = _redact(key, value)
         if record.exc_info:
-            payload["exc_info"] = _redact("exception", self.formatException(record.exc_info))
+            payload["exc_info"] = _redact(
+                "exception", self.formatException(record.exc_info)
+            )
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
 def configure_logging(level: str) -> None:
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
-    logging.basicConfig(level=getattr(logging, level.upper(), logging.INFO), handlers=[handler], force=True)
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        handlers=[handler],
+        force=True,
+    )

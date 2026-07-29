@@ -438,9 +438,7 @@ def preview_prompt_context(
         warnings.append("No hay número configurado.")
     if (
         session.scalar(
-            select(GoogleCredential.id).where(
-                GoogleCredential.clinic_id == clinic_id
-            )
+            select(GoogleCredential.id).where(GoogleCredential.clinic_id == clinic_id)
         )
         is None
     ):
@@ -451,9 +449,7 @@ def preview_prompt_context(
     service_rows: list[PromptContextServiceRead] = []
     for service in services:
         if service.duration_minutes <= 0:
-            warnings.append(
-                f"{service.public_name}: Este servicio no tiene duración."
-            )
+            warnings.append(f"{service.public_name}: Este servicio no tiene duración.")
         if not service.price_text and service.price_amount is None:
             warnings.append(f"{service.public_name}: Este servicio no tiene precio.")
         worker_names = (

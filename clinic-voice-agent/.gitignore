@@ -17,6 +17,7 @@ dist/
 backups/*
 !backups/.gitkeep
 .venv/
+.venv-codex/
 venv/
 .idea/
 .vscode/

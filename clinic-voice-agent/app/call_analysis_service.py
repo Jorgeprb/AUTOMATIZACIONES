@@ -28,7 +28,9 @@ class CallAnalysisPayload(BaseModel):
     summary: str | None = Field(default=None, max_length=2000)
 
 
-def analyze_call(session: Session, settings: Settings, call_session_id: uuid.UUID) -> CallAnalysis:
+def analyze_call(
+    session: Session, settings: Settings, call_session_id: uuid.UUID
+) -> CallAnalysis:
     call = session.get(CallSession, call_session_id)
     if call is None or call.clinic_id is None:
         raise ValueError("Call session not found.")

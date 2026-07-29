@@ -102,10 +102,7 @@ def extract_pdf_knowledge(data: bytes, *, filename: str) -> ExtractedKnowledge:
         ) from exc
     try:
         reader = PdfReader(io.BytesIO(data))
-        parts = [
-            page.extract_text() or ""
-            for page in reader.pages[:50]
-        ]
+        parts = [page.extract_text() or "" for page in reader.pages[:50]]
     except Exception as exc:  # pypdf can raise several parsing exceptions
         raise KnowledgeImportError("No se pudo leer el PDF.") from exc
     content = _limit_text(normalize_extracted_text("\n\n".join(parts)))
@@ -152,7 +149,9 @@ def _validate_public_url(url: str) -> None:
     if parsed.port not in {None, 80, 443}:
         raise KnowledgeImportError("La URL utiliza un puerto no permitido.")
     hostname = parsed.hostname.rstrip(".").casefold()
-    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".local"):
+    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(
+        ".local"
+    ):
         raise KnowledgeImportError("La URL apunta a una red no permitida.")
     try:
         addresses = {
@@ -168,7 +167,7 @@ def _validate_public_url(url: str) -> None:
     if not addresses:
         raise KnowledgeImportError("El dominio no tiene direcciones utilizables.")
     for raw_address in addresses:
-        address = ipaddress.ip_address(raw_address.split("%", 1)[0])
+        address = ipaddress.ip_address(str(raw_address).split("%", 1)[0])
         if not address.is_global:
             raise KnowledgeImportError("La URL apunta a una red privada o reservada.")
 
@@ -193,7 +192,9 @@ def fetch_url_knowledge(url: str) -> ExtractedKnowledge:
                     if response.status_code in {301, 302, 303, 307, 308}:
                         location = response.headers.get("location")
                         if not location or redirect_count >= 3:
-                            raise KnowledgeImportError("La URL tiene demasiadas redirecciones.")
+                            raise KnowledgeImportError(
+                                "La URL tiene demasiadas redirecciones."
+                            )
                         current_url = urljoin(current_url, location)
                         continue
                     response.raise_for_status()
@@ -242,4 +243,3 @@ def fetch_url_knowledge(url: str) -> ExtractedKnowledge:
         content=content,
         source=final_url[:1000],
     )
-

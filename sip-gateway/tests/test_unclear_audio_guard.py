@@ -120,9 +120,12 @@ def test_privacy_disabled_transcription_does_not_emit_fake_guard_evidence() -> N
 
 
 def test_clear_input_does_not_require_a_second_confirmation_prompt() -> None:
-    assert assistant_requested_confirmation(
-        "Tengo sitio mañana a las cinco. ¿Quieres que la reserve?"
-    ) is True
+    assert (
+        assistant_requested_confirmation(
+            "Tengo sitio mañana a las cinco. ¿Quieres que la reserve?"
+        )
+        is True
+    )
     bridge = _bridge()
     bridge._last_user_input_clear = True
     arguments: dict[str, object] = {}

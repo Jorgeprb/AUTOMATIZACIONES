@@ -232,7 +232,6 @@ class BackendClient:
             ).split(";", maxsplit=1)[0],
         )
 
-
     async def close_call(self, *, call_session_id: str, reason: str) -> None:
         """Finalize the durable backend call projection without delaying SIP teardown."""
         response = await self._client.post(

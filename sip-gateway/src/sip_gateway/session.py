@@ -38,7 +38,9 @@ from sip_gateway.sip import SipMessage
 
 logger = logging.getLogger(__name__)
 
-INITIAL_GREETING = "Hola, soy el asistente virtual de la clínica. ¿En qué puedo ayudarte?"
+INITIAL_GREETING = (
+    "Hola, soy el asistente virtual de la clínica. ¿En qué puedo ayudarte?"
+)
 OPENAI_ERROR_MESSAGE = (
     "Disculpa, ahora mismo no puedo continuar. "
     "Puedo pasarte con recepción o puedes intentarlo de nuevo en unos minutos."
@@ -132,8 +134,10 @@ class GatewayCallSession:
         offer: SdpOffer,
         payload_type: int,
         rtp_port: int,
-        on_closed: Callable[["GatewayCallSession", str], Awaitable[None] | None] | None = None,
-        on_hangup_requested: Callable[["GatewayCallSession", str], Awaitable[None] | None] | None = None,
+        on_closed: Callable[[GatewayCallSession, str], Awaitable[None] | None]
+        | None = None,
+        on_hangup_requested: Callable[[GatewayCallSession, str], Awaitable[None] | None]
+        | None = None,
     ) -> None:
         self.settings = settings
         self.backend = backend
@@ -234,7 +238,9 @@ class GatewayCallSession:
             if context.call_audio_mode != "vps_media_bridge":
                 raise RuntimeError("local media cannot start for a non-bridge route")
 
-            async def tool_executor(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            async def tool_executor(
+                name: str, arguments: dict[str, Any]
+            ) -> dict[str, Any]:
                 output = await self.backend.execute_tool(
                     clinic_id=context.clinic_id,
                     call_session_id=context.call_session_id,
@@ -283,9 +289,10 @@ class GatewayCallSession:
             return
         if packet.payload_type != self.payload_type:
             return
-        allowed_source = (
-            addr[0] == self.offer.connection_ip
-            or self.settings.rtp_ip_explicitly_allowed(addr[0])
+        allowed_source = addr[
+            0
+        ] == self.offer.connection_ip or self.settings.rtp_ip_explicitly_allowed(
+            addr[0]
         )
         if not allowed_source:
             logger.warning(
@@ -305,7 +312,11 @@ class GatewayCallSession:
             self._remote_ssrc = packet.ssrc
             logger.info(
                 "rtp_source_locked",
-                extra={"call_id": self.call_id, "source_ip": addr[0], "ssrc": packet.ssrc},
+                extra={
+                    "call_id": self.call_id,
+                    "source_ip": addr[0],
+                    "ssrc": packet.ssrc,
+                },
             )
         elif self._remote_ssrc != packet.ssrc:
             logger.warning(
@@ -467,9 +478,8 @@ class GatewayCallSession:
                     self._barge_in_voice_frames + 1 if can_interrupt else 0
                 )
                 cooldown_elapsed = (
-                    (now - self._last_barge_in_at) * 1000
-                    >= self.settings.barge_in_cooldown_ms
-                )
+                    now - self._last_barge_in_at
+                ) * 1000 >= self.settings.barge_in_cooldown_ms
                 if not (
                     self._barge_in_voice_frames >= self.settings.barge_in_min_frames
                     and cooldown_elapsed
@@ -546,8 +556,7 @@ class GatewayCallSession:
                 buffer += delta
 
             force_flush = response_done or (
-                timed_out
-                and len(buffer.strip()) >= self.settings.tts_min_flush_chars
+                timed_out and len(buffer.strip()) >= self.settings.tts_min_flush_chars
             )
             chunks, buffer = split_tts_stream(buffer, force=force_flush)
             for chunk in chunks:

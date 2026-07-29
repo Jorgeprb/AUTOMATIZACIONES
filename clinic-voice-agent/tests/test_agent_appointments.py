@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import threading
 import uuid
 from collections.abc import Sequence
+from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.calendar.appointment_service import (
     AppointmentPersistenceFailed,
@@ -27,7 +30,10 @@ from app.models import (
     AppointmentStatus,
     CallSession,
     Clinic,
+    ClinicResource,
+    ResourceReservation,
     Service,
+    ServiceResourceRequirement,
     Worker,
 )
 
@@ -343,3 +349,266 @@ def test_create_appointment_idempotency_returns_existing_without_second_google_e
     assert second.id == first.id
     assert second.patient_phone == "+34600000001"
     assert client.events.return_value.insert.call_count == 1
+
+
+def test_cancelled_appointment_releases_resource_capacity(
+    db_session: Session,
+) -> None:
+    clinic, worker, service = _domain(db_session)
+    resource = ClinicResource(
+        clinic_id=clinic.id,
+        name="Consulta 1",
+        resource_type="room",
+        capacity=1,
+    )
+    db_session.add(resource)
+    db_session.flush()
+    db_session.add(
+        ServiceResourceRequirement(
+            clinic_id=clinic.id,
+            service_id=service.id,
+            resource_id=resource.id,
+            quantity=1,
+        )
+    )
+    db_session.commit()
+    client = _calendar_client()
+
+    first = _create(db_session, client, clinic, worker, service)
+    assert db_session.scalar(select(func.count(ResourceReservation.id))) == 1
+    cancel_appointment_transactional(
+        db_session,
+        client,
+        clinic_id=clinic.id,
+        appointment_id=first.id,
+        patient_phone=None,
+        approximate_date=None,
+    )
+
+    replacement = _create(db_session, client, clinic, worker, service)
+    assert replacement.id != first.id
+
+
+def test_shared_resources_are_locked_in_deterministic_order(
+    database_engine: Engine,
+) -> None:
+    if database_engine.dialect.name != "postgresql":
+        pytest.skip("Row-lock ordering requires PostgreSQL.")
+
+    factory = sessionmaker(
+        bind=database_engine,
+        class_=Session,
+        expire_on_commit=False,
+    )
+    low_resource_id = uuid.UUID(int=1001)
+    high_resource_id = uuid.UUID(int=1002)
+    with factory() as session:
+        clinic = Clinic(
+            id=uuid.uuid4(),
+            name="Clínica Recursos Concurrentes",
+            timezone="Europe/Madrid",
+            phone_number="+34919999998",
+        )
+        workers = [
+            Worker(
+                clinic=clinic,
+                name=f"Profesional {index}",
+                role="Médica",
+                calendar_id=f"worker-{index}@calendar.test",
+                working_hours_json=_working_hours(),
+            )
+            for index in (1, 2)
+        ]
+        services = [
+            Service(
+                clinic=clinic,
+                name=f"Servicio {index}",
+                duration_minutes=30,
+            )
+            for index in (1, 2)
+        ]
+        resources = [
+            ClinicResource(
+                id=resource_id,
+                clinic_id=clinic.id,
+                name=name,
+                resource_type="equipment",
+                capacity=2,
+            )
+            for resource_id, name in (
+                (low_resource_id, "Recurso bajo"),
+                (high_resource_id, "Recurso alto"),
+            )
+        ]
+        session.add_all([clinic, *workers, *services, *resources])
+        session.flush()
+        for service, resource in (
+            (services[0], resources[0]),
+            (services[1], resources[1]),
+            (services[0], resources[1]),
+            (services[1], resources[0]),
+        ):
+            session.add(
+                ServiceResourceRequirement(
+                    clinic_id=clinic.id,
+                    service_id=service.id,
+                    resource_id=resource.id,
+                    quantity=1,
+                )
+            )
+            session.flush()
+        session.commit()
+        clinic_id = clinic.id
+        worker_ids = [worker.id for worker in workers]
+        service_ids = [service.id for service in services]
+
+    lock_barrier = threading.Barrier(2)
+    start_barrier = threading.Barrier(2)
+    connection_flag = f"resource-lock-{uuid.uuid4().hex}"
+
+    def coordinate_first_resource_lock(
+        connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        info = connection.info  # type: ignore[attr-defined]
+        if (
+            "FROM clinic_resources" not in statement
+            or "FOR UPDATE" not in statement
+            or info.get(connection_flag)
+        ):
+            return
+        info[connection_flag] = True
+        with suppress(threading.BrokenBarrierError):
+            lock_barrier.wait(timeout=1.5)
+
+    created: list[uuid.UUID] = []
+    errors: list[Exception] = []
+    outcome_lock = threading.Lock()
+
+    def book(index: int) -> None:
+        try:
+            start_barrier.wait(timeout=3)
+            with factory() as session:
+                appointment = create_appointment_transactional(
+                    session,
+                    _calendar_client(),
+                    clinic_id=clinic_id,
+                    worker_id=worker_ids[index],
+                    service_id=service_ids[index],
+                    patient_name=f"Paciente {index}",
+                    patient_phone=f"+3460000010{index}",
+                    reason=None,
+                    start_at=START_AT,
+                    end_at=END_AT,
+                    call_session_id=None,
+                )
+                with outcome_lock:
+                    created.append(appointment.id)
+        except Exception as exc:
+            with outcome_lock:
+                errors.append(exc)
+
+    event.listen(
+        database_engine, "after_cursor_execute", coordinate_first_resource_lock
+    )
+    threads = [threading.Thread(target=book, args=(index,)) for index in (0, 1)]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+    finally:
+        event.remove(
+            database_engine,
+            "after_cursor_execute",
+            coordinate_first_resource_lock,
+        )
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    assert len(created) == 2
+
+
+def test_concurrent_idempotency_returns_the_committed_appointment(
+    database_engine: Engine,
+) -> None:
+    if database_engine.dialect.name != "postgresql":
+        pytest.skip("Concurrent row-lock semantics require PostgreSQL.")
+
+    factory = sessionmaker(
+        bind=database_engine,
+        class_=Session,
+        expire_on_commit=False,
+    )
+    with factory() as session:
+        clinic, worker, service = _domain(session)
+        clinic_id = clinic.id
+        worker_id = worker.id
+        service_id = service.id
+
+    lookup_barrier = threading.Barrier(2)
+    start_barrier = threading.Barrier(2)
+    connection_flag = f"idempotency-lookup-{uuid.uuid4().hex}"
+
+    def coordinate_initial_lookup(
+        connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        info = connection.info  # type: ignore[attr-defined]
+        if "appointments.idempotency_key =" not in statement or info.get(
+            connection_flag
+        ):
+            return
+        info[connection_flag] = True
+        lookup_barrier.wait(timeout=3)
+
+    created: list[uuid.UUID] = []
+    errors: list[Exception] = []
+    outcome_lock = threading.Lock()
+
+    def book() -> None:
+        try:
+            start_barrier.wait(timeout=3)
+            with factory() as session:
+                appointment = create_appointment_transactional(
+                    session,
+                    _calendar_client(),
+                    clinic_id=clinic_id,
+                    worker_id=worker_id,
+                    service_id=service_id,
+                    patient_name="Paciente Idempotente",
+                    patient_phone="+34600000111",
+                    reason=None,
+                    start_at=START_AT,
+                    end_at=END_AT,
+                    call_session_id=None,
+                    idempotency_key="same-call:same-tool-call",
+                )
+                with outcome_lock:
+                    created.append(appointment.id)
+        except Exception as exc:
+            with outcome_lock:
+                errors.append(exc)
+
+    event.listen(database_engine, "after_cursor_execute", coordinate_initial_lookup)
+    threads = [threading.Thread(target=book) for _ in range(2)]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+    finally:
+        event.remove(database_engine, "after_cursor_execute", coordinate_initial_lookup)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    assert len(created) == 2
+    assert len(set(created)) == 1

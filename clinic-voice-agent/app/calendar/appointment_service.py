@@ -24,23 +24,22 @@ from app.calendar.scheduler import (
     check_slot_available,
     insert_worker_event,
 )
+from app.customer_service import normalize_customer_phone
 from app.models import (
     Appointment,
-    AssistantConfig,
     AppointmentSource,
     AppointmentStatus,
+    AssistantConfig,
     CallSession,
     Clinic,
-    Service,
-    Worker,
-    IntegrationOutbox,
     ClinicCustomer,
     ClinicResource,
+    IntegrationOutbox,
     ResourceReservation,
+    Service,
     ServiceResourceRequirement,
+    Worker,
 )
-from app.customer_service import normalize_customer_phone
-
 from app.utils.phone import normalize_phone
 
 logger = logging.getLogger(__name__)
@@ -245,9 +244,9 @@ def check_exact_availability(
     )
 
 
-
-
-def _resource_schedule_allows(resource: ClinicResource, *, start_at: datetime, end_at: datetime, timezone: str) -> bool:
+def _resource_schedule_allows(
+    resource: ClinicResource, *, start_at: datetime, end_at: datetime, timezone: str
+) -> bool:
     """Check optional weekly resource hours using the same half-open semantics."""
     schedule = resource.schedule_json or {}
     if not schedule:
@@ -256,7 +255,15 @@ def _resource_schedule_allows(resource: ClinicResource, *, start_at: datetime, e
     local_end = end_at.astimezone(ZoneInfo(timezone))
     if local_start.date() != local_end.date():
         return False
-    weekday = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")[local_start.weekday()]
+    weekday = (
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    )[local_start.weekday()]
     ranges = schedule.get(weekday, [])
     for item in ranges if isinstance(ranges, list) else []:
         try:
@@ -264,8 +271,12 @@ def _resource_schedule_allows(resource: ClinicResource, *, start_at: datetime, e
             end_h, end_m = map(int, str(item["end"]).split(":", 1))
         except (KeyError, ValueError, TypeError):
             continue
-        range_start = local_start.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
-        range_end = local_start.replace(hour=end_h % 24, minute=end_m, second=0, microsecond=0)
+        range_start = local_start.replace(
+            hour=start_h, minute=start_m, second=0, microsecond=0
+        )
+        range_end = local_start.replace(
+            hour=end_h % 24, minute=end_m, second=0, microsecond=0
+        )
         if end_h == 24:
             range_end += timedelta(days=1)
         if range_start <= local_start and local_end <= range_end:
@@ -285,20 +296,61 @@ def _lock_and_validate_resources(
 ) -> list[tuple[ClinicResource, int]]:
     if service_id is None:
         return []
-    requirements = list(session.scalars(select(ServiceResourceRequirement).where(ServiceResourceRequirement.clinic_id == clinic_id, ServiceResourceRequirement.service_id == service_id)))
+    requirements = list(
+        session.scalars(
+            select(ServiceResourceRequirement)
+            .where(
+                ServiceResourceRequirement.clinic_id == clinic_id,
+                ServiceResourceRequirement.service_id == service_id,
+            )
+            .order_by(ServiceResourceRequirement.resource_id)
+        )
+    )
     resolved: list[tuple[ClinicResource, int]] = []
     for requirement in requirements:
-        query = select(ClinicResource).where(ClinicResource.id == requirement.resource_id, ClinicResource.clinic_id == clinic_id, ClinicResource.is_active.is_(True))
+        query = select(ClinicResource).where(
+            ClinicResource.id == requirement.resource_id,
+            ClinicResource.clinic_id == clinic_id,
+            ClinicResource.is_active.is_(True),
+        )
         if lock:
             query = query.with_for_update()
         resource = session.scalar(query)
         if resource is None or requirement.quantity > resource.capacity:
             raise AppointmentUnavailable("A required resource is unavailable.")
-        if not _resource_schedule_allows(resource, start_at=start_at, end_at=end_at, timezone=timezone):
-            raise AppointmentUnavailable("A required resource is outside its working hours.")
-        used = session.scalar(select(func.coalesce(func.sum(ResourceReservation.quantity), 0)).where(ResourceReservation.resource_id == resource.id, ResourceReservation.start_at < end_at.astimezone(UTC), ResourceReservation.end_at > start_at.astimezone(UTC))) or 0
+        if not _resource_schedule_allows(
+            resource, start_at=start_at, end_at=end_at, timezone=timezone
+        ):
+            raise AppointmentUnavailable(
+                "A required resource is outside its working hours."
+            )
+        used = (
+            session.scalar(
+                select(func.coalesce(func.sum(ResourceReservation.quantity), 0))
+                .join(
+                    Appointment,
+                    Appointment.id == ResourceReservation.appointment_id,
+                )
+                .where(
+                    ResourceReservation.clinic_id == clinic_id,
+                    ResourceReservation.resource_id == resource.id,
+                    ResourceReservation.start_at < end_at.astimezone(UTC),
+                    ResourceReservation.end_at > start_at.astimezone(UTC),
+                    Appointment.clinic_id == clinic_id,
+                    Appointment.status.in_(
+                        (
+                            AppointmentStatus.PENDING,
+                            AppointmentStatus.CONFIRMED,
+                        )
+                    ),
+                )
+            )
+            or 0
+        )
         if int(used) + requirement.quantity > resource.capacity:
-            raise AppointmentUnavailable("A required resource has no remaining capacity.")
+            raise AppointmentUnavailable(
+                "A required resource has no remaining capacity."
+            )
         resolved.append((resource, requirement.quantity))
     return resolved
 
@@ -319,10 +371,25 @@ def _upsert_customer_after_booking(
         normalized = normalize_customer_phone(phone)
     except ValueError:
         return None
-    customer = session.scalar(select(ClinicCustomer).where(ClinicCustomer.clinic_id == clinic_id, ClinicCustomer.normalized_phone == normalized))
+    customer = session.scalar(
+        select(ClinicCustomer).where(
+            ClinicCustomer.clinic_id == clinic_id,
+            ClinicCustomer.normalized_phone == normalized,
+        )
+    )
     now = datetime.now(UTC)
     if customer is None:
-        customer = ClinicCustomer(clinic_id=clinic_id, name=name.strip(), normalized_phone=normalized, display_phone=phone.strip(), personalization_enabled=True, is_active=True, first_contact_at=now, last_contact_at=now, preferred_worker_id=worker_id)
+        customer = ClinicCustomer(
+            clinic_id=clinic_id,
+            name=name.strip(),
+            normalized_phone=normalized,
+            display_phone=phone.strip(),
+            personalization_enabled=True,
+            is_active=True,
+            first_contact_at=now,
+            last_contact_at=now,
+            preferred_worker_id=worker_id,
+        )
         session.add(customer)
         session.flush()
     else:
@@ -331,7 +398,9 @@ def _upsert_customer_after_booking(
             customer.name = name.strip()
         customer.display_phone = phone.strip()
         customer.last_contact_at = now
-        if customer.preferred_worker_id is None or (config and config.suggest_preferred_worker_enabled):
+        if customer.preferred_worker_id is None or (
+            config and config.suggest_preferred_worker_enabled
+        ):
             customer.preferred_worker_id = worker_id
         customer.is_active = True
     if call_session is not None:
@@ -430,6 +499,39 @@ def create_appointment_transactional(
 
     session.begin()
     try:
+        if normalized_idempotency:
+            if session.get_bind().dialect.name == "postgresql":
+                session.execute(
+                    select(
+                        func.pg_advisory_xact_lock(
+                            func.hashtextextended(
+                                f"{clinic_id}:{normalized_idempotency}",
+                                0,
+                            )
+                        )
+                    )
+                )
+            existing = session.scalar(
+                select(Appointment)
+                .options(
+                    joinedload(Appointment.worker),
+                    joinedload(Appointment.service),
+                )
+                .where(
+                    Appointment.clinic_id == clinic_id,
+                    Appointment.idempotency_key == normalized_idempotency,
+                )
+            )
+            if existing is not None:
+                session.commit()
+                logger.info(
+                    "appointment_idempotency_hit_after_lock",
+                    extra={
+                        "appointment_id": str(existing.id),
+                        "clinic_id": str(clinic_id),
+                    },
+                )
+                return existing
         clinic = session.get(Clinic, clinic_id)
         if clinic is None:
             raise AgentResourceNotFound("Clinic not found.")

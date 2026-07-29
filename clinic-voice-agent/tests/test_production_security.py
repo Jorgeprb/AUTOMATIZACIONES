@@ -70,6 +70,8 @@ def _production_settings() -> Settings:
         internal_api_key=INTERNAL_API_KEY,
         public_base_url="https://voice.test",
         google_redirect_uri="https://voice.test/auth/google/callback",
+        google_login_admin_redirect_uri="https://admin.test/auth/login/google/callback",
+        google_login_client_redirect_uri="https://client.test/auth/login/google/callback",
     )
 
 
@@ -389,7 +391,8 @@ def test_disabled_transcription_is_omitted_from_realtime_session() -> None:
 
     payload = build_session_config(settings).as_accept_payload()
 
-    assert "input" not in payload["audio"]
+    assert "input" in payload["audio"]
+    assert "transcription" not in payload["audio"]["input"]
 
 
 def test_detailed_appointment_reason_is_rejected() -> None:

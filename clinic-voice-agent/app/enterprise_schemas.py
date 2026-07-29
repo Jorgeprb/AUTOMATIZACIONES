@@ -38,7 +38,9 @@ class CustomerFieldDefinitionPayload(BaseModel):
             raise ValueError("Los campos select necesitan opciones.")
         if self.field_type != "select" and self.options_json:
             raise ValueError("Solo los campos select admiten opciones.")
-        self.options_json = list(dict.fromkeys(item.strip() for item in self.options_json if item.strip()))
+        self.options_json = list(
+            dict.fromkeys(item.strip() for item in self.options_json if item.strip())
+        )
         return self
 
 
@@ -110,7 +112,7 @@ class RelatedAppointmentRead(ORMModel):
     end_at: datetime
     status: str
     worker_id: uuid.UUID
-    service_id: uuid.UUID
+    service_id: uuid.UUID | None
 
 
 class RelatedCallRead(ORMModel):
@@ -364,7 +366,9 @@ class ProvisioningUpdate(BaseModel):
     sip_target: str | None = Field(default=None, max_length=500)
     webhook_url: str | None = Field(default=None, max_length=500)
     notes: str | None = Field(default=None, max_length=5000)
-    status: Literal["paid_pending_provisioning", "provisioned", "active", "failed"] | None = None
+    status: (
+        Literal["paid_pending_provisioning", "provisioned", "active", "failed"] | None
+    ) = None
 
 
 class EntitlementRead(ORMModel):
@@ -403,7 +407,11 @@ class RegisterRequest(BaseModel):
             raise ValueError("Las contraseñas no coinciden.")
         if not self.accepted_terms or not self.accepted_privacy:
             raise ValueError("Debes aceptar los términos y la privacidad.")
-        if not any(ch.islower() for ch in self.password) or not any(ch.isupper() for ch in self.password) or not any(ch.isdigit() for ch in self.password):
+        if (
+            not any(ch.islower() for ch in self.password)
+            or not any(ch.isupper() for ch in self.password)
+            or not any(ch.isdigit() for ch in self.password)
+        ):
             raise ValueError("La contraseña necesita mayúscula, minúscula y número.")
         return self
 
@@ -424,6 +432,12 @@ class PasswordResetRequest(TokenRequest):
     def passwords_match(self) -> PasswordResetRequest:
         if self.password != self.repeat_password:
             raise ValueError("Las contraseñas no coinciden.")
+        if (
+            not any(ch.islower() for ch in self.password)
+            or not any(ch.isupper() for ch in self.password)
+            or not any(ch.isdigit() for ch in self.password)
+        ):
+            raise ValueError("La contraseña necesita mayúscula, minúscula y número.")
         return self
 
 

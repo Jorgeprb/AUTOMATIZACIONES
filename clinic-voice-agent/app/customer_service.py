@@ -25,15 +25,21 @@ def normalize_phone_e164(value: str, *, default_region: str = "ES") -> str:
     if not raw:
         raise ValueError("El teléfono es obligatorio.")
     try:
-        parsed = phonenumbers.parse(raw, None if raw.startswith("+") else default_region)
+        parsed = phonenumbers.parse(
+            raw, None if raw.startswith("+") else default_region
+        )
     except NumberParseException as exc:
         raise ValueError("El teléfono no tiene un formato válido.") from exc
-    if not phonenumbers.is_possible_number(parsed) or not phonenumbers.is_valid_number(parsed):
+    if not phonenumbers.is_possible_number(parsed) or not phonenumbers.is_valid_number(
+        parsed
+    ):
         raise ValueError("El teléfono no es válido.")
     return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
 
 
-def normalize_optional_phone(value: str | None, *, default_region: str = "ES") -> str | None:
+def normalize_optional_phone(
+    value: str | None, *, default_region: str = "ES"
+) -> str | None:
     if value is None or not value.strip():
         return None
     return normalize_phone_e164(value, default_region=default_region)

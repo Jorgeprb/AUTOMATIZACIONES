@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException, Request, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -52,7 +52,9 @@ class AdminPrincipal:
     def can_write_clinic(self, clinic_id: uuid.UUID) -> bool:
         if self.is_super_admin:
             return True
-        return self.clinic_roles.get(clinic_id, AdminRole.READ_ONLY) != AdminRole.READ_ONLY
+        return (
+            self.clinic_roles.get(clinic_id, AdminRole.READ_ONLY) != AdminRole.READ_ONLY
+        )
 
 
 def _hash_token(token: str) -> str:
@@ -131,18 +133,38 @@ def authenticate_admin(
 ) -> AdminUser | None:
     """Authenticate an active user with persistent brute-force protection."""
     normalized = username.strip()
-    user = session.scalar(select(AdminUser).where(AdminUser.username == normalized))
+    if "@" in normalized:
+        normalized = normalized.casefold()
+    user = session.scalar(
+        select(AdminUser)
+        .where(
+            or_(
+                AdminUser.username == normalized,
+                AdminUser.email == normalized,
+            )
+        )
+        .with_for_update()
+    )
     now = datetime.now(UTC)
     if user is None or not user.is_active:
         # Keep timing broadly similar even for unknown users.
-        hashlib.scrypt(password.encode("utf-8"), salt=b"autogal-login-pad", n=2**12, r=8, p=1, dklen=32)
+        hashlib.scrypt(
+            password.encode("utf-8"),
+            salt=b"autogal-login-pad",
+            n=2**12,
+            r=8,
+            p=1,
+            dklen=32,
+        )
         return None
     if user.locked_until is not None and user.locked_until > now:
         return None
     if not verify_password(password, user.password_hash):
         user.failed_login_count += 1
         if user.failed_login_count >= settings.admin_login_max_attempts:
-            user.locked_until = now + timedelta(minutes=settings.admin_login_lock_minutes)
+            user.locked_until = now + timedelta(
+                minutes=settings.admin_login_lock_minutes
+            )
             user.failed_login_count = 0
         session.commit()
         return None
@@ -198,9 +220,7 @@ def revoke_admin_session(session: Session, raw_token: str | None) -> None:
     session.commit()
 
 
-def _memberships(
-    session: Session, user_id: uuid.UUID
-) -> dict[uuid.UUID, AdminRole]:
+def _memberships(session: Session, user_id: uuid.UUID) -> dict[uuid.UUID, AdminRole]:
     return {
         clinic_id: role
         for clinic_id, role in session.execute(
@@ -221,11 +241,7 @@ def principal_from_session(
     record = session.scalar(
         select(AdminSession).where(AdminSession.token_hash == _hash_token(raw_token))
     )
-    if (
-        record is None
-        or record.revoked_at is not None
-        or record.expires_at <= now
-    ):
+    if record is None or record.revoked_at is not None or record.expires_at <= now:
         return None
     user = session.get(AdminUser, record.user_id)
     if user is None or not user.is_active:

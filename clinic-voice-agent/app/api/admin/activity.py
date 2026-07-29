@@ -21,13 +21,13 @@ from app.admin_schemas import (
     CallAppointmentRead,
     CallCreate,
     CallDebugResponse,
-    TranscriptTurnRead,
     CallEventRead,
     CallPrivacyResponse,
     CallRead,
     CallUpdate,
     DeleteResponse,
     Page,
+    TranscriptTurnRead,
 )
 from app.api.admin.common import (
     apply_update,
@@ -127,9 +127,7 @@ def _is_tool_event(event: CallEvent) -> bool:
     event_type = event.event_type.casefold()
     payload_type = str(event.payload_json.get("type", "")).casefold()
     item = event.payload_json.get("item")
-    item_type = (
-        str(item.get("type", "")).casefold() if isinstance(item, dict) else ""
-    )
+    item_type = str(item.get("type", "")).casefold() if isinstance(item, dict) else ""
     return (
         "function_call" in event_type
         or "tool_call" in event_type
@@ -142,9 +140,7 @@ def _is_error_event(event: CallEvent) -> bool:
     """Identify Realtime or local error events."""
     event_type = event.event_type.casefold()
     return (
-        event_type == "error"
-        or event_type.endswith(".error")
-        or "failed" in event_type
+        event_type == "error" or event_type.endswith(".error") or "failed" in event_type
     )
 
 
@@ -169,8 +165,6 @@ def _call_detail(call: CallSession) -> CallAnalysisDetail:
             if _is_error_event(event)
         ],
     )
-
-
 
 
 def _transcript_turns(transcript_text: str | None) -> list[TranscriptTurnRead]:
@@ -203,6 +197,7 @@ def _transcript_turns(transcript_text: str | None) -> list[TranscriptTurnRead]:
         )
     return turns
 
+
 def _redact_value(value: object, old_phone: str) -> object:
     """Recursively remove a caller phone from stored diagnostic payloads."""
     if isinstance(value, str):
@@ -210,10 +205,7 @@ def _redact_value(value: object, old_phone: str) -> object:
     if isinstance(value, list):
         return [_redact_value(item, old_phone) for item in value]
     if isinstance(value, dict):
-        return {
-            key: _redact_value(item, old_phone)
-            for key, item in value.items()
-        }
+        return {key: _redact_value(item, old_phone) for key, item in value.items()}
     return value
 
 
@@ -402,8 +394,7 @@ def list_calls(
         )
     if date_to is not None:
         statement = statement.where(
-            func.date(func.timezone(clinic.timezone, CallSession.started_at))
-            <= date_to
+            func.date(func.timezone(clinic.timezone, CallSession.started_at)) <= date_to
         )
     if outcome is not None:
         statement = statement.where(CallSession.outcome == outcome)
@@ -422,9 +413,12 @@ def list_calls(
             CallSession.appointments.any(Appointment.service_id == service_id)
         )
     ordered = statement.order_by(CallSession.started_at.desc(), CallSession.id)
-    total = session.scalar(
-        select(func.count()).select_from(ordered.order_by(None).subquery())
-    ) or 0
+    total = (
+        session.scalar(
+            select(func.count()).select_from(ordered.order_by(None).subquery())
+        )
+        or 0
+    )
     rows = session.scalars(
         ordered.offset((page - 1) * page_size).limit(page_size)
     ).all()
@@ -537,9 +531,7 @@ def list_call_tool_calls(
         .order_by(CallEvent.created_at, CallEvent.id)
     ).all()
     return [
-        CallEventRead.model_validate(event)
-        for event in events
-        if _is_tool_event(event)
+        CallEventRead.model_validate(event) for event in events if _is_tool_event(event)
     ]
 
 
@@ -710,13 +702,11 @@ def list_appointments(
         )
     if date_from is not None:
         statement = statement.where(
-            func.date(func.timezone(clinic.timezone, Appointment.start_at))
-            >= date_from
+            func.date(func.timezone(clinic.timezone, Appointment.start_at)) >= date_from
         )
     if date_to is not None:
         statement = statement.where(
-            func.date(func.timezone(clinic.timezone, Appointment.start_at))
-            <= date_to
+            func.date(func.timezone(clinic.timezone, Appointment.start_at)) <= date_to
         )
     if worker_id is not None:
         statement = statement.where(Appointment.worker_id == worker_id)
@@ -731,9 +721,12 @@ def list_appointments(
     if source is not None:
         statement = statement.where(Appointment.source == source)
     ordered = statement.order_by(Appointment.start_at.desc(), Appointment.id)
-    total = session.scalar(
-        select(func.count()).select_from(ordered.order_by(None).subquery())
-    ) or 0
+    total = (
+        session.scalar(
+            select(func.count()).select_from(ordered.order_by(None).subquery())
+        )
+        or 0
+    )
     rows = session.scalars(
         ordered.offset((page - 1) * page_size).limit(page_size)
     ).all()

@@ -40,8 +40,7 @@ class LocalTTSProvider:
             supports_voice_clone=True,
             requires_consent=True,
             notes=(
-                "Desactivado salvo que LOCAL_TTS_BASE_URL apunte a un "
-                "servicio local."
+                "Desactivado salvo que LOCAL_TTS_BASE_URL apunte a un servicio local."
             ),
         )
 

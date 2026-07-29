@@ -84,8 +84,7 @@ def test_openai_hosted_sip_is_blocked_clear_without_local_bridge() -> None:
         await gateway.handle_datagram(INVITE.encode(), ("10.0.0.1", 5060))
 
         responses = [
-            data.decode("utf-8", errors="replace")
-            for data, _ in transport.sent
+            data.decode("utf-8", errors="replace") for data, _ in transport.sent
         ]
         assert any(response.startswith("SIP/2.0 100 Trying") for response in responses)
         final = responses[-1]

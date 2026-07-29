@@ -131,10 +131,9 @@ class SipMessage:
     @property
     def callee(self) -> str:
         """Return called URI/user from To header or request URI."""
-        return (
-            extract_sip_user(self.header("to") or self.header("t"))
-            or extract_sip_user(self.request_uri)
-        )
+        return extract_sip_user(
+            self.header("to") or self.header("t")
+        ) or extract_sip_user(self.request_uri)
 
 
 def _tag_from_header(value: str) -> str:

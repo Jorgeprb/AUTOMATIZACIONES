@@ -38,17 +38,17 @@ class ConversationPolicy(BaseModel):
     ask_patient_phone: bool = True
     ask_general_reason: bool = True
     ask_service: bool = True
-    service_prompt_mode: Literal[
-        "list_services", "ask_open", "infer_confirm"
-    ] = "ask_open"
+    service_prompt_mode: Literal["list_services", "ask_open", "infer_confirm"] = (
+        "ask_open"
+    )
     direct_availability_response: bool = True
     direct_booking_response: bool = True
     post_booking_followup_enabled: bool = True
     hangup_after_no_more_help: bool = True
     hangup_on_natural_goodbye: bool = True
-    commercial_call_handling: Literal[
-        "declinar", "transferir", "responder_basico"
-    ] = "declinar"
+    commercial_call_handling: Literal["declinar", "transferir", "responder_basico"] = (
+        "declinar"
+    )
     human_transfer_rules: str | None = None
     commercial_call_message: str | None = None
     no_availability_message: str | None = None

@@ -475,8 +475,7 @@ async def test_google_oauth_bad_config_returns_clear_errors(
     }
     assert start_url.status_code == 503
     assert "GOOGLE_TOKEN_ENCRYPTION_KEY" in start_url.text
-    assert public_start.status_code == 503
-    assert "GOOGLE_TOKEN_ENCRYPTION_KEY" in public_start.text
+    assert public_start.status_code == 401
 
 
 @pytest.mark.anyio
@@ -554,9 +553,7 @@ async def test_google_oauth_callback_uses_configured_public_redirect_uri(
     assert redirect_query["google"] == ["connected"]
     assert redirect_query["reason"] == ["connected"]
     authorization_response = complete.call_args.kwargs["authorization_response"]
-    assert authorization_response.startswith(
-        "https://voice.test/auth/google/callback?"
-    )
+    assert authorization_response.startswith("https://voice.test/auth/google/callback?")
     assert "code=test-code" in authorization_response
     assert "state=" in authorization_response
 

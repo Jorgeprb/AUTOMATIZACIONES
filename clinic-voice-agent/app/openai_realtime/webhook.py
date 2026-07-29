@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 import httpx
@@ -37,12 +37,13 @@ from app.openai_realtime.session import (
 
 router = APIRouter(prefix="/webhooks/openai", tags=["openai-realtime"])
 logger = logging.getLogger(__name__)
-
-
+_WEBHOOK_LEASE_TIMEOUT = timedelta(minutes=5)
 
 
 def _payload_hash(payload: dict[str, Any]) -> str:
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -50,14 +51,31 @@ def _claim_webhook(
     session: Session, *, event_id: str, event_type: str | None, payload: dict[str, Any]
 ) -> tuple[WebhookReceipt | None, bool]:
     """Claim a provider event once; return (receipt, duplicate)."""
+    now = datetime.now(UTC)
     existing = session.scalar(
-        select(WebhookReceipt).where(
-            WebhookReceipt.provider == "openai", WebhookReceipt.event_id == event_id
+        select(WebhookReceipt)
+        .where(
+            WebhookReceipt.provider == "openai",
+            WebhookReceipt.event_id == event_id,
         )
+        .with_for_update()
     )
     if existing is not None:
-        existing.attempts += 1
-        session.commit()
+        updated_at = existing.updated_at
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=UTC)
+        retryable = existing.status == "failed" or (
+            existing.status == "processing"
+            and updated_at <= now - _WEBHOOK_LEASE_TIMEOUT
+        )
+        if retryable:
+            existing.attempts += 1
+            existing.status = "processing"
+            existing.last_error = None
+            existing.processed_at = None
+            session.commit()
+            session.refresh(existing)
+            return existing, False
         return existing, True
     receipt = WebhookReceipt(
         provider="openai",
@@ -244,6 +262,7 @@ async def receive_realtime_webhook(
     try:
         incoming = RealtimeIncomingCallEvent.model_validate(raw_event)
     except ValidationError as exc:
+        _finish_webhook(session, receipt, error="invalid_payload")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid realtime.call.incoming payload.",
@@ -254,7 +273,12 @@ async def receive_realtime_webhook(
         .where(CallSession.openai_call_id == incoming.data.call_id)
         .order_by(CallSession.created_at)
     )
-    if existing is not None:
+    retrying_failed_call = bool(
+        existing is not None
+        and existing.status == CallStatus.FAILED
+        and existing.conversation_state_json.get("setup_error")
+    )
+    if existing is not None and not retrying_failed_call:
         logger.info(
             "realtime_incoming_duplicate",
             extra={
@@ -276,6 +300,7 @@ async def receive_realtime_webhook(
             "realtime_called_number_missing",
             extra={"call_id": incoming.data.call_id},
         )
+        _finish_webhook(session, receipt, error="called_number_missing")
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="The incoming SIP call has no called number.",
@@ -294,6 +319,7 @@ async def receive_realtime_webhook(
                 "called_number": called_number,
             },
         )
+        _finish_webhook(session, receipt, error="unknown_called_number")
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="No active clinic matches the called number.",
@@ -306,6 +332,7 @@ async def receive_realtime_webhook(
                 "called_number": called_number,
             },
         )
+        _finish_webhook(session, receipt, error="assistant_config_missing")
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="The clinic has no active assistant configuration.",
@@ -323,28 +350,47 @@ async def receive_realtime_webhook(
     }
     state["clinic_id"] = str(clinic.id)
 
-    call_session = CallSession(
-        clinic_id=clinic.id,
-        phone_number_id=phone_number.id if phone_number is not None else None,
-        assistant_config_id=assistant_config.id,
-        openai_call_id=incoming.data.call_id,
-        provider_call_id=(provider_call_id[:128] if provider_call_id else None),
-        caller_phone=caller_phone[:32],
-        called_number=called_number[:32],
-        status=CallStatus.INCOMING,
-        transcript_enabled=assistant_config.transcript_enabled,
-        recording_enabled=assistant_config.recording_enabled,
-        conversation_state_json=state,
-    )
-    session.add(call_session)
-    session.flush()
-    session.add(
-        CallEvent(
-            call_session_id=call_session.id,
-            event_type=incoming.type,
-            payload_json=raw_event,
+    if existing is None:
+        call_session = CallSession(
+            clinic_id=clinic.id,
+            phone_number_id=phone_number.id if phone_number is not None else None,
+            assistant_config_id=assistant_config.id,
+            openai_call_id=incoming.data.call_id,
+            provider_call_id=(provider_call_id[:128] if provider_call_id else None),
+            caller_phone=caller_phone[:32],
+            called_number=called_number[:32],
+            status=CallStatus.INCOMING,
+            transcript_enabled=assistant_config.transcript_enabled,
+            recording_enabled=assistant_config.recording_enabled,
+            conversation_state_json=state,
         )
-    )
+        session.add(call_session)
+        session.flush()
+        session.add(
+            CallEvent(
+                call_session_id=call_session.id,
+                event_type=incoming.type,
+                payload_json=raw_event,
+            )
+        )
+    else:
+        call_session = existing
+        call_session.clinic_id = clinic.id
+        call_session.phone_number_id = (
+            phone_number.id if phone_number is not None else None
+        )
+        call_session.assistant_config_id = assistant_config.id
+        call_session.provider_call_id = (
+            provider_call_id[:128] if provider_call_id else None
+        )
+        call_session.caller_phone = caller_phone[:32]
+        call_session.called_number = called_number[:32]
+        call_session.status = CallStatus.INCOMING
+        call_session.transcript_enabled = assistant_config.transcript_enabled
+        call_session.recording_enabled = assistant_config.recording_enabled
+        call_session.conversation_state_json = state
+        call_session.ended_at = None
+        call_session.summary_text = None
     session.commit()
 
     logger.info(
@@ -394,6 +440,7 @@ async def receive_realtime_webhook(
             except httpx.HTTPError as fallback_exc:
                 reason = "OpenAI could not accept the incoming call."
                 _mark_call_failed(session, call_session, reason=reason)
+                _finish_webhook(session, receipt, error="accept_failed")
                 logger.exception(
                     "realtime_accept_failed",
                     extra={"call_id": incoming.data.call_id},
@@ -406,6 +453,7 @@ async def receive_realtime_webhook(
             config_voice = config.voice
             reason = "OpenAI could not accept the incoming call."
             _mark_call_failed(session, call_session, reason=reason)
+            _finish_webhook(session, receipt, error="accept_failed")
             logger.exception(
                 "realtime_accept_failed",
                 extra={"call_id": incoming.data.call_id},
@@ -436,6 +484,7 @@ async def receive_realtime_webhook(
     except Exception as exc:
         reason = "Realtime control could not start."
         _mark_call_failed(session, call_session, reason=reason)
+        _finish_webhook(session, receipt, error="control_start_failed")
         logger.exception(
             "realtime_control_start_failed",
             extra={"call_id": incoming.data.call_id},

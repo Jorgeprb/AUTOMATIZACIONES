@@ -122,14 +122,17 @@ def build_setup_status(
             )
         )
     )
-    knowledge_count = session.scalar(
-        select(func.count())
-        .select_from(KnowledgeItem)
-        .where(
-            KnowledgeItem.clinic_id == clinic_id,
-            KnowledgeItem.is_active.is_(True),
+    knowledge_count = (
+        session.scalar(
+            select(func.count())
+            .select_from(KnowledgeItem)
+            .where(
+                KnowledgeItem.clinic_id == clinic_id,
+                KnowledgeItem.is_active.is_(True),
+            )
         )
-    ) or 0
+        or 0
+    )
     active_config = session.scalar(
         select(AssistantConfig).where(
             AssistantConfig.clinic_id == clinic_id,
@@ -138,9 +141,7 @@ def build_setup_status(
     )
     google_connected = (
         session.scalar(
-            select(GoogleCredential.id).where(
-                GoogleCredential.clinic_id == clinic_id
-            )
+            select(GoogleCredential.id).where(GoogleCredential.clinic_id == clinic_id)
         )
         is not None
     )
@@ -192,9 +193,7 @@ def build_setup_status(
             active_config.transfer_policy_prompt.strip(),
         )
     )
-    webhook_configured = any(
-        _public_webhook(phone.webhook_url) for phone in phones
-    )
+    webhook_configured = any(_public_webhook(phone.webhook_url) for phone in phones)
 
     items = [
         _item(
@@ -319,8 +318,7 @@ def build_setup_status(
     if not clinic.is_active:
         blocking_errors.append("La clínica está inactiva.")
     if services and any(
-        not service.price_text and service.price_amount is None
-        for service in services
+        not service.price_text and service.price_amount is None for service in services
     ):
         warnings.append("Hay servicios activos sin precio configurado.")
 
@@ -362,68 +360,86 @@ def get_dashboard(
     next_30_days = now + timedelta(days=30)
     real_call = CallSession.openai_call_id.not_like("simulation-%")
 
-    active_workers = session.scalar(
-        select(func.count())
-        .select_from(Worker)
-        .where(
-            Worker.clinic_id == clinic_id,
-            Worker.is_active.is_(True),
+    active_workers = (
+        session.scalar(
+            select(func.count())
+            .select_from(Worker)
+            .where(
+                Worker.clinic_id == clinic_id,
+                Worker.is_active.is_(True),
+            )
         )
-    ) or 0
-    bookable_services = session.scalar(
-        select(func.count())
-        .select_from(Service)
-        .where(
-            Service.clinic_id == clinic_id,
-            Service.is_active.is_(True),
-            Service.is_bookable_by_bot.is_(True),
+        or 0
+    )
+    bookable_services = (
+        session.scalar(
+            select(func.count())
+            .select_from(Service)
+            .where(
+                Service.clinic_id == clinic_id,
+                Service.is_active.is_(True),
+                Service.is_bookable_by_bot.is_(True),
+            )
         )
-    ) or 0
-    calls_last_24h = session.scalar(
-        select(func.count())
-        .select_from(CallSession)
-        .where(
-            CallSession.clinic_id == clinic_id,
-            real_call,
-            CallSession.started_at >= last_24h,
+        or 0
+    )
+    calls_last_24h = (
+        session.scalar(
+            select(func.count())
+            .select_from(CallSession)
+            .where(
+                CallSession.clinic_id == clinic_id,
+                real_call,
+                CallSession.started_at >= last_24h,
+            )
         )
-    ) or 0
-    upcoming_appointments = session.scalar(
-        select(func.count())
-        .select_from(Appointment)
-        .where(
-            Appointment.clinic_id == clinic_id,
-            Appointment.start_at >= now,
-            Appointment.start_at <= next_30_days,
-            Appointment.status.in_(
-                [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]
-            ),
+        or 0
+    )
+    upcoming_appointments = (
+        session.scalar(
+            select(func.count())
+            .select_from(Appointment)
+            .where(
+                Appointment.clinic_id == clinic_id,
+                Appointment.start_at >= now,
+                Appointment.start_at <= next_30_days,
+                Appointment.status.in_(
+                    [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]
+                ),
+            )
         )
-    ) or 0
-    failed_calls = session.scalar(
-        select(func.count())
-        .select_from(CallSession)
-        .where(
-            CallSession.clinic_id == clinic_id,
-            real_call,
-            CallSession.started_at >= last_24h,
-            CallSession.status == CallStatus.FAILED,
+        or 0
+    )
+    failed_calls = (
+        session.scalar(
+            select(func.count())
+            .select_from(CallSession)
+            .where(
+                CallSession.clinic_id == clinic_id,
+                real_call,
+                CallSession.started_at >= last_24h,
+                CallSession.status == CallStatus.FAILED,
+            )
         )
-    ) or 0
-    error_events = session.scalar(
-        select(func.count())
-        .select_from(CallEvent)
-        .join(CallSession, CallEvent.call_session_id == CallSession.id)
-        .where(
-            CallSession.clinic_id == clinic_id,
-            real_call,
-            CallEvent.created_at >= last_24h,
-            or_(
-                CallEvent.event_type.ilike("%error%"),
-                CallEvent.event_type.ilike("%failed%"),
-            ),
+        or 0
+    )
+    error_events = (
+        session.scalar(
+            select(func.count())
+            .select_from(CallEvent)
+            .join(CallSession, CallEvent.call_session_id == CallSession.id)
+            .where(
+                CallSession.clinic_id == clinic_id,
+                real_call,
+                CallEvent.created_at >= last_24h,
+                or_(
+                    CallEvent.event_type.ilike("%error%"),
+                    CallEvent.event_type.ilike("%failed%"),
+                ),
+            )
         )
-    ) or 0
+        or 0
+    )
     last_call = session.scalar(
         select(CallSession)
         .where(CallSession.clinic_id == clinic_id, real_call)

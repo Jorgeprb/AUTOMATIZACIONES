@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from string import Formatter
-from typing import Mapping
 
 DEFAULT_CALENDAR_EVENT_TITLE_TEMPLATE = "Cita - {patient_name}"
 DEFAULT_CALENDAR_EVENT_DESCRIPTION_TEMPLATE = """Reserva creada por asistente telefónico.

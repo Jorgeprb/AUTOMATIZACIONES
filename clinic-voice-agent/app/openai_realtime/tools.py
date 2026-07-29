@@ -330,8 +330,7 @@ def get_realtime_tools() -> tuple[dict[str, Any], ...]:
                         "type": "string",
                         "minLength": 1,
                         "description": (
-                            "Nombre del trabajador confirmado si no tienes "
-                            "worker_id."
+                            "Nombre del trabajador confirmado si no tienes worker_id."
                         ),
                     },
                     "service_id": {
@@ -342,8 +341,7 @@ def get_realtime_tools() -> tuple[dict[str, Any], ...]:
                         "type": "string",
                         "minLength": 1,
                         "description": (
-                            "Nombre del servicio confirmado si no tienes "
-                            "service_id."
+                            "Nombre del servicio confirmado si no tienes service_id."
                         ),
                     },
                     "patient_name": {
@@ -599,9 +597,7 @@ def _format_workers(workers: list[Worker]) -> str:
     """Render real worker choices for a safe tool error."""
     if not workers:
         return "ningún trabajador activo con calendar_id"
-    return "; ".join(
-        f"{worker.name} (worker_id={worker.id})" for worker in workers
-    )
+    return "; ".join(f"{worker.name} (worker_id={worker.id})" for worker in workers)
 
 
 def _bookable_services(session: Session, clinic_id: uuid.UUID) -> list[Service]:
@@ -1015,8 +1011,8 @@ def _booking_success_guidance(
         else " Puedes mencionar brevemente que la reserva se ha completado."
     )
     followup_message = (
-        (config.post_booking_followup_message or "¿Puedo ayudarte con algo más?").strip()
-    )
+        config.post_booking_followup_message or "¿Puedo ayudarte con algo más?"
+    ).strip()
     followup = (
         f' Después pregunta una sola vez: "{followup_message}". Si la persona '
         "necesita algo más, ayúdala y vuelve a hacer la misma pregunta al terminar."
@@ -1055,9 +1051,7 @@ def _execute_tool(
                 trusted,
                 clinic_id=context.clinic_id,
             )
-            propose_payload = AgentProposeSlotsRequest.model_validate(
-                trusted
-            )
+            propose_payload = AgentProposeSlotsRequest.model_validate(trusted)
             client = calendar_provider(
                 session,
                 context.settings,
@@ -1142,9 +1136,7 @@ def _execute_tool(
                     available=bool(propose_response.slots),
                     direct=assistant_config.direct_availability_response,
                     spoken_start_at=(
-                        spoken_slots[0]["spoken_start_at"]
-                        if spoken_slots
-                        else None
+                        spoken_slots[0]["spoken_start_at"] if spoken_slots else None
                     ),
                 )
             elif assistant_config.direct_availability_response:

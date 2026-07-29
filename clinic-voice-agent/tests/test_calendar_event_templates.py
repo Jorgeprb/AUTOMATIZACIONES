@@ -27,16 +27,22 @@ def test_calendar_template_renders_documented_fields() -> None:
         end_at=datetime(2026, 7, 28, 17, 30),
     )
 
-    assert render_calendar_event_template(
-        "{service_name} - {patient_name}",
-        values,
-        label="title",
-    ) == "Consulta general - María López"
-    assert render_calendar_event_template(
-        "Paciente: {patient_name}\nHora: {start_time}",
-        values,
-        label="description",
-    ) == "Paciente: María López\nHora: 17:00"
+    assert (
+        render_calendar_event_template(
+            "{service_name} - {patient_name}",
+            values,
+            label="title",
+        )
+        == "Consulta general - María López"
+    )
+    assert (
+        render_calendar_event_template(
+            "Paciente: {patient_name}\nHora: {start_time}",
+            values,
+            label="description",
+        )
+        == "Paciente: María López\nHora: 17:00"
+    )
 
 
 def test_calendar_template_rejects_unknown_or_traversed_fields() -> None:

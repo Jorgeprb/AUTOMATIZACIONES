@@ -26,8 +26,8 @@ from app.auth import (
 )
 from app.config import Settings, get_settings
 from app.db import get_db
-from app.models import AdminMembership, AdminRole, AdminUser, OAuthLoginState
 from app.enterprise_service import create_billing_account_for_user
+from app.models import AdminMembership, AdminRole, AdminUser, OAuthLoginState
 from app.utils.security import require_admin_access
 
 router = APIRouter(prefix="/auth", tags=["portal-auth"])
@@ -69,24 +69,25 @@ def _set_session_cookies(
     settings: Settings,
 ) -> None:
     max_age = settings.admin_session_ttl_hours * 3600
-    common = {
-        "max_age": max_age,
-        "secure": _secure_cookie(settings),
-        "samesite": "lax",
-        "path": "/",
-        "domain": _cookie_domain(settings),
-    }
     response.set_cookie(
         settings.admin_session_cookie_name,
         raw_token,
         httponly=True,
-        **common,
+        max_age=max_age,
+        secure=_secure_cookie(settings),
+        samesite="lax",
+        path="/",
+        domain=_cookie_domain(settings),
     )
     response.set_cookie(
         settings.admin_csrf_cookie_name,
         csrf_token,
         httponly=False,
-        **common,
+        max_age=max_age,
+        secure=_secure_cookie(settings),
+        samesite="lax",
+        path="/",
+        domain=_cookie_domain(settings),
     )
 
 
@@ -193,9 +194,11 @@ def start_google_login(
     state = secrets.token_urlsafe(48)
     nonce = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
-    challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode("ascii")).digest()
-    ).rstrip(b"=").decode("ascii")
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+        .rstrip(b"=")
+        .decode("ascii")
+    )
     session.add(
         OAuthLoginState(
             state_hash=hashlib.sha256(state.encode("utf-8")).hexdigest(),
@@ -274,7 +277,9 @@ def complete_google_login(
             settings.google_client_id,
         )
     except Exception:
-        return _oauth_error_redirect(settings, portal=portal, code="token_exchange_failed")
+        return _oauth_error_redirect(
+            settings, portal=portal, code="token_exchange_failed"
+        )
 
     if claims.get("nonce") != expected_nonce or not claims.get("email_verified"):
         return _oauth_error_redirect(settings, portal=portal, code="invalid_identity")
@@ -317,13 +322,17 @@ def complete_google_login(
         session.commit()
         session.refresh(user)
     if user is None:
-        return _oauth_error_redirect(settings, portal=portal, code="account_not_invited")
+        return _oauth_error_redirect(
+            settings, portal=portal, code="account_not_invited"
+        )
     if not user.is_active:
         return _oauth_error_redirect(settings, portal=portal, code="account_disabled")
 
     user.email = email
     user.google_subject = subject
-    user.auth_provider = "google" if user.password_hash == "!google-only" else "password_google"
+    user.auth_provider = (
+        "google" if user.password_hash == "!google-only" else "password_google"
+    )
     user.display_name = str(claims.get("name") or user.display_name or user.username)
     user.avatar_url = str(claims.get("picture") or user.avatar_url or "") or None
     user.last_login_at = datetime.now(UTC)

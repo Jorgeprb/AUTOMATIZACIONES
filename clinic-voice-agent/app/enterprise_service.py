@@ -28,7 +28,6 @@ from app.models import (
     IntegrationOutbox,
 )
 
-
 PRODUCTION_ENTITLEMENT_CODES = frozenset({"assistant_production", "phone_number"})
 
 
@@ -173,8 +172,14 @@ def has_active_entitlement(
             ClinicEntitlement.clinic_id == clinic_id,
             ClinicEntitlement.code == code,
             ClinicEntitlement.status == "active",
-            (ClinicEntitlement.starts_at.is_(None) | (ClinicEntitlement.starts_at <= current)),
-            (ClinicEntitlement.ends_at.is_(None) | (ClinicEntitlement.ends_at > current)),
+            (
+                ClinicEntitlement.starts_at.is_(None)
+                | (ClinicEntitlement.starts_at <= current)
+            ),
+            (
+                ClinicEntitlement.ends_at.is_(None)
+                | (ClinicEntitlement.ends_at > current)
+            ),
         )
     )
     return entitlement is not None
@@ -288,16 +293,32 @@ def consume_action_token(
     kind: str,
 ) -> AuthActionToken | None:
     digest = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-    row = session.scalar(
+    candidate = session.scalar(
         select(AuthActionToken).where(
             AuthActionToken.token_hash == digest,
             AuthActionToken.kind == kind,
         )
     )
-    now = datetime.now(UTC)
-    if row is None or row.used_at is not None or row.expires_at <= now:
+    if candidate is None:
         return None
-    row.used_at = now
+    active_tokens = list(
+        session.scalars(
+            select(AuthActionToken)
+            .where(
+                AuthActionToken.user_id == candidate.user_id,
+                AuthActionToken.kind == kind,
+                AuthActionToken.used_at.is_(None),
+            )
+            .order_by(AuthActionToken.id)
+            .with_for_update()
+        )
+    )
+    row = next((item for item in active_tokens if item.token_hash == digest), None)
+    now = datetime.now(UTC)
+    if row is None or row.expires_at <= now:
+        return None
+    for token in active_tokens:
+        token.used_at = now
     return row
 
 

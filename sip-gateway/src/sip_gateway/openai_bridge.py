@@ -39,17 +39,48 @@ _APPOINTMENT_TOOLS = {
     "create_appointment",
     "cancel_appointment",
 }
-_UNCLEAR_FILLERS = {"ah", "eh", "em", "hm", "hmm", "mmm", "ruido", "silencio", "inaudible", "ininteligible"}
+_UNCLEAR_FILLERS = {
+    "ah",
+    "eh",
+    "em",
+    "hm",
+    "hmm",
+    "mmm",
+    "ruido",
+    "silencio",
+    "inaudible",
+    "ininteligible",
+}
 _CONFIRMATION_MARKERS = (
-    "confirmas", "confirmame", "confirmar", "quieres que la reserve",
-    "quiere que la reserve", "queres que a reserve", "te la reservo",
-    "reservo la cita", "reservo a cita", "quieres cancelar",
-    "quiere cancelar", "queres cancelar",
+    "confirmas",
+    "confirmame",
+    "confirmar",
+    "quieres que la reserve",
+    "quiere que la reserve",
+    "queres que a reserve",
+    "te la reservo",
+    "reservo la cita",
+    "reservo a cita",
+    "quieres cancelar",
+    "quiere cancelar",
+    "queres cancelar",
 )
 _CONFIRMATION_PHRASES = {
-    "si", "vale", "de acuerdo", "correcto", "correcta", "confirmo",
-    "adelante", "perfecto", "me viene bien", "esa", "ese",
-    "la primera", "el primero", "reservala", "reservalo",
+    "si",
+    "vale",
+    "de acuerdo",
+    "correcto",
+    "correcta",
+    "confirmo",
+    "adelante",
+    "perfecto",
+    "me viene bien",
+    "esa",
+    "ese",
+    "la primera",
+    "el primero",
+    "reservala",
+    "reservalo",
 }
 
 
@@ -64,7 +95,9 @@ def _normalize_user_text(value: str) -> str:
 def transcript_is_clear(value: str) -> bool:
     """Reject silence, filler-only and obviously unusable transcriptions."""
     normalized = _normalize_user_text(value)
-    if not normalized or any(marker in normalized for marker in ("[inaudible]", "[ruido]", "(ruido)", "...")):
+    if not normalized or any(
+        marker in normalized for marker in ("[inaudible]", "[ruido]", "(ruido)", "...")
+    ):
         return False
     tokens = re.findall(r"[a-z0-9]+", normalized)
     if not tokens or all(token in _UNCLEAR_FILLERS for token in tokens):
@@ -80,7 +113,11 @@ def transcript_has_explicit_confirmation(value: str) -> bool:
         return False
     if normalized in _CONFIRMATION_PHRASES:
         return True
-    return any(phrase in normalized for phrase in _CONFIRMATION_PHRASES if " " in phrase or phrase.startswith("reserva"))
+    return any(
+        phrase in normalized
+        for phrase in _CONFIRMATION_PHRASES
+        if " " in phrase or phrase.startswith("reserva")
+    )
 
 
 def assistant_requested_confirmation(value: str) -> bool:
@@ -465,7 +502,9 @@ class OpenAIRealtimeBridge:
 
     async def _request_validated_turn_response(self, *, clear: bool) -> None:
         await self._request_response(
-            instructions=None if clear else _clarification_instruction(self._context.language),
+            instructions=None
+            if clear
+            else _clarification_instruction(self._context.language),
             output_modalities=(
                 ["text"] if self._context.voice_provider != "openai" else ["audio"]
             ),
@@ -539,12 +578,9 @@ class OpenAIRealtimeBridge:
             error = raw_error if isinstance(raw_error, dict) else {}
             code = str(error.get("code") or "")
             message = str(error.get("message") or "")
-            temperature_compatibility_error = (
-                code == "unknown_parameter"
-                and (
-                    str(error.get("param") or "") == "session.temperature"
-                    or "session.temperature" in message
-                )
+            temperature_compatibility_error = code == "unknown_parameter" and (
+                str(error.get("param") or "") == "session.temperature"
+                or "session.temperature" in message
             )
             if code in _BENIGN_ERROR_CODES or temperature_compatibility_error:
                 if code == "response_cancel_not_active":
@@ -581,7 +617,9 @@ class OpenAIRealtimeBridge:
             transcript_text = transcript.strip() if isinstance(transcript, str) else ""
             self._last_user_input_clear = transcript_is_clear(transcript_text)
             if transcript_text:
-                await self._persist_transcript("user", transcript_text, event_id=item_id)
+                await self._persist_transcript(
+                    "user", transcript_text, event_id=item_id
+                )
             logger.info(
                 "user_transcript_completed",
                 extra={
@@ -591,14 +629,19 @@ class OpenAIRealtimeBridge:
                 },
             )
             if self._context.transcript_enabled:
-                await self._request_validated_turn_response(clear=self._last_user_input_clear)
+                await self._request_validated_turn_response(
+                    clear=self._last_user_input_clear
+                )
             return
 
         if event_type in {
             "input_audio_buffer.speech_started",
             "input_audio_buffer.speech_stopped",
         }:
-            if event_type == "input_audio_buffer.speech_started" and self._context.transcript_enabled:
+            if (
+                event_type == "input_audio_buffer.speech_started"
+                and self._context.transcript_enabled
+            ):
                 self._last_user_input_clear = False
             logger.info(event_type.replace(".", "_"), extra={"call_id": self._call_id})
             return
@@ -642,7 +685,10 @@ class OpenAIRealtimeBridge:
         if event_type == "response.done":
             self._response_active = False
             self._response_create_inflight = False
-            response = event.get("response") if isinstance(event.get("response"), dict) else {}
+            raw_response = event.get("response")
+            response: dict[str, object] = (
+                raw_response if isinstance(raw_response, dict) else {}
+            )
             response_id = str(response.get("id") or event.get("event_id") or "")
             assistant_text = "".join(self._assistant_text_parts).strip()
             self._assistant_text_parts.clear()
@@ -675,7 +721,11 @@ class OpenAIRealtimeBridge:
         if not isinstance(item, dict):
             return
         item_type = str(item.get("type") or "")
-        if item_type and item_type != "function_call" and "function_call" not in str(event.get("type")):
+        if (
+            item_type
+            and item_type != "function_call"
+            and "function_call" not in str(event.get("type"))
+        ):
             return
         name = item.get("name")
         call_id = str(item.get("call_id") or item.get("id") or "")
@@ -737,8 +787,6 @@ class OpenAIRealtimeBridge:
         else:
             await self._request_response(
                 output_modalities=(
-                    ["text"]
-                    if self._context.voice_provider != "openai"
-                    else ["audio"]
+                    ["text"] if self._context.voice_provider != "openai" else ["audio"]
                 )
             )

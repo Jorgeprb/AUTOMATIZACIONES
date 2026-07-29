@@ -244,8 +244,7 @@ def diagnose_google_oauth_configuration(
                 variable="GOOGLE_TOKEN_ENCRYPTION_KEY",
                 severity="error",
                 message=(
-                    "GOOGLE_TOKEN_ENCRYPTION_KEY still looks like an example "
-                    "value."
+                    "GOOGLE_TOKEN_ENCRYPTION_KEY still looks like an example value."
                 ),
                 help=(
                     "Generate a real Fernet key. Keep it stable after "

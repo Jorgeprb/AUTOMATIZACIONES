@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
@@ -15,11 +15,18 @@ from sqlalchemy.orm import Session
 
 from app.audio import TTSGenerationError, synthesize_speech
 from app.config import Settings, get_settings
-from app.db import get_db, get_session_factory
 from app.customer_service import normalize_customer_phone
-from app.enterprise_service import require_production_entitlement
-from app.enterprise_service import enqueue_outbox
-from app.models import AssistantConfig, CallEvent, CallSession, CallStatus, Clinic, ClinicCustomer, Worker
+from app.db import get_db, get_session_factory
+from app.enterprise_service import enqueue_outbox, require_production_entitlement
+from app.models import (
+    AssistantConfig,
+    CallEvent,
+    CallSession,
+    CallStatus,
+    Clinic,
+    ClinicCustomer,
+    Worker,
+)
 from app.openai_realtime.prompt_builder import (
     ActiveAssistantConfigMissing,
     ClinicContext,
@@ -352,10 +359,7 @@ def create_voice_context(
     called_number = (
         context.phone_number.phone_number
         if context.phone_number is not None
-        else resolved_candidate
-        or payload.called_number
-        or payload.callee
-        or "unknown"
+        else resolved_candidate or payload.called_number or payload.callee or "unknown"
     )[:32]
     effective_transcript_enabled = bool(
         config.transcript_enabled or settings.enable_call_transcription
@@ -386,7 +390,11 @@ def create_voice_context(
         openai_call_id=payload.openai_call_id,
         provider_call_id=payload.provider_call_id,
         caller_phone=caller_phone,
-        caller_name=(known_customer.name if known_customer and config.known_customer_name_enabled else None),
+        caller_name=(
+            known_customer.name
+            if known_customer and config.known_customer_name_enabled
+            else None
+        ),
         customer_id=(known_customer.id if known_customer else None),
         called_number=called_number,
         status=CallStatus.ACTIVE,
@@ -413,10 +421,19 @@ def create_voice_context(
         worker_name = None
         if known_customer.preferred_worker_id:
             worker = session.get(Worker, known_customer.preferred_worker_id)
-            if worker is not None and worker.clinic_id == context.clinic.id and worker.is_active:
+            if (
+                worker is not None
+                and worker.clinic_id == context.clinic.id
+                and worker.is_active
+            ):
                 worker_name = worker.name
-        if config.known_customer_greeting_enabled and config.known_customer_name_enabled:
-            first_message = config.known_customer_greeting_template.replace("{customer_name}", known_customer.name)
+        if (
+            config.known_customer_greeting_enabled
+            and config.known_customer_name_enabled
+        ):
+            first_message = config.known_customer_greeting_template.replace(
+                "{customer_name}", known_customer.name
+            )
         customer_instruction = (
             "\n\n# Cliente conocido\n"
             f"Nombre reconocido: {known_customer.name if config.known_customer_name_enabled else 'no utilizar'}. "
@@ -472,8 +489,14 @@ def create_voice_context(
         clinic=_clinic_info(context.clinic),
         tools=list(get_realtime_tools()),
         customer_id=(known_customer.id if known_customer else None),
-        customer_name=(known_customer.name if known_customer and config.known_customer_name_enabled else None),
-        preferred_worker_id=(known_customer.preferred_worker_id if known_customer else None),
+        customer_name=(
+            known_customer.name
+            if known_customer and config.known_customer_name_enabled
+            else None
+        ),
+        preferred_worker_id=(
+            known_customer.preferred_worker_id if known_customer else None
+        ),
     )
 
 
@@ -489,7 +512,11 @@ def close_internal_call(
     if call.ended_at is None:
         call.ended_at = datetime.now(UTC)
     if call.status == CallStatus.ACTIVE:
-        call.status = CallStatus.COMPLETED if payload.reason not in {"media_start_failed", "error"} else CallStatus.FAILED
+        call.status = (
+            CallStatus.COMPLETED
+            if payload.reason not in {"media_start_failed", "error"}
+            else CallStatus.FAILED
+        )
     if settings.call_analysis_enabled and call.transcript_enabled:
         enqueue_outbox(
             session,
@@ -540,8 +567,6 @@ def synthesize_internal_voice(
     return Response(content=result.audio, media_type=result.media_type)
 
 
-
-
 @router.post("/transcript")
 def append_internal_voice_transcript(
     payload: InternalTranscriptRequest,
@@ -576,7 +601,9 @@ def append_internal_voice_transcript(
             .order_by(CallEvent.created_at.desc(), CallEvent.id.desc())
             .limit(50)
         ).all()
-        if any(event.payload_json.get("event_id") == payload.event_id for event in recent):
+        if any(
+            event.payload_json.get("event_id") == payload.event_id for event in recent
+        ):
             return {"ok": True, "stored": False, "reason": "duplicate"}
 
     label = "Paciente" if payload.role == "user" else "Asistente"

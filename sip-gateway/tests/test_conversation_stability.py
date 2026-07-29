@@ -70,7 +70,9 @@ def test_duplicate_tool_events_execute_once_and_continue_after_response_done() -
     async def run() -> None:
         calls: list[str] = []
 
-        async def executor(name: str, arguments: dict[str, object]) -> dict[str, object]:
+        async def executor(
+            name: str, arguments: dict[str, object]
+        ) -> dict[str, object]:
             calls.append(name)
             return {"ok": True}
 

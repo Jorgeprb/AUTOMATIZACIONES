@@ -1,108 +1,63 @@
-# Entrega final para revisión con Codex en VPS
+# Entrega final Autogal Enterprise
 
 Fecha: 2026-07-29
 
-## Estado de la entrega
+## Estado
 
-Esta copia integra de forma acumulativa el CRM por clínica, reconocimiento de llamantes,
-recursos, estadísticas, análisis asíncrono, registro/onboarding, cuentas comerciales,
-catálogo, Stripe, provisión y entitlements. La única migración nueva es lineal:
+Integración empresarial completada y validada. Cadena Alembic única:
 
 ```text
 20260728_0020 -> 20260729_0022
 ```
 
-No se incluyen `.env`, secretos, `.git`, `node_modules`, caches, backups ni scripts de
-reparación temporales.
+El código registra 18 rutas FastAPI de primer nivel, 126 paths, 166 operaciones OpenAPI y 37 tablas SQLAlchemy.
 
-## Validaciones repetidas al empaquetar
+## Cambios principales
 
-- `python -m compileall`: correcto.
-- `git diff --check`: correcto.
-- `alembic heads`: una única cabeza `20260729_0022`.
-- Frontend administrador/cliente: `npm run typecheck` correcto.
-- SIP gateway: 43 pruebas superadas.
-- Import completo FastAPI/SQLAlchemy: validado anteriormente con 170 rutas, 37 tablas y
-  mappers correctos; no se pudo repetir en el empaquetado porque el runtime disponible no
-  contiene `google-auth`, `stripe`, `phonenumbers` ni `psycopg` y el índice Python interno
-  no ofrece esos paquetes.
-- Web pública: no se pudo repetir TypeScript/build porque no están instaladas sus
-  dependencias React/Vite. El paquete no incluye `node_modules`; Docker/npm debe instalar
-  dependencias Linux desde `package-lock.json`.
+- CRM tenant-safe, reconocimiento del llamante, campos personalizados, CSV, fusión y anonimización.
+- Servicios y alias, profesional preferido, recursos, capacidades, reservas y estadísticas.
+- Análisis asíncrono de llamadas y outbox.
+- Registro, verificación, recuperación, sesiones, OAuth y onboarding multi-clínica.
+- BillingAccount, catálogo, Checkout, Customer Portal, webhooks, suscripciones y entitlements.
+- Provisión manual, SMTP, portales, web pública, SIP, Compose y Caddy.
+- Migración 0022 corregida para UUID PostgreSQL, longitud de estados y reversibilidad.
+- Eliminadas copias de código obsoletas; dependencias y builds quedan fuera de Git.
 
-## Comprobación recomendada con Codex
+## Validación
+
+- Backend: 138 pruebas; compileall, Ruff y mypy correctos.
+- SIP: 43 pruebas; Ruff y mypy correctos.
+- Frontend: 12 archivos y 38 pruebas; typecheck y build correctos.
+- Web pública: 2 pruebas; typecheck y build correctos.
+- PostgreSQL 16: upgrade vacío, downgrade temporal a 0020, upgrade a 0022 y alembic check correctos.
+- Docker: imágenes migrate, api, sip-gateway, frontend, client-frontend y public-frontend construidas.
+- Caddy: configuración válida usando variables de ejemplo.
+- Compose: renderizado válido usando .env.production.example.
+- No se contactó Stripe, Google, SMTP, OpenAI ni un carrier SIP reales.
+
+La base de producción observada sigue en 20260728_0020. Aplicar 0022 solo durante el despliegue controlado.
+
+## Despliegue
 
 ```bash
 cd /opt/AUTOMATIZACIONES
-
-# 1. Revisar secretos y completar variables nuevas.
-cp .env.production.example .env.production.nueva
-# Fusionar manualmente las nuevas claves en el .env.production real; no sustituir secretos.
-
-# 2. Construir sin aplicar aún la migración.
-docker compose -f docker-compose.prod.yml --env-file .env.production \
-  build --no-cache migrate api sip-gateway frontend client-frontend public-frontend
-
-# 3. Confirmar una única cabeza.
-docker compose -f docker-compose.prod.yml --env-file .env.production \
-  run --rm --entrypoint alembic migrate heads
-
-# 4. Backup PostgreSQL antes de migrar.
-# Usar pg_dump o el mecanismo de backup de Supabase/servicio PostgreSQL.
-
-# 5. Aplicar migración.
+docker compose -f docker-compose.prod.yml --env-file .env.production build migrate api sip-gateway frontend client-frontend public-frontend
 docker compose -f docker-compose.prod.yml --env-file .env.production run --rm migrate
-
-# 6. Levantar.
-docker compose -f docker-compose.prod.yml --env-file .env.production \
-  up -d --force-recreate api sip-gateway frontend client-frontend public-frontend caddy
-
-# 7. Comprobar.
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --force-recreate api sip-gateway frontend client-frontend public-frontend caddy
 docker compose -f docker-compose.prod.yml --env-file .env.production ps
-docker compose -f docker-compose.prod.yml --env-file .env.production \
-  logs --tail=250 migrate api sip-gateway frontend client-frontend public-frontend caddy
+docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --entrypoint alembic migrate current
 ```
 
-## Tests dentro de las imágenes o entorno Linux
+El último comando debe mostrar `20260729_0022 (head)`.
+
+## Rollback
+
+Preferido: restaurar el backup PostgreSQL previo y las imágenes anteriores. Solo sin datos Enterprise nuevos:
 
 ```bash
-cd clinic-voice-agent
-python -m compileall -q app alembic
-pytest
-alembic heads
-
-cd ../sip-gateway
-pytest
-
-cd ../frontend
-npm ci
-npm run typecheck
-npm run test
-npm run build
-
-cd ../public-frontend
-npm ci
-npm run typecheck
-npm run build
+cd /opt/AUTOMATIZACIONES
+docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --entrypoint alembic migrate downgrade 20260728_0020
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --force-recreate api sip-gateway frontend client-frontend public-frontend caddy
 ```
 
-## Pruebas funcionales prioritarias
-
-1. Login administrador y cliente, incluido Google OAuth.
-2. Registro, verificación de correo, recuperación y onboarding.
-3. Aislamiento entre dos usuarios y dos clínicas.
-4. CRUD/importación/exportación/fusión/anonimización de clientes.
-5. Reconocimiento de Caller ID dentro de la clínica correcta.
-6. Reserva con cuadrícula, trabajador, recurso y Google Calendar.
-7. Cierre SIP y generación posterior de `CallAnalysis`.
-8. Stripe Checkout en modo test y reenvío idempotente de webhooks.
-9. Provisión manual y activación/desactivación de entitlements.
-10. Customer Portal, cancelación al final del periodo y reactivación.
-
-## Precauciones
-
-- No ejecutar `alembic stamp`.
-- No ejecutar `docker compose down -v`.
-- No exponer `STRIPE_WEBHOOK_SECRET`, claves Google, SMTP ni OpenAI.
-- La activación de compras debe depender del webhook verificado, no de la success URL.
-- Mantener snapshots históricos de teléfono/nombre al anonimizar clientes.
+No usar `alembic stamp`, `docker compose down -v` ni eliminar volúmenes.

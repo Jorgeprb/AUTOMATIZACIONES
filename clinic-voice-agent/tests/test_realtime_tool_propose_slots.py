@@ -17,7 +17,7 @@ from app.calendar.fake_client import (
     InMemoryCalendarBackend,
 )
 from app.config import Settings
-from app.models import CallSession, CallStatus, Clinic, Service, Worker
+from app.models import AssistantConfig, CallSession, CallStatus, Clinic, Service, Worker
 from app.openai_realtime.tools import ToolExecutionContext, execute_realtime_tool
 from app.schemas import AgentProposeSlotsRequest
 
@@ -67,15 +67,30 @@ def _domain(session: Session) -> tuple[Clinic, Worker, Service, CallSession]:
         buffer_before_minutes=0,
         buffer_after_minutes=0,
     )
+    config = AssistantConfig(
+        clinic=clinic,
+        name="Configuración Tool Slots",
+        realtime_model="gpt-realtime-2",
+        realtime_voice="marin",
+        language="es-ES",
+        first_message="Hola.",
+        system_prompt="Gestiona citas.",
+        safety_prompt="No diagnostiques.",
+        booking_policy_prompt="Confirma antes de reservar.",
+        cancellation_policy_prompt="Confirma antes de cancelar.",
+        transfer_policy_prompt="Transfiere cuando corresponda.",
+        is_active=True,
+    )
     call = CallSession(
         clinic=clinic,
+        assistant_config=config,
         openai_call_id="rtc_tool_slots",
         caller_phone="+34600111222",
         called_number="+34910009901",
         status=CallStatus.ACTIVE,
         conversation_state_json={"mode": "test"},
     )
-    session.add_all([clinic, worker, service, call])
+    session.add_all([clinic, worker, service, config, call])
     session.commit()
     return clinic, worker, service, call
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import signal
 
@@ -22,6 +23,7 @@ async def main() -> None:
     gateway = SipGateway(settings)
     loop = asyncio.get_running_loop()
     shutdown_started = asyncio.Event()
+    shutdown_tasks: set[asyncio.Task[None]] = set()
 
     async def request_shutdown(reason: str) -> None:
         if shutdown_started.is_set():
@@ -31,13 +33,14 @@ async def main() -> None:
         await gateway.shutdown()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(
-                sig,
-                lambda caught=sig: asyncio.create_task(request_shutdown(caught.name)),
-            )
-        except NotImplementedError:
-            pass
+        with contextlib.suppress(NotImplementedError):
+
+            def handle_signal(caught: signal.Signals = sig) -> None:
+                task = asyncio.create_task(request_shutdown(caught.name))
+                shutdown_tasks.add(task)
+                task.add_done_callback(shutdown_tasks.discard)
+
+            loop.add_signal_handler(sig, handle_signal)
 
     try:
         await gateway.serve_forever()

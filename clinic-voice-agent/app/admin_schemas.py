@@ -361,9 +361,9 @@ class AssistantConfigBase(BaseModel):
     allow_bookings: bool = True
     allow_price_answers: bool = True
     ask_service: bool = True
-    service_prompt_mode: Literal[
-        "list_services", "ask_open", "infer_confirm"
-    ] = "ask_open"
+    service_prompt_mode: Literal["list_services", "ask_open", "infer_confirm"] = (
+        "ask_open"
+    )
     slot_interval_minutes: Literal[5, 10, 15, 20, 30, 60] = 15
     direct_availability_response: bool = True
     direct_booking_response: bool = True
@@ -374,8 +374,13 @@ class AssistantConfigBase(BaseModel):
     hangup_on_natural_goodbye: bool = True
     known_customer_name_enabled: bool = True
     known_customer_greeting_enabled: bool = True
-    known_customer_greeting_template: str = Field(default="Ola, {customer_name}. En que podo axudarche?", max_length=1000)
-    known_customer_explanation_template: str = Field(default="Non te preocupes, non son vidente. Recoñecín o número porque estás na base de datos para ofrecerche unha atención máis personalizada.", max_length=2000)
+    known_customer_greeting_template: str = Field(
+        default="Ola, {customer_name}. En que podo axudarche?", max_length=1000
+    )
+    known_customer_explanation_template: str = Field(
+        default="Non te preocupes, non son vidente. Recoñecín o número porque estás na base de datos para ofrecerche unha atención máis personalizada.",
+        max_length=2000,
+    )
     remember_customer_after_booking: bool = True
     suggest_preferred_worker_enabled: bool = True
     ask_worker_preference_enabled: bool = True
@@ -383,9 +388,9 @@ class AssistantConfigBase(BaseModel):
     max_consecutive_questions: int = Field(default=2, ge=1, le=5)
     conversation_style: Literal["natural", "formal", "comercial", "breve"] = "natural"
     initiative_level: Literal["bajo", "medio", "alto"] = "medio"
-    commercial_call_handling: Literal[
-        "declinar", "transferir", "responder_basico"
-    ] = "declinar"
+    commercial_call_handling: Literal["declinar", "transferir", "responder_basico"] = (
+        "declinar"
+    )
     allow_cancellations: bool = True
     allow_reschedules: bool = True
     natural_confirmation_required: bool = True
@@ -491,9 +496,9 @@ class AssistantConfigUpdate(BaseModel):
     booking_policy_prompt: str | None = Field(default=None, min_length=1)
     cancellation_policy_prompt: str | None = Field(default=None, min_length=1)
     transfer_policy_prompt: str | None = Field(default=None, min_length=1)
-    tone: (
-        Literal["profesional", "cercano", "comercial", "breve", "formal"] | None
-    ) = None
+    tone: Literal["profesional", "cercano", "comercial", "breve", "formal"] | None = (
+        None
+    )
     response_length: Literal["corta", "normal", "detallada"] | None = None
     ask_patient_name: bool | None = None
     ask_patient_phone: bool | None = None
@@ -502,9 +507,9 @@ class AssistantConfigUpdate(BaseModel):
     allow_bookings: bool | None = None
     allow_price_answers: bool | None = None
     ask_service: bool | None = None
-    service_prompt_mode: Literal[
-        "list_services", "ask_open", "infer_confirm"
-    ] | None = None
+    service_prompt_mode: (
+        Literal["list_services", "ask_open", "infer_confirm"] | None
+    ) = None
     slot_interval_minutes: Literal[5, 10, 15, 20, 30, 60] | None = None
     direct_availability_response: bool | None = None
     direct_booking_response: bool | None = None
@@ -516,15 +521,15 @@ class AssistantConfigUpdate(BaseModel):
     known_customer_name_enabled: bool | None = None
     known_customer_greeting_enabled: bool | None = None
     known_customer_greeting_template: str | None = Field(default=None, max_length=1000)
-    known_customer_explanation_template: str | None = Field(default=None, max_length=2000)
+    known_customer_explanation_template: str | None = Field(
+        default=None, max_length=2000
+    )
     remember_customer_after_booking: bool | None = None
     suggest_preferred_worker_enabled: bool | None = None
     ask_worker_preference_enabled: bool | None = None
     max_proposed_slots: int | None = Field(default=None, ge=1, le=10)
     max_consecutive_questions: int | None = Field(default=None, ge=1, le=5)
-    conversation_style: (
-        Literal["natural", "formal", "comercial", "breve"] | None
-    ) = None
+    conversation_style: Literal["natural", "formal", "comercial", "breve"] | None = None
     initiative_level: Literal["bajo", "medio", "alto"] | None = None
     commercial_call_handling: (
         Literal["declinar", "transferir", "responder_basico"] | None
@@ -772,9 +777,9 @@ class AssistantRecommendedTemplateResponse(BaseModel):
     allow_bookings: bool
     allow_price_answers: bool
     ask_service: bool
-    service_prompt_mode: Literal[
-        "list_services", "ask_open", "infer_confirm"
-    ] = "ask_open"
+    service_prompt_mode: Literal["list_services", "ask_open", "infer_confirm"] = (
+        "ask_open"
+    )
     slot_interval_minutes: Literal[5, 10, 15, 20, 30, 60] = 15
     direct_availability_response: bool = True
     direct_booking_response: bool = True
@@ -787,9 +792,7 @@ class AssistantRecommendedTemplateResponse(BaseModel):
     max_consecutive_questions: int = Field(ge=1, le=5)
     conversation_style: Literal["natural", "formal", "comercial", "breve"]
     initiative_level: Literal["bajo", "medio", "alto"]
-    commercial_call_handling: Literal[
-        "declinar", "transferir", "responder_basico"
-    ]
+    commercial_call_handling: Literal["declinar", "transferir", "responder_basico"]
     allow_cancellations: bool
     allow_reschedules: bool
     natural_confirmation_required: bool

@@ -135,8 +135,7 @@ def build_session_config(
             )
         elif (
             context is not None
-            and context.active_assistant_config.caller_phone_policy
-            == "use_directly"
+            and context.active_assistant_config.caller_phone_policy == "use_directly"
         ):
             context_lines.append(
                 f"Caller ID de confianza: {normalized_caller_phone}. Úsalo directamente "

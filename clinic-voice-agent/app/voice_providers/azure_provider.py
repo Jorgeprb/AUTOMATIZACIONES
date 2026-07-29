@@ -41,7 +41,9 @@ AZURE_STATIC_VOICES = (
 
 _AZURE_HTTP_CLIENT = httpx.Client(
     timeout=httpx.Timeout(30.0, connect=5.0),
-    limits=httpx.Limits(max_connections=50, max_keepalive_connections=20, keepalive_expiry=60.0),
+    limits=httpx.Limits(
+        max_connections=50, max_keepalive_connections=20, keepalive_expiry=60.0
+    ),
     headers={"User-Agent": "clinic-voice-agent"},
 )
 
@@ -144,10 +146,10 @@ class AzureTTSProvider:
             raise VoiceProviderCredentialError(
                 "AZURE_SPEECH_KEY y AZURE_SPEECH_REGION deben estar configuradas."
             )
-        raw_codec = (
-            request.response_format == "wav"
-            and request.telephony_codec in {"pcma", "pcmu"}
-        )
+        raw_codec = request.response_format == "wav" and request.telephony_codec in {
+            "pcma",
+            "pcmu",
+        }
         output_format = AZURE_OUTPUT_FORMATS.get(
             request.telephony_codec if raw_codec else request.response_format,
             AZURE_OUTPUT_FORMATS["mp3"],
@@ -161,8 +163,7 @@ class AzureTTSProvider:
         pitch = max(Decimal("-24.00"), min(request.voice_pitch, Decimal("24.00")))
         pitch_value = f"{pitch:+.2f}st"
         escaped_text = (
-            f"<prosody rate='{speed:.2f}' pitch='{pitch_value}'>"
-            f"{escaped}</prosody>"
+            f"<prosody rate='{speed:.2f}' pitch='{pitch_value}'>{escaped}</prosody>"
         )
         if style:
             escaped_text = (

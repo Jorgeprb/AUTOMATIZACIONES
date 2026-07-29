@@ -123,16 +123,24 @@ def require_admin_access(
 ) -> AdminPrincipal:
     """Authenticate browser sessions, retaining API-key support for automation."""
     configured = settings.admin_api_key
-    if supplied_key and configured is not None and hmac.compare_digest(
-        supplied_key,
-        configured.get_secret_value(),
+    if (
+        supplied_key
+        and configured is not None
+        and hmac.compare_digest(
+            supplied_key,
+            configured.get_secret_value(),
+        )
     ):
         principal = _api_key_principal()
         request.state.admin_principal = principal
         return principal
 
     raw_token = request.cookies.get(settings.admin_session_cookie_name)
-    resolved = principal_from_session(session, raw_token=raw_token or "") if raw_token else None
+    resolved = (
+        principal_from_session(session, raw_token=raw_token or "")
+        if raw_token
+        else None
+    )
     if resolved is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

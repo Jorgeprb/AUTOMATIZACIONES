@@ -324,8 +324,7 @@ async def test_assistant_knowledge_and_flow_crud(database_engine: Engine) -> Non
         assert selected_preview.status_code == 200
         assert "Hola desde la alternativa." in selected_preview.json()["prompt"]
         assert (
-            "Usa esta configuración seleccionada."
-            in selected_preview.json()["prompt"]
+            "Usa esta configuración seleccionada." in selected_preview.json()["prompt"]
         )
 
         activated = await client.post(
@@ -343,9 +342,7 @@ async def test_assistant_knowledge_and_flow_crud(database_engine: Engine) -> Non
             headers=ADMIN_HEADERS,
         )
         active_ids = [
-            item["id"]
-            for item in listed_configs.json()["items"]
-            if item["is_active"]
+            item["id"] for item in listed_configs.json()["items"] if item["is_active"]
         ]
         assert active_ids == [inactive_config.json()["id"]]
 
@@ -366,13 +363,11 @@ async def test_assistant_knowledge_and_flow_crud(database_engine: Engine) -> Non
             {voice["id"] for voice in assistant_options.json()["voices"]}
         )
         assert "openai" in {
-            provider["id"]
-            for provider in assistant_options.json()["voice_providers"]
+            provider["id"] for provider in assistant_options.json()["voice_providers"]
         }
         assert "mp3" in assistant_options.json()["output_audio_formats"]
         assert "gl-ES" in {
-            language["id"]
-            for language in assistant_options.json()["languages"]
+            language["id"] for language in assistant_options.json()["languages"]
         }
         recommended_template = await client.get(
             "/api/admin/assistant-templates/recommended",
@@ -523,9 +518,7 @@ async def test_assistant_knowledge_and_flow_crud(database_engine: Engine) -> Non
         )
         assert templates.status_code == 200
         standard_template = next(
-            item
-            for item in templates.json()
-            if item["key"] == "standard_booking"
+            item for item in templates.json() if item["key"] == "standard_booking"
         )
         assert any(
             step.get("tool_name") == "create_appointment"
@@ -551,8 +544,9 @@ async def test_assistant_knowledge_and_flow_crud(database_engine: Engine) -> Non
             headers=ADMIN_HEADERS,
         )
         assert flow_preview.status_code == 200
-        assert "Flujo conversacional activo: Reserva estándar" in (
-            flow_preview.json()["prompt"]
+        assert (
+            "Flujo conversacional activo: Reserva estándar"
+            in (flow_preview.json()["prompt"])
         )
         assert "patient_name" in flow_preview.json()["prompt"]
         assert "propose_slots" in flow_preview.json()["prompt"]
@@ -580,8 +574,8 @@ async def test_assistant_knowledge_and_flow_crud(database_engine: Engine) -> Non
         assert "Servicio oculto" not in preview_body["prompt"]
         assert "Contexto oculto" not in preview_body["prompt"]
         assert "no reservar con el asistente" in preview_body["prompt"]
-        assert "Flujo conversacional activo: Reserva estándar" in (
-            preview_body["prompt"]
+        assert (
+            "Flujo conversacional activo: Reserva estándar" in (preview_body["prompt"])
         )
 
         context_preview = await client.get(
@@ -1223,10 +1217,7 @@ async def test_admin_appointment_crud_and_filters(database_engine: Engine) -> No
         assert filtered.json()["items"][0]["service_name"] == "Revisión"
 
         cancelled = await client.post(
-            (
-                f"/api/admin/clinics/{clinic_id}/appointments/"
-                f"{appointment_id}/cancel"
-            ),
+            (f"/api/admin/clinics/{clinic_id}/appointments/{appointment_id}/cancel"),
             headers=ADMIN_HEADERS,
         )
         assert cancelled.status_code == 200

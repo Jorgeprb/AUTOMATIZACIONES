@@ -55,7 +55,7 @@ describe("LoginPage", () => {
       <Routes><Route path="/login" element={<LoginPage />} /></Routes>,
       ["/login"],
     );
-    await user.type(screen.getByLabelText("Usuario"), "admin");
+    await user.type(screen.getByLabelText("Usuario o email"), "admin");
     await user.type(screen.getByLabelText("Contraseña"), "mal");
     await user.click(screen.getByRole("button", { name: "Entrar" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -73,7 +73,7 @@ describe("LoginPage", () => {
       </Routes>,
       ["/login"],
     );
-    await user.type(screen.getByLabelText("Usuario"), "admin");
+    await user.type(screen.getByLabelText("Usuario o email"), "admin");
     await user.type(screen.getByLabelText("Contraseña"), "Test-only-password-123!");
     await user.click(screen.getByRole("button", { name: "Entrar" }));
     expect(await screen.findByText("Panel privado")).toBeInTheDocument();

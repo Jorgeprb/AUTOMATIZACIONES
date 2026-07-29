@@ -132,8 +132,7 @@ DATE_READING_RULES = {
 
 PRICE_READING_RULES = {
     "brief": (
-        "Lee precios de forma breve, sin explicar impuestos salvo que esten "
-        "escritos."
+        "Lee precios de forma breve, sin explicar impuestos salvo que esten escritos."
     ),
     "clear": "Lee precios de forma clara, con moneda y condiciones configuradas.",
     "detailed": (
@@ -249,7 +248,7 @@ def build_voice_instruction_block(profile: VoiceProfileLike) -> str:
     if profile.ai_disclosure_enabled:
         lines.append(
             "- Disclosure IA: al inicio informa de forma natural: "
-            f"\"{effective_disclosure_message(profile)}\""
+            f'"{effective_disclosure_message(profile)}"'
         )
     else:
         lines.append("- Disclosure IA: desactivado por configuracion.")

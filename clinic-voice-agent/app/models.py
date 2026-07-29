@@ -441,10 +441,7 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="valid_assistant_slot_interval_minutes",
         ),
         CheckConstraint(
-            (
-                "conversation_style IN "
-                "('natural', 'formal', 'comercial', 'breve')"
-            ),
+            ("conversation_style IN ('natural', 'formal', 'comercial', 'breve')"),
             name="valid_assistant_conversation_style",
         ),
         CheckConstraint(
@@ -649,12 +646,12 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
     )
     time_reading_style: Mapped[str] = mapped_column(
-        String(32),
+        String(24),
         default="natural_quarters",
         nullable=False,
     )
     caller_phone_policy: Mapped[str] = mapped_column(
-        String(32),
+        String(24),
         default="ask_before_use",
         nullable=False,
     )
@@ -692,7 +689,9 @@ class AssistantConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     known_customer_explanation_template: Mapped[str] = mapped_column(
         Text,
-        server_default=text("'Non te preocupes, non son vidente. Recoñecín o número porque estás na base de datos para ofrecerche unha atención máis personalizada.'"),
+        server_default=text(
+            "'Non te preocupes, non son vidente. Recoñecín o número porque estás na base de datos para ofrecerche unha atención máis personalizada.'"
+        ),
         default=(
             "Non te preocupes, non son vidente. Recoñecín o número porque estás "
             "na base de datos para ofrecerche unha atención máis personalizada."
@@ -1186,7 +1185,7 @@ class CallSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
         nullable=True,
     )
-    openai_call_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    openai_call_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     provider_call_id: Mapped[str | None] = mapped_column(
         String(128),
         nullable=True,
@@ -1316,9 +1315,7 @@ class Appointment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
         nullable=True,
     )
-    idempotency_key: Mapped[str | None] = mapped_column(
-        String(200), nullable=True
-    )
+    idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
     google_calendar_id: Mapped[str] = mapped_column(
         String(320),
         nullable=False,
@@ -1440,9 +1437,7 @@ class AdminUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """Database-backed administrator account."""
 
     __tablename__ = "admin_users"
-    __table_args__ = (
-        UniqueConstraint("username", name="uq_admin_users_username"),
-    )
+    __table_args__ = (UniqueConstraint("username", name="uq_admin_users_username"),)
 
     username: Mapped[str] = mapped_column(String(160), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -1453,6 +1448,7 @@ class AdminUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="admin_role",
             native_enum=False,
             create_constraint=True,
+            length=32,
             validate_strings=True,
             values_callable=enum_values,
         ),
@@ -1476,11 +1472,16 @@ class AdminUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
-
-    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    email: Mapped[str | None] = mapped_column(
+        String(320), unique=True, index=True, nullable=True
+    )
     avatar_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    google_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    auth_provider: Mapped[str] = mapped_column(String(32), nullable=False, server_default='password')
+    google_subject: Mapped[str | None] = mapped_column(
+        String(255), unique=True, nullable=True
+    )
+    auth_provider: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="password"
+    )
     email_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -1514,6 +1515,7 @@ class AdminMembership(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="admin_membership_role",
             native_enum=False,
             create_constraint=True,
+            length=32,
             validate_strings=True,
             values_callable=enum_values,
         ),
@@ -1555,14 +1557,22 @@ class OAuthLoginState(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """Single-use Google OpenID Connect authorization transaction."""
 
     __tablename__ = "oauth_login_states"
+    __table_args__ = (
+        UniqueConstraint("state_hash", name="uq_oauth_login_states_state_hash"),
+        Index("ix_oauth_login_states_expiry", "expires_at"),
+    )
 
     state_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     nonce: Mapped[str] = mapped_column(String(128), nullable=False)
     code_verifier: Mapped[str] = mapped_column(String(256), nullable=False)
     redirect_uri: Mapped[str] = mapped_column(String(1000), nullable=False)
     portal: Mapped[str] = mapped_column(String(24), nullable=False)
-    return_to: Mapped[str] = mapped_column(String(1000), nullable=False, server_default='/')
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    return_to: Mapped[str] = mapped_column(
+        String(1000), nullable=False, server_default="/"
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class AdminAuditLog(UUIDPrimaryKeyMixin, Base):
@@ -1600,25 +1610,45 @@ class ClinicCustomer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __tablename__ = "clinic_customers"
     __table_args__ = (
-        UniqueConstraint("clinic_id", "normalized_phone", name="uq_clinic_customers_phone"),
+        UniqueConstraint(
+            "clinic_id", "normalized_phone", name="uq_clinic_customers_phone"
+        ),
         Index("ix_clinic_customers_clinic_name", "clinic_id", "name"),
         Index("ix_clinic_customers_clinic_active", "clinic_id", "is_active"),
-        Index("ix_clinic_customers_clinic_last_contact", "clinic_id", "last_contact_at"),
+        Index(
+            "ix_clinic_customers_clinic_last_contact", "clinic_id", "last_contact_at"
+        ),
     )
 
-    clinic_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clinics.id", ondelete="CASCADE"), nullable=False)
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clinics.id", ondelete="CASCADE"), nullable=False
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     normalized_phone: Mapped[str] = mapped_column(String(32), nullable=False)
     display_phone: Mapped[str] = mapped_column(String(64), nullable=False)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    custom_values_json: Mapped[dict[str, Any]] = mapped_column(JSON, server_default=text("'{}'"), default=dict, nullable=False)
-    preferred_worker_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workers.id", ondelete="SET NULL"), nullable=True)
-    personalization_enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), default=True, nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), default=True, nullable=False)
-    first_contact_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_contact_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    anonymized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    custom_values_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, server_default=text("'{}'"), default=dict, nullable=False
+    )
+    preferred_worker_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("workers.id", ondelete="SET NULL"), nullable=True
+    )
+    personalization_enabled: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), default=True, nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), default=True, nullable=False
+    )
+    first_contact_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_contact_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    anonymized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ClinicCustomerFieldDefinition(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -1627,18 +1657,31 @@ class ClinicCustomerFieldDefinition(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "clinic_customer_field_definitions"
     __table_args__ = (
         UniqueConstraint("clinic_id", "key", name="uq_customer_fields_clinic_key"),
-        CheckConstraint("field_type IN ('text','textarea','number','boolean','date','select')", name="valid_customer_field_type"),
+        CheckConstraint(
+            "field_type IN ('text','textarea','number','boolean','date','select')",
+            name="valid_customer_field_type",
+        ),
         Index("ix_customer_fields_clinic_sort", "clinic_id", "sort_order"),
     )
 
-    clinic_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clinics.id", ondelete="CASCADE"), nullable=False)
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clinics.id", ondelete="CASCADE"), nullable=False
+    )
     key: Mapped[str] = mapped_column(String(80), nullable=False)
     label: Mapped[str] = mapped_column(String(160), nullable=False)
     field_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    options_json: Mapped[list[str]] = mapped_column(JSON, server_default=text("'[]'"), default=list, nullable=False)
-    required: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), default=False, nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), default=True, nullable=False)
-    sort_order: Mapped[int] = mapped_column(Integer, server_default=text("0"), default=0, nullable=False)
+    options_json: Mapped[list[str]] = mapped_column(
+        JSON, server_default=text("'[]'"), default=list, nullable=False
+    )
+    required: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), default=False, nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), default=True, nullable=False
+    )
+    sort_order: Mapped[int] = mapped_column(
+        Integer, server_default=text("0"), default=0, nullable=False
+    )
 
 
 class ClinicResource(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -1650,13 +1693,23 @@ class ClinicResource(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint("capacity > 0", name="positive_resource_capacity"),
     )
 
-    clinic_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False)
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     name: Mapped[str] = mapped_column(String(180), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    resource_type: Mapped[str] = mapped_column(String(48), server_default=text("'other'"), default="other", nullable=False)
-    capacity: Mapped[int] = mapped_column(Integer, server_default=text("1"), default=1, nullable=False)
-    schedule_json: Mapped[dict[str, Any]] = mapped_column(JSON, server_default=text("'{}'"), default=dict, nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), default=True, nullable=False)
+    resource_type: Mapped[str] = mapped_column(
+        String(48), server_default=text("'other'"), default="other", nullable=False
+    )
+    capacity: Mapped[int] = mapped_column(
+        Integer, server_default=text("1"), default=1, nullable=False
+    )
+    schedule_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, server_default=text("'{}'"), default=dict, nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), default=True, nullable=False
+    )
 
 
 class ServiceResourceRequirement(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -1664,14 +1717,26 @@ class ServiceResourceRequirement(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __tablename__ = "service_resource_requirements"
     __table_args__ = (
-        UniqueConstraint("service_id", "resource_id", name="uq_service_resource_requirement"),
+        UniqueConstraint(
+            "service_id", "resource_id", name="uq_service_resource_requirement"
+        ),
         CheckConstraint("quantity > 0", name="positive_resource_requirement_quantity"),
     )
 
-    clinic_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False)
-    service_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("services.id", ondelete="CASCADE"), index=True, nullable=False)
-    resource_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clinic_resources.id", ondelete="CASCADE"), index=True, nullable=False)
-    quantity: Mapped[int] = mapped_column(Integer, server_default=text("1"), default=1, nullable=False)
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    service_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("services.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    resource_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clinic_resources.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    quantity: Mapped[int] = mapped_column(
+        Integer, server_default=text("1"), default=1, nullable=False
+    )
 
 
 class ResourceReservation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -1679,14 +1744,24 @@ class ResourceReservation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __tablename__ = "resource_reservations"
     __table_args__ = (
-        UniqueConstraint("appointment_id", "resource_id", name="uq_appointment_resource_reservation"),
+        UniqueConstraint(
+            "appointment_id", "resource_id", name="uq_appointment_resource_reservation"
+        ),
         CheckConstraint("quantity > 0", name="positive_reserved_resource_quantity"),
         Index("ix_resource_reservations_window", "resource_id", "start_at", "end_at"),
     )
 
-    clinic_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False)
-    appointment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("appointments.id", ondelete="CASCADE"), index=True, nullable=False)
-    resource_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clinic_resources.id", ondelete="RESTRICT"), index=True, nullable=False)
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    appointment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("appointments.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    resource_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clinic_resources.id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
+    )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -1698,26 +1773,51 @@ class CallAnalysis(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "call_analyses"
     __table_args__ = (
         UniqueConstraint("call_session_id", name="uq_call_analysis_call"),
-        CheckConstraint("sentiment_score BETWEEN -1 AND 1", name="valid_sentiment_score"),
+        CheckConstraint(
+            "sentiment_score BETWEEN -1 AND 1", name="valid_sentiment_score"
+        ),
         CheckConstraint("confidence BETWEEN 0 AND 1", name="valid_analysis_confidence"),
-        CheckConstraint("sentiment_label IN ('positive','neutral','negative','mixed','unknown')", name="valid_sentiment_label"),
+        CheckConstraint(
+            "sentiment_label IN ('positive','neutral','negative','mixed','unknown')",
+            name="valid_sentiment_label",
+        ),
     )
 
-    call_session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("call_sessions.id", ondelete="CASCADE"), nullable=False)
-    clinic_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False)
-    sentiment_label: Mapped[str] = mapped_column(String(16), server_default=text("'unknown'"), default="unknown", nullable=False)
-    sentiment_score: Mapped[Decimal] = mapped_column(Numeric(4, 3), server_default=text("0"), default=Decimal("0"), nullable=False)
-    confidence: Mapped[Decimal] = mapped_column(Numeric(4, 3), server_default=text("0"), default=Decimal("0"), nullable=False)
+    call_session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("call_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    sentiment_label: Mapped[str] = mapped_column(
+        String(16), server_default=text("'unknown'"), default="unknown", nullable=False
+    )
+    sentiment_score: Mapped[Decimal] = mapped_column(
+        Numeric(4, 3), server_default=text("0"), default=Decimal("0"), nullable=False
+    )
+    confidence: Mapped[Decimal] = mapped_column(
+        Numeric(4, 3), server_default=text("0"), default=Decimal("0"), nullable=False
+    )
     intent: Mapped[str | None] = mapped_column(String(120), nullable=True)
     resolved: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     resolution_label: Mapped[str | None] = mapped_column(String(160), nullable=True)
-    urgency: Mapped[str] = mapped_column(String(24), server_default=text("'normal'"), default="normal", nullable=False)
-    topics_json: Mapped[list[str]] = mapped_column(JSON, server_default=text("'[]'"), default=list, nullable=False)
-    friction_points_json: Mapped[list[str]] = mapped_column(JSON, server_default=text("'[]'"), default=list, nullable=False)
+    urgency: Mapped[str] = mapped_column(
+        String(24), server_default=text("'normal'"), default="normal", nullable=False
+    )
+    topics_json: Mapped[list[str]] = mapped_column(
+        JSON, server_default=text("'[]'"), default=list, nullable=False
+    )
+    friction_points_json: Mapped[list[str]] = mapped_column(
+        JSON, server_default=text("'[]'"), default=list, nullable=False
+    )
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    analyzed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     model: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    analysis_version: Mapped[str] = mapped_column(String(32), server_default=text("'v1'"), default="v1", nullable=False)
+    analysis_version: Mapped[str] = mapped_column(
+        String(32), server_default=text("'v1'"), default="v1", nullable=False
+    )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -1727,23 +1827,43 @@ class BillingAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "billing_accounts"
     __table_args__ = (Index("ix_billing_accounts_status", "status"),)
 
-    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("admin_users.id", ondelete="RESTRICT"), index=True, nullable=False)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="RESTRICT"), index=True, nullable=False
+    )
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
     legal_name: Mapped[str | None] = mapped_column(String(240), nullable=True)
     tax_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    billing_address_json: Mapped[dict[str, Any]] = mapped_column(JSON, server_default=text("'{}'"), default=dict, nullable=False)
+    billing_address_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, server_default=text("'{}'"), default=dict, nullable=False
+    )
     billing_email: Mapped[str] = mapped_column(String(320), nullable=False)
-    stripe_customer_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
-    status: Mapped[str] = mapped_column(String(32), server_default=text("'free'"), default="free", nullable=False)
+    stripe_customer_id: Mapped[str | None] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), server_default=text("'free'"), default="free", nullable=False
+    )
 
 
 class BillingAccountMember(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "billing_account_members"
-    __table_args__ = (UniqueConstraint("billing_account_id", "user_id", name="uq_billing_account_member"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "billing_account_id", "user_id", name="uq_billing_account_member"
+        ),
+    )
 
-    billing_account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("billing_accounts.id", ondelete="CASCADE"), index=True, nullable=False)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("admin_users.id", ondelete="CASCADE"), index=True, nullable=False)
-    role: Mapped[str] = mapped_column(String(24), server_default=text("'member'"), default="member", nullable=False)
+    billing_account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("billing_accounts.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    role: Mapped[str] = mapped_column(
+        String(24), server_default=text("'member'"), default="member", nullable=False
+    )
 
 
 class BillingProduct(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -1754,11 +1874,19 @@ class BillingProduct(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     product_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    ownership_type: Mapped[str] = mapped_column(String(32), server_default=text("'service'"), default="service", nullable=False)
+    ownership_type: Mapped[str] = mapped_column(
+        String(32), server_default=text("'service'"), default="service", nullable=False
+    )
     entitlement_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    quantity_configurable: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), default=True, nullable=False)
-    stripe_product_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), default=True, nullable=False)
+    quantity_configurable: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), default=True, nullable=False
+    )
+    stripe_product_id: Mapped[str | None] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), default=True, nullable=False
+    )
 
 
 class BillingPrice(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -1768,114 +1896,241 @@ class BillingPrice(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint("unit_amount_minor >= 0", name="nonnegative_billing_price"),
     )
 
-    product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("billing_products.id", ondelete="CASCADE"), index=True, nullable=False)
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("billing_products.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
     code: Mapped[str] = mapped_column(String(80), nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), server_default=text("'EUR'"), default="EUR", nullable=False)
+    currency: Mapped[str] = mapped_column(
+        String(3), server_default=text("'EUR'"), default="EUR", nullable=False
+    )
     unit_amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     billing_type: Mapped[str] = mapped_column(String(24), nullable=False)
     interval: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    stripe_price_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), default=True, nullable=False)
+    stripe_price_id: Mapped[str | None] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), default=True, nullable=False
+    )
 
 
 class PurchaseOrder(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "purchase_orders"
-    __table_args__ = (Index("ix_purchase_orders_account_created", "billing_account_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_purchase_orders_account_created", "billing_account_id", "created_at"),
+    )
 
-    billing_account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("billing_accounts.id", ondelete="RESTRICT"), index=True, nullable=False)
-    clinic_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clinics.id", ondelete="SET NULL"), index=True, nullable=True)
-    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True)
-    status: Mapped[str] = mapped_column(String(32), server_default=text("'draft'"), default="draft", nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), server_default=text("'EUR'"), default="EUR", nullable=False)
-    total_one_time_minor: Mapped[int] = mapped_column(Integer, server_default=text("0"), default=0, nullable=False)
-    total_recurring_minor: Mapped[int] = mapped_column(Integer, server_default=text("0"), default=0, nullable=False)
-    stripe_checkout_session_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
+    billing_account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("billing_accounts.id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
+    )
+    clinic_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("clinics.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), server_default=text("'draft'"), default="draft", nullable=False
+    )
+    currency: Mapped[str] = mapped_column(
+        String(3), server_default=text("'EUR'"), default="EUR", nullable=False
+    )
+    total_one_time_minor: Mapped[int] = mapped_column(
+        Integer, server_default=text("0"), default=0, nullable=False
+    )
+    total_recurring_minor: Mapped[int] = mapped_column(
+        Integer, server_default=text("0"), default=0, nullable=False
+    )
+    stripe_checkout_session_id: Mapped[str | None] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
     checkout_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class PurchaseOrderItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "purchase_order_items"
-    __table_args__ = (CheckConstraint("quantity > 0", name="positive_order_item_quantity"),)
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="positive_order_item_quantity"),
+    )
 
-    order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("purchase_orders.id", ondelete="CASCADE"), index=True, nullable=False)
-    product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("billing_products.id", ondelete="RESTRICT"), nullable=False)
-    price_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("billing_prices.id", ondelete="RESTRICT"), nullable=False)
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("purchase_orders.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("billing_products.id", ondelete="RESTRICT"), nullable=False
+    )
+    price_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("billing_prices.id", ondelete="RESTRICT"), nullable=False
+    )
     product_name_snapshot: Mapped[str] = mapped_column(String(200), nullable=False)
     unit_amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     billing_type: Mapped[str] = mapped_column(String(24), nullable=False)
-    stripe_price_id_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    stripe_price_id_snapshot: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
 
 
 class PaymentRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "payment_records"
-    __table_args__ = (Index("ix_payment_records_account_created", "billing_account_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_payment_records_account_created", "billing_account_id", "created_at"),
+    )
 
-    billing_account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("billing_accounts.id", ondelete="RESTRICT"), index=True, nullable=False)
-    order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("purchase_orders.id", ondelete="SET NULL"), nullable=True)
-    clinic_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clinics.id", ondelete="SET NULL"), index=True, nullable=True)
-    stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
-    stripe_invoice_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
+    billing_account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("billing_accounts.id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
+    )
+    order_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("purchase_orders.id", ondelete="SET NULL"), nullable=True
+    )
+    clinic_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("clinics.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    stripe_payment_intent_id: Mapped[str | None] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
+    stripe_invoice_id: Mapped[str | None] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
     amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
-    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    refunded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    refunded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     failure_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
 
 class ClinicSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "clinic_subscriptions"
-    __table_args__ = (Index("ix_clinic_subscriptions_account_status", "billing_account_id", "status"),)
+    __table_args__ = (
+        Index("ix_clinic_subscriptions_account_status", "billing_account_id", "status"),
+    )
 
-    billing_account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("billing_accounts.id", ondelete="RESTRICT"), index=True, nullable=False)
-    clinic_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False)
-    product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("billing_products.id", ondelete="SET NULL"), nullable=True)
-    price_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("billing_prices.id", ondelete="SET NULL"), nullable=True)
-    stripe_subscription_id: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    stripe_subscription_item_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
-    quantity: Mapped[int] = mapped_column(Integer, server_default=text("1"), default=1, nullable=False)
+    billing_account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("billing_accounts.id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
+    )
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    product_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("billing_products.id", ondelete="SET NULL"), nullable=True
+    )
+    price_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("billing_prices.id", ondelete="SET NULL"), nullable=True
+    )
+    stripe_subscription_id: Mapped[str] = mapped_column(
+        String(255), unique=True, index=True, nullable=False
+    )
+    stripe_subscription_item_id: Mapped[str | None] = mapped_column(
+        String(255), unique=True, nullable=True
+    )
+    quantity: Mapped[int] = mapped_column(
+        Integer, server_default=text("1"), default=1, nullable=False
+    )
     status: Mapped[str] = mapped_column(String(40), nullable=False)
-    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), default=False, nullable=False)
-    canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    current_period_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    cancel_at_period_end: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), default=False, nullable=False
+    )
+    canceled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class PhoneProvisioningOrder(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "phone_provisioning_orders"
-    __table_args__ = (Index("ix_phone_provisioning_status_created", "status", "created_at"),)
+    __table_args__ = (
+        Index("ix_phone_provisioning_status_created", "status", "created_at"),
+    )
 
-    billing_account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("billing_accounts.id", ondelete="RESTRICT"), index=True, nullable=False)
-    clinic_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False)
-    purchase_order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("purchase_orders.id", ondelete="SET NULL"), nullable=True)
-    subscription_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clinic_subscriptions.id", ondelete="SET NULL"), nullable=True)
-    requested_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True)
-    status: Mapped[str] = mapped_column(String(48), server_default=text("'paid_pending_provisioning'"), default="paid_pending_provisioning", nullable=False)
-    quantity: Mapped[int] = mapped_column(Integer, server_default=text("1"), default=1, nullable=False)
+    billing_account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("billing_accounts.id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
+    )
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    purchase_order_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("purchase_orders.id", ondelete="SET NULL"), nullable=True
+    )
+    subscription_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("clinic_subscriptions.id", ondelete="SET NULL"), nullable=True
+    )
+    requested_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(48),
+        server_default=text("'paid_pending_provisioning'"),
+        default="paid_pending_provisioning",
+        nullable=False,
+    )
+    quantity: Mapped[int] = mapped_column(
+        Integer, server_default=text("1"), default=1, nullable=False
+    )
     assigned_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     provider: Mapped[str | None] = mapped_column(String(48), nullable=True)
     external_provider_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sip_target: Mapped[str | None] = mapped_column(String(500), nullable=True)
     webhook_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    provisioned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    provisioned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    activated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ClinicEntitlement(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "clinic_entitlements"
-    __table_args__ = (UniqueConstraint("clinic_id", "code", name="uq_clinic_entitlement_code"),)
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "code", name="uq_clinic_entitlement_code"),
+    )
 
-    clinic_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False)
-    billing_account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("billing_accounts.id", ondelete="CASCADE"), index=True, nullable=False)
-    subscription_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clinic_subscriptions.id", ondelete="SET NULL"), nullable=True)
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    billing_account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("billing_accounts.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    subscription_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("clinic_subscriptions.id", ondelete="SET NULL"), nullable=True
+    )
     code: Mapped[str] = mapped_column(String(80), nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False)
-    quantity: Mapped[int] = mapped_column(Integer, server_default=text("1"), default=1, nullable=False)
-    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, server_default=text("'{}'"), default=dict, nullable=False)
+    quantity: Mapped[int] = mapped_column(
+        Integer, server_default=text("1"), default=1, nullable=False
+    )
+    starts_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ends_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, server_default=text("'{}'"), default=dict, nullable=False
+    )
 
 
 class AuthActionToken(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -1887,11 +2142,17 @@ class AuthActionToken(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index("ix_auth_action_tokens_user_kind", "user_id", "kind", "expires_at"),
     )
 
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("admin_users.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class WebhookReceipt(UUIDPrimaryKeyMixin, TimestampMixin, Base):

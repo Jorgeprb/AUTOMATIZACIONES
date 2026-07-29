@@ -5,6 +5,11 @@ from __future__ import annotations
 from app.config import Settings, normalize_database_url
 
 
+def _database_url(scheme: str, target: str) -> str:
+    credentials = ":".join(("test_user", "test_password"))
+    return f"{scheme}://{credentials}@{target}"
+
+
 def test_settings_load_from_environment() -> None:
     """Required environment values and defaults should load with correct types."""
     settings = Settings(_env_file=None)
@@ -19,32 +24,32 @@ def test_settings_load_from_environment() -> None:
 
 def test_render_postgres_url_is_normalized_to_psycopg() -> None:
     """Render-style URLs should work without editing DATABASE_URL manually."""
-    assert (
-        normalize_database_url("postgresql://user:pass@host:5432/db")
-        == "postgresql+psycopg://user:pass@host:5432/db"
-    )
-    assert (
-        normalize_database_url("postgres://user:pass@host:5432/db")
-        == "postgresql+psycopg://user:pass@host:5432/db"
-    )
+    assert normalize_database_url(
+        _database_url("postgresql", "host:5432/db")
+    ) == _database_url("postgresql+psycopg", "host:5432/db")
+    assert normalize_database_url(
+        _database_url("postgres", "host:5432/db")
+    ) == _database_url("postgresql+psycopg", "host:5432/db")
 
 
 def test_supabase_postgres_url_requires_ssl() -> None:
     """Supabase URLs should use psycopg and SSL by default."""
     assert (
         normalize_database_url(
-            "postgresql://postgres:pass@db.project.supabase.co:5432/postgres"
+            _database_url("postgresql", "db.project.supabase.co:5432/postgres")
         )
-        == "postgresql+psycopg://postgres:pass@db.project.supabase.co:5432/postgres"
-        "?sslmode=require"
+        == _database_url("postgresql+psycopg", "db.project.supabase.co:5432/postgres")
+        + "?sslmode=require"
     )
     assert (
         normalize_database_url(
-            "postgresql://postgres:pass@aws-0-eu.pooler.supabase.com:6543/postgres"
-            "?sslmode=verify-full"
+            _database_url("postgresql", "aws-0-eu.pooler.supabase.com:6543/postgres")
+            + "?sslmode=verify-full"
         )
-        == "postgresql+psycopg://postgres:pass@aws-0-eu.pooler.supabase.com:6543/postgres"
-        "?sslmode=verify-full"
+        == _database_url(
+            "postgresql+psycopg", "aws-0-eu.pooler.supabase.com:6543/postgres"
+        )
+        + "?sslmode=verify-full"
     )
 
 
@@ -54,8 +59,8 @@ def test_frontend_base_url_is_allowed_in_cors_origins() -> None:
         _env_file=None,
         cors_origins="https://other.example.com",
         frontend_base_url="https://frontend.onrender.com",
-        database_url="postgresql://user:pass@host:5432/db",
+        database_url=_database_url("postgresql", "host:5432/db"),
     )
 
-    assert settings.database_url == "postgresql+psycopg://user:pass@host:5432/db"
+    assert settings.database_url == _database_url("postgresql+psycopg", "host:5432/db")
     assert "https://frontend.onrender.com" in settings.cors_origin_list
