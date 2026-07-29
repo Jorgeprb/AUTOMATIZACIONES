@@ -24,6 +24,7 @@ from app.models import (
     Service,
     Worker,
 )
+from app.scheduling_hours import effective_worker_hours
 from app.voice_profile import build_voice_instruction_block
 
 
@@ -385,7 +386,7 @@ def build_realtime_instructions(context: ClinicContext) -> str:
         )
         worker_lines.append(
             f"- {worker.name}, {worker.role}{detail}. "
-            f"Horario: {_render_hours(worker.working_hours_json)}. "
+            f"Horario: {_render_hours(effective_worker_hours(worker))}. "
             f"{calendar_state}."
         )
     if not worker_lines:

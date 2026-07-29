@@ -81,6 +81,8 @@ def _valid_oauth_settings(**overrides: object) -> Settings:
         "google_token_encryption_key": "8O2kjVBitzftnS456ehnuY5iSmFpJbqJNUnWVallRe4=",
         "public_base_url": "https://voice.test",
         "frontend_base_url": "http://localhost:5173",
+        "admin_frontend_base_url": "https://admin.test",
+        "client_frontend_base_url": "https://client.test",
     }
     values.update(overrides)
     return Settings(**values)
@@ -101,7 +103,20 @@ def test_oauth_authorization_request_contains_offline_access() -> None:
     assert set(query["scope"][0].split(" ")) == set(GOOGLE_CALENDAR_SCOPES)
     assert query["code_challenge_method"] == ["S256"]
     assert state.clinic_id == clinic_id
+    assert state.portal == "admin"
     assert 43 <= len(state.code_verifier) <= 128
+
+
+def test_oauth_state_preserves_client_portal_return() -> None:
+    """Calendar OAuth must return to the portal that initiated the flow."""
+    settings = _valid_oauth_settings()
+    clinic_id = uuid.uuid4()
+
+    authorization = create_google_authorization_request(
+        settings, clinic_id, portal="client"
+    )
+
+    assert decode_google_oauth_state(settings, authorization.state).portal == "client"
 
 
 def test_credentials_are_encrypted_before_storage(db_session: Session) -> None:
@@ -559,6 +574,49 @@ async def test_google_oauth_callback_uses_configured_public_redirect_uri(
 
 
 @pytest.mark.anyio
+async def test_google_oauth_callback_returns_to_client_settings(
+    database_engine: Engine,
+) -> None:
+    """A client-portal OAuth flow must not redirect to admin.autogal.es."""
+    settings = _valid_oauth_settings()
+    clinic = Clinic(
+        name="Clínica OAuth Client",
+        timezone="Europe/Madrid",
+        phone_number="+34910000196",
+    )
+    factory = _factory(database_engine)
+    with factory() as session:
+        session.add(clinic)
+        session.commit()
+        clinic_id = clinic.id
+    state = create_google_authorization_request(
+        settings, clinic_id, portal="client"
+    ).state
+    query = urlencode({"state": state, "code": "test-code"})
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(database_engine, settings)),
+        base_url="http://internal-localhost",
+    ) as client:
+        with patch(
+            "app.api.google_auth.complete_google_oauth",
+            return_value=GoogleOAuthResult(
+                clinic_id=clinic_id,
+                account_email="clinica@gmail.com",
+            ),
+        ):
+            response = await client.get(
+                f"/auth/google/callback?{query}",
+                follow_redirects=False,
+            )
+
+    assert response.status_code == 302
+    assert response.headers["location"].startswith(
+        f"https://client.test/clinics/{clinic_id}/settings/calendar?"
+    )
+
+
+@pytest.mark.anyio
 async def test_google_oauth_callback_google_failure_redirects_with_reason(
     database_engine: Engine,
 ) -> None:
@@ -654,7 +712,7 @@ async def test_google_oauth_callback_invalid_state_redirects_with_reason(
 
     assert response.status_code == 302
     location = response.headers["location"]
-    assert location.startswith("http://localhost:5173/settings?")
+    assert location.startswith("https://client.test/clinics?")
     redirect_query = parse_qs(urlparse(location).query)
     assert redirect_query["google"] == ["error"]
     assert redirect_query["reason"] == ["invalid_state"]

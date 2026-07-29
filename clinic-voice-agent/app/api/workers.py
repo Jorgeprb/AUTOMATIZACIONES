@@ -93,7 +93,7 @@ def create_worker_calendar(
         )
     except GoogleAuthorizationRequired as exc:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
             detail=str(exc),
         ) from exc
     except WorkerCalendarError as exc:
@@ -131,7 +131,7 @@ def link_worker_calendar(
         )
     except GoogleAuthorizationRequired as exc:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
             detail=str(exc),
         ) from exc
     except WorkerCalendarError as exc:

@@ -107,6 +107,7 @@ class GoogleOAuthState:
 
     clinic_id: uuid.UUID
     code_verifier: str
+    portal: Literal["admin", "client"] = "admin"
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,6 +349,8 @@ def _build_flow(
 def create_google_authorization_request(
     settings: Settings,
     clinic_id: uuid.UUID,
+    *,
+    portal: Literal["admin", "client"] = "admin",
 ) -> GoogleAuthorizationRequest:
     """Create an offline OAuth authorization URL for one clinic."""
     ensure_google_oauth_configuration(settings)
@@ -357,6 +360,7 @@ def create_google_authorization_request(
             "clinic_id": str(clinic_id),
             "nonce": secrets.token_urlsafe(24),
             "code_verifier": code_verifier,
+            "portal": portal,
         },
         separators=(",", ":"),
     )
@@ -395,6 +399,9 @@ def decode_google_oauth_state(
         code_verifier = str(payload["code_verifier"])
         if not 43 <= len(code_verifier) <= 128:
             raise ValueError("invalid PKCE code verifier")
+        portal = str(payload.get("portal") or "admin")
+        if portal not in {"admin", "client"}:
+            raise ValueError("invalid portal")
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise InvalidGoogleOAuthState("Google OAuth state is invalid.") from exc
     except Exception as exc:
@@ -404,6 +411,7 @@ def decode_google_oauth_state(
     return GoogleOAuthState(
         clinic_id=clinic_id,
         code_verifier=code_verifier,
+        portal=portal,  # type: ignore[arg-type]
     )
 
 

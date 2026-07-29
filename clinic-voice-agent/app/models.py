@@ -301,6 +301,12 @@ class Worker(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=True,
         nullable=False,
     )
+    inherit_clinic_hours: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        default=True,
+        nullable=False,
+    )
     working_hours_json: Mapped[dict[str, Any]] = mapped_column(
         JSON,
         server_default=text("'{}'"),

@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarX2, Pencil, Plus, Trash2, Users } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
+import { getClinic } from "@/api/clinics";
 import {
   createWorker,
   deleteWorker,
@@ -45,6 +45,7 @@ function formValues(worker: Worker): WorkerFormValues {
     calendar_id: worker.calendar_id ?? "",
     color_id: worker.color_id ?? "",
     is_active: worker.is_active,
+    inherit_clinic_hours: worker.inherit_clinic_hours ?? true,
     working_hours_json: normalizeWeeklyHours(worker.working_hours_json),
   };
 }
@@ -72,6 +73,12 @@ export function WorkersPage() {
     queryFn: () => listWorkers(clinicId as string),
     enabled: Boolean(clinicId),
   });
+  const clinicQuery = useQuery({
+    queryKey: ["clinic", clinicId],
+    queryFn: () => getClinic(clinicId as string),
+    enabled: Boolean(clinicId),
+  });
+  const clinicHours = normalizeWeeklyHours(clinicQuery.data?.opening_hours_json);
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["workers", clinicId] });
     await queryClient.invalidateQueries({ queryKey: ["calendar-status", clinicId] });
@@ -194,9 +201,6 @@ export function WorkersPage() {
         description="Equipo, perfil público, horarios laborales y estado de calendario."
         actions={
           <div className="flex gap-2">
-            <Button asChild variant="outline">
-              <Link to={`/clinics/${clinicId}/calendar`}>Gestionar calendarios</Link>
-            </Button>
             <Button
               onClick={() => {
                 setEditingWorker(null);
@@ -240,7 +244,7 @@ export function WorkersPage() {
           if (!open) setEditingWorker(null);
         }}
       >
-        <DialogContent>
+        <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingWorker ? "Editar trabajador" : "Nuevo trabajador"}
@@ -251,6 +255,7 @@ export function WorkersPage() {
           </DialogHeader>
           <WorkerForm
             defaultValues={editingWorker ? formValues(editingWorker) : workerDefaults}
+            clinicHours={clinicHours}
             onSubmit={(values) =>
               editingWorker
                 ? updateMutation.mutateAsync(values)

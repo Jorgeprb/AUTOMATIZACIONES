@@ -1,2 +1,3 @@
-Contiene únicamente los archivos añadidos o modificados para el desbloqueo comercial, dashboard de bienvenida, ajustes agrupados y restricción técnica de números.
-No hay migraciones nuevas. Consulta docs/CLIENT_PORTAL_UNLOCK_AND_SETTINGS_20260729.md.
+Archivos añadidos o modificados respecto a Recepcionista_App_client_unlock_number_flow.zip.
+Esta revisión añade la migración 20260730_0023; ejecuta Alembic antes de recrear el API.
+Consulta docs/CLIENT_PORTAL_POLISH_20260730.md.

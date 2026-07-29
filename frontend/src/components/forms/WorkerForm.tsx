@@ -1,13 +1,16 @@
 import { zodResolver } from "@hookform/resolvers/zod";
+import { Info } from "lucide-react";
 import { useEffect } from "react";
 import { Controller, useForm } from "react-hook-form";
 
 import { FormSection } from "@/components/common/FormSection";
+import { WeeklyHoursSummary } from "@/components/common/WeeklyHoursSummary";
 import { WeeklyHoursEditor } from "@/components/forms/WeeklyHoursEditor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import type { WeeklyHours } from "@/schemas/hours";
 import {
   workerDefaults,
   workerFormSchema,
@@ -22,12 +25,14 @@ function FieldError({ message }: { message?: string }) {
 
 export function WorkerForm({
   defaultValues = workerDefaults,
+  clinicHours,
   onSubmit,
   onCancel,
   isPending,
   submitLabel,
 }: {
   defaultValues?: WorkerFormValues;
+  clinicHours: WeeklyHours;
   onSubmit: (values: WorkerFormValues) => void | Promise<unknown>;
   onCancel: () => void;
   isPending: boolean;
@@ -38,11 +43,13 @@ export function WorkerForm({
     control,
     handleSubmit,
     reset,
+    watch,
     formState: { errors },
   } = useForm<WorkerFormValues>({
     resolver: zodResolver(workerFormSchema),
     defaultValues,
   });
+  const inheritsClinicHours = watch("inherit_clinic_hours");
 
   useEffect(() => reset(defaultValues), [defaultValues, reset]);
 
@@ -89,7 +96,7 @@ export function WorkerForm({
 
       <FormSection
         title="Calendario"
-        description="Puede configurarse aquí o desde la pantalla Calendario."
+        description="La vinculación con Google Calendar se gestiona desde Integración de calendario."
       >
         <div>
           <Label htmlFor="worker-calendar">Calendar ID</Label>
@@ -100,7 +107,7 @@ export function WorkerForm({
           />
         </div>
         <div>
-          <Label htmlFor="worker-color">Color ID</Label>
+          <Label htmlFor="worker-color">Color del evento</Label>
           <Input
             id="worker-color"
             className="mt-1.5"
@@ -111,16 +118,40 @@ export function WorkerForm({
 
       <FormSection
         title="Horario laboral"
-        description="El motor de reservas solo propondrá huecos dentro de estos tramos."
+        description="El horario efectivo se usa para calcular la disponibilidad real del trabajador."
       >
-        <div className="sm:col-span-2">
-          <Controller
-            name="working_hours_json"
-            control={control}
-            render={({ field }) => (
-              <WeeklyHoursEditor value={field.value} onChange={field.onChange} />
-            )}
-          />
+        <div className="sm:col-span-2 space-y-4">
+          <label className="flex items-start gap-3 rounded-xl border border-[#dce4f4] bg-[#f7f9ff] p-4 text-sm text-[#354158]">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4 accent-[#315efb]"
+              {...register("inherit_clinic_hours")}
+            />
+            <span>
+              <strong className="block">Heredar el horario de la clínica</strong>
+              <span className="mt-1 block text-xs leading-5 text-[#6e7a90]">
+                Si está marcado, cualquier cambio en el horario general de la clínica se aplicará automáticamente a este trabajador. Si lo desmarcas, se utilizará exclusivamente su horario personalizado.
+              </span>
+            </span>
+          </label>
+
+          {inheritsClinicHours ? (
+            <div className="rounded-xl border border-[#e5e9f0] bg-[#fafbfe] p-4">
+              <div className="mb-3 flex items-start gap-2 text-sm text-[#5e6b80]">
+                <Info className="mt-0.5 size-4 shrink-0 text-[#315efb]" />
+                Horario heredado actualmente de la clínica.
+              </div>
+              <WeeklyHoursSummary value={clinicHours} compact />
+            </div>
+          ) : (
+            <Controller
+              name="working_hours_json"
+              control={control}
+              render={({ field }) => (
+                <WeeklyHoursEditor value={field.value} onChange={field.onChange} />
+              )}
+            />
+          )}
         </div>
       </FormSection>
 

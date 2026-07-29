@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Eye, MessageSquareText, Search } from "lucide-react";
+import { ChevronDown, Eye, Filter, MessageSquareText, Search, X } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -43,6 +43,10 @@ export function ConversationsPage() {
   const clinicId = useClinicRoute();
   const [draftFilters, setDraftFilters] = useState<CallFilters>(emptyFilters);
   const [filters, setFilters] = useState<CallFilters>(emptyFilters);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeFilterCount = Object.entries(filters).filter(
+    ([key, value]) => key !== "pageSize" && Boolean(value),
+  ).length;
   const callsQuery = useQuery({
     queryKey: ["calls", clinicId, filters],
     queryFn: () => listCalls(clinicId as string, filters),
@@ -154,14 +158,33 @@ export function ConversationsPage() {
       <PageHeader
         title="Conversaciones"
         description="Llamadas, resultados, citas y datos técnicos del asistente."
+        actions={
+          <Button
+            variant="outline"
+            onClick={() => setFiltersOpen((current) => !current)}
+          >
+            <Filter className="size-4" />
+            Filtrar
+            {activeFilterCount ? (
+              <span className="rounded-full bg-[#315efb] px-1.5 py-0.5 text-[10px] font-bold text-white">
+                {activeFilterCount}
+              </span>
+            ) : null}
+            <ChevronDown
+              className={`size-4 transition-transform ${filtersOpen ? "rotate-180" : ""}`}
+            />
+          </Button>
+        }
       />
 
-      <Card className="p-5">
+      {filtersOpen ? (
+      <Card className="border-[#e8ebf0] bg-[#fbfcfe] p-5 shadow-none">
         <form
           className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"
           onSubmit={(event) => {
             event.preventDefault();
             setFilters({ ...draftFilters });
+            setFiltersOpen(false);
           }}
         >
           <div>
@@ -306,11 +329,13 @@ export function ConversationsPage() {
                 setFilters(emptyFilters);
               }}
             >
+              <X className="size-4" />
               Limpiar
             </Button>
           </div>
         </form>
       </Card>
+      ) : null}
 
       {callsQuery.isLoading ? <LoadingState rows={7} /> : null}
       {callsQuery.error ? <ErrorState error={callsQuery.error} /> : null}

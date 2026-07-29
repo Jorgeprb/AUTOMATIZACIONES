@@ -2,7 +2,6 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Bot,
-  CalendarCheck,
   Download,
   Pause,
   Play,
@@ -18,7 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
-import { listAssistantConfigs, previewPrompt } from "@/api/assistants";
+import { listAssistantConfigs } from "@/api/assistants";
 import { listClinics } from "@/api/clinics";
 import {
   closeTestSession,
@@ -83,8 +82,6 @@ export function TestConsolePage() {
   const audioUrlRef = useRef<string | null>(null);
   const ttsAbortRef = useRef<AbortController | null>(null);
   const [configId, setConfigId] = useState("");
-  const [engine, setEngine] = useState<"simulator" | "openai">("simulator");
-  const [useRealCalendar, setUseRealCalendar] = useState(false);
   const [listenVoice, setListenVoice] = useState(false);
   const [audioStatus, setAudioStatus] = useState<
     "idle" | "generating" | "playing" | "paused" | "error"
@@ -175,15 +172,6 @@ export function TestConsolePage() {
     queryFn: () => listAssistantConfigs(clinicId as string),
     enabled: Boolean(clinicId),
   });
-  const selectedConfig = configsQuery.data?.items.find(
-    (config) => config.id === configId,
-  );
-  const selectedFlowLabel =
-    selectedConfig?.call_audio_mode === "vps_media_bridge" ||
-    selectedConfig?.voice_provider !== "openai"
-      ? "VPS Media Bridge"
-      : "OpenAI Hosted SIP";
-
   useEffect(() => {
     const active =
       configsQuery.data?.items.find((config) => config.is_active) ??
@@ -197,7 +185,7 @@ export function TestConsolePage() {
     setTestSession(null);
     stopAudio();
     setLastSpokenKey("");
-  }, [clinicId, configId, engine, stopAudio, useRealCalendar]);
+  }, [clinicId, configId, stopAudio]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -227,17 +215,12 @@ export function TestConsolePage() {
     testSession,
   ]);
 
-  const previewQuery = useQuery({
-    queryKey: ["prompt-preview", clinicId, configId, "test-console"],
-    queryFn: () => previewPrompt(clinicId as string, configId),
-    enabled: Boolean(clinicId && configId),
-  });
   const startMutation = useMutation({
     mutationFn: () =>
       startTestSession(clinicId as string, {
         assistant_config_id: configId,
-        use_real_calendar: useRealCalendar,
-        engine,
+        use_real_calendar: true,
+        engine: "openai",
       }),
     onSuccess: (data) => {
       setTestSession(data);
@@ -260,8 +243,8 @@ export function TestConsolePage() {
       if (testSession) await deleteTestSession(testSession.id);
       return startTestSession(clinicId as string, {
         assistant_config_id: configId,
-        use_real_calendar: useRealCalendar,
-        engine,
+        use_real_calendar: true,
+        engine: "openai",
       });
     },
     onSuccess: (data) => {
@@ -340,7 +323,7 @@ export function TestConsolePage() {
     <div className="space-y-7">
       <PageHeader
         title="Consola de prueba"
-        description="Prueba el prompt y las mismas herramientas del asistente sin teléfono ni SIP."
+        description="Prueba el comportamiento del asistente y sus reservas sin realizar una llamada telefónica."
         actions={
           <div className="flex flex-wrap gap-2">
             <Button
@@ -375,7 +358,7 @@ export function TestConsolePage() {
       />
 
       <Card>
-        <CardContent className="grid gap-4 pt-5 md:grid-cols-2 xl:grid-cols-5">
+        <CardContent className="grid gap-4 pt-5 lg:grid-cols-[minmax(180px,1fr)_minmax(220px,1fr)_minmax(260px,1.1fr)]">
           <div>
             <Label htmlFor="test-clinic">Clínica</Label>
             <Select
@@ -394,7 +377,7 @@ export function TestConsolePage() {
             </Select>
           </div>
           <div>
-            <Label htmlFor="test-config">AssistantConfig</Label>
+            <Label htmlFor="test-config">Configuración del asistente</Label>
             <Select
               id="test-config"
               className="mt-1.5"
@@ -409,54 +392,23 @@ export function TestConsolePage() {
               ))}
             </Select>
           </div>
-          <div>
-            <Label htmlFor="test-engine">Motor textual</Label>
-            <Select
-              id="test-engine"
-              className="mt-1.5"
-              value={engine}
-              onChange={(event) =>
-                setEngine(event.target.value as "simulator" | "openai")
-              }
-            >
-              <option value="simulator">Simulador local seguro</option>
-              <option value="openai">Modelo OpenAI</option>
-            </Select>
-          </div>
-          <div className="flex flex-col justify-end gap-3">
-            <label className="flex items-center gap-2 text-sm font-medium text-[#37445b]">
-              <input
-                type="checkbox"
-                checked={useRealCalendar}
-                onChange={(event) => setUseRealCalendar(event.target.checked)}
-                className="size-4 rounded border-[#cfd6e2]"
-              />
-              Usar Google Calendar real
-            </label>
-            <Button
-              disabled={!configId || startMutation.isPending}
-              onClick={() => startMutation.mutate()}
-            >
-              <Play className="size-4" />
-              {testSession ? "Nueva conversación" : "Iniciar conversación"}
-            </Button>
-          </div>
-          <div className="rounded-xl border border-[#e4e8ef] bg-[#fbfcfe] p-3">
-            <div className="mb-3 rounded-lg bg-white px-3 py-2 text-xs text-[#526078]">
-              <p className="font-semibold text-[#27334a]">{selectedFlowLabel}</p>
-              <p>
-                {selectedConfig?.voice_provider ?? "openai"} ·{" "}
-                {selectedConfig?.voice_id ||
-                  selectedConfig?.tts_preview_voice ||
-                  selectedConfig?.realtime_voice ||
-                  "voz no configurada"}
-              </p>
-              <p>
-                {selectedConfig?.telephony_codec?.toUpperCase() ?? "PCMU"} ·{" "}
-                {selectedConfig?.voice_locale ?? "es-ES"}
-              </p>
+          <div className="rounded-xl border border-[#e4e8ef] bg-[#fbfcfe] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-[#27334a]">Conversación de prueba</p>
+                <p className="mt-1 text-xs leading-5 text-[#7a8699]">
+                  Las reservas se comprobarán y guardarán en el calendario real conectado a la clínica.
+                </p>
+              </div>
+              <Button
+                disabled={!configId || startMutation.isPending}
+                onClick={() => startMutation.mutate()}
+              >
+                <Play className="size-4" />
+                {testSession ? "Nueva conversación" : "Iniciar conversación"}
+              </Button>
             </div>
-            <label className="flex items-center gap-2 text-sm font-medium text-[#37445b]">
+            <label className="mt-4 flex items-center gap-2 text-sm font-medium text-[#37445b]">
               <input
                 type="checkbox"
                 checked={listenVoice}
@@ -467,13 +419,8 @@ export function TestConsolePage() {
                 }}
                 className="size-4 rounded border-[#cfd6e2]"
               />
-              Escuchar voz del bot
+              Escuchar las respuestas
             </label>
-            <p className="mt-1 text-xs text-[#7a8699]">
-              {selectedFlowLabel === "VPS Media Bridge"
-                ? "Simula modelo texto → TTS provider → audio, sin llamada telefónica."
-                : "Reproduce la voz OpenAI configurada para el flujo Hosted SIP."}
-            </p>
             <div className="mt-3 flex gap-2">
               <Button
                 type="button"
@@ -523,20 +470,6 @@ export function TestConsolePage() {
           </div>
         </CardContent>
       </Card>
-
-      {useRealCalendar ? (
-        <div className="flex gap-3 rounded-xl border border-[#f2d4a3] bg-[#fff8e9] p-4 text-sm text-[#8a5b12]">
-          <AlertTriangle className="mt-0.5 size-5 shrink-0" />
-          Las confirmaciones crearán o cancelarán eventos reales en Google
-          Calendar. El bot aceptará confirmaciones naturales del paciente.
-        </div>
-      ) : (
-        <div className="flex gap-3 rounded-xl border border-[#cfe7d8] bg-[#f1faf4] p-4 text-sm text-[#2f6e49]">
-          <CalendarCheck className="mt-0.5 size-5 shrink-0" />
-          Modo seguro: calendario fake en memoria. Google Calendar no recibe
-          cambios.
-        </div>
-      )}
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="space-y-5">
@@ -596,7 +529,7 @@ export function TestConsolePage() {
                         Inicia una conversación
                       </p>
                       <p className="mt-1 text-sm text-[#7a8699]">
-                        El modo seguro no toca Google.
+                        Inicia una conversación para probar el asistente.
                       </p>
                     </div>
                   </div>
@@ -654,24 +587,6 @@ export function TestConsolePage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <details>
-              <summary className="cursor-pointer list-none p-5 font-semibold text-[#27334a]">
-                Ver prompt final
-              </summary>
-              <div className="border-t border-[#e6eaf0] p-5">
-                {previewQuery.error ? (
-                  <ErrorState error={previewQuery.error} />
-                ) : (
-                  <Textarea
-                    readOnly
-                    value={testSession?.prompt ?? previewQuery.data?.prompt ?? ""}
-                    className="min-h-[520px] bg-[#111827] font-mono text-xs leading-6 text-[#e5e7eb]"
-                  />
-                )}
-              </div>
-            </details>
-          </Card>
         </div>
 
         <div className="space-y-5">
@@ -756,8 +671,7 @@ export function TestConsolePage() {
                 ))}
                 {!testSession?.tool_calls.length ? (
                   <p className="text-sm text-[#7a8699]">
-                    Las tools aparecerán cuando el asistente consulte información
-                    o calendario.
+                    Las herramientas aparecerán cuando el asistente consulte información o gestione una reserva.
                   </p>
                 ) : null}
               </div>

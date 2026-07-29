@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.calendar.google_client import GoogleCalendarClient, WorkerCalendarError
 from app.models import AppointmentSource, Clinic, Service, Worker
+from app.scheduling_hours import effective_worker_hours
 
 DEFAULT_SLOT_INTERVAL_MINUTES = 15
 ALLOWED_SLOT_INTERVAL_MINUTES = frozenset({5, 10, 15, 20, 30, 60})
@@ -310,11 +311,12 @@ def build_working_ranges(
     zone = ZoneInfo(timezone)
     lower_bound = _as_utc(not_before) if not_before is not None else None
     ranges: list[TimeRange] = []
+    weekly_hours = effective_worker_hours(worker)
 
     for day_offset in range(days_ahead):
         current_date = start_date + timedelta(days=day_offset)
         weekday = WEEKDAY_NAMES[current_date.weekday()]
-        day_ranges = worker.working_hours_json.get(weekday, [])
+        day_ranges = weekly_hours.get(weekday, [])
         if not isinstance(day_ranges, list):
             raise SchedulingValidationError(
                 f"working_hours_json[{weekday!r}] must be a list."

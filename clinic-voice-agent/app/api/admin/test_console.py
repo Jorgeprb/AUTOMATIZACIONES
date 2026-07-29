@@ -99,8 +99,8 @@ def start_test_session(
             settings,
             clinic_id=clinic_id,
             assistant_config_id=payload.assistant_config_id,
-            use_real_calendar=payload.use_real_calendar,
-            engine=payload.engine,
+            use_real_calendar=True,
+            engine="openai",
         )
         return render_test_session(session, test_session)
     except TestConsoleError as exc:

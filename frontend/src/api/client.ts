@@ -56,6 +56,31 @@ async function fetchWithTimeout(
   }
 }
 
+
+let authProbe: Promise<boolean> | null = null;
+
+async function sessionIsStillValid(): Promise<boolean> {
+  if (!authProbe) {
+    authProbe = fetchWithTimeout(`${apiBaseUrl}/auth/me`, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    })
+      .then((response) => response.status !== 401)
+      .catch(() => true)
+      .finally(() => {
+        authProbe = null;
+      });
+  }
+  return authProbe;
+}
+
+async function handleUnauthorized(path: string): Promise<void> {
+  if (path === "/auth/login" || path.startsWith("/auth/google")) return;
+  const invalid = path === "/auth/me" || !(await sessionIsStillValid());
+  if (invalid) window.dispatchEvent(new CustomEvent("autogal:unauthorized"));
+}
+
 async function checkedResponse(
   path: string,
   init: RequestInit,
@@ -77,8 +102,8 @@ async function checkedResponse(
       credentials: "include",
       headers,
     });
-    if (response.status === 401 && path !== "/auth/login") {
-      window.dispatchEvent(new CustomEvent("autogal:unauthorized"));
+    if (response.status === 401) {
+      await handleUnauthorized(path);
     }
     return response;
   } catch (error) {

@@ -3,7 +3,6 @@ import {
   Bot,
   CalendarDays,
   ChevronRight,
-  CircleAlert,
   MessageSquareText,
   Pencil,
   Phone,
@@ -17,7 +16,6 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
-import { getCalendarStatus } from "@/api/calendar";
 import { getClinic, updateClinic } from "@/api/clinics";
 import {
   createPhoneNumber,
@@ -30,6 +28,7 @@ import { ErrorState } from "@/components/common/ErrorState";
 import { LoadingState } from "@/components/common/LoadingState";
 import { PageHeader } from "@/components/common/PageHeader";
 import { StatusBadge } from "@/components/common/StatusBadge";
+import { WeeklyHoursSummary } from "@/components/common/WeeklyHoursSummary";
 import { ClinicForm } from "@/components/forms/ClinicForm";
 import { PhoneNumberForm } from "@/components/forms/PhoneNumberForm";
 import { Button } from "@/components/ui/button";
@@ -134,11 +133,6 @@ export function ClinicDetailPage({ embedded = false }: { embedded?: boolean }) {
     queryFn: () => listPhoneNumbers(clinicId as string),
     enabled: enabled && !isClientPortal,
   });
-  const calendarQuery = useQuery({
-    queryKey: ["calendar-status", clinicId],
-    queryFn: () => getCalendarStatus(clinicId as string),
-    enabled,
-  });
 
   const refreshPhones = () =>
     queryClient.invalidateQueries({ queryKey: ["phone-numbers", clinicId] });
@@ -225,29 +219,26 @@ export function ClinicDetailPage({ embedded = false }: { embedded?: boolean }) {
         </div>
       )}
 
-      {!calendarQuery.data?.connected ? (
-        <div className="flex items-start gap-3 rounded-xl border border-[#ffe1a8] bg-[#fff9ed] p-4 text-sm text-[#79591e]">
-          <CircleAlert className="mt-0.5 size-5 shrink-0" />
-          <div>
-            <p className="font-semibold">Google Calendar no está conectado.</p>
-            <p className="mt-1">
-              El agente no podrá comprobar huecos reales hasta completar OAuth.
-            </p>
-          </div>
-          <Button asChild size="sm" variant="outline" className="ml-auto">
-            <Link to={isClientPortal ? `/clinics/${clinicId}/settings/calendar` : `/clinics/${clinicId}/calendar`}>Configurar</Link>
-          </Button>
-        </div>
-      ) : null}
+      <Card className="border-[#dce4f4] bg-[#f9fbff]">
+        <CardHeader>
+          <CardTitle>Horario general de la clínica</CardTitle>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-[#667389]">
+            Este horario se aplica automáticamente a todos los trabajadores que tengan activada la opción “Heredar el horario de la clínica”. Los trabajadores con esa opción desmarcada utilizarán su horario personalizado.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <WeeklyHoursSummary value={normalizeWeeklyHours(clinic.opening_hours_json)} />
+        </CardContent>
+      </Card>
 
       <Card>
-        <CardContent className="grid gap-5 pt-5 sm:grid-cols-2 xl:grid-cols-4">
-          <div><p className="text-xs font-semibold uppercase text-[#8a95a7]">Teléfono</p><p className="mt-2 font-semibold">{clinic.main_phone_number.startsWith("pending-") ? "Pendiente de asignación" : clinic.main_phone_number}</p></div>
-          <div><p className="text-xs font-semibold uppercase text-[#8a95a7]">Email</p><p className="mt-2 font-semibold">{clinic.email || "—"}</p></div>
-          <div><p className="text-xs font-semibold uppercase text-[#8a95a7]">Zona / idioma</p><p className="mt-2 font-semibold">{clinic.timezone} · {clinic.default_language}</p></div>
-          <div><p className="text-xs font-semibold uppercase text-[#8a95a7]">Retención</p><p className="mt-2 font-semibold">{clinic.data_retention_days} días</p></div>
-          <div className="sm:col-span-2"><p className="text-xs font-semibold uppercase text-[#8a95a7]">Dirección</p><p className="mt-2 font-semibold">{clinic.address || "—"}</p></div>
-          <div className="sm:col-span-2"><p className="text-xs font-semibold uppercase text-[#8a95a7]">Web</p><p className="mt-2 font-semibold">{clinic.website || "—"}</p></div>
+        <CardContent className="grid gap-x-6 gap-y-4 pt-5 text-sm sm:grid-cols-2 xl:grid-cols-4">
+          <div><p className="text-[11px] font-semibold uppercase tracking-wide text-[#9aa3b2]">Teléfono</p><p className="mt-1 text-[#5f6c82]">{clinic.main_phone_number.startsWith("pending-") ? "Pendiente de asignación" : clinic.main_phone_number}</p></div>
+          <div><p className="text-[11px] font-semibold uppercase tracking-wide text-[#9aa3b2]">Email</p><p className="mt-1 text-[#5f6c82]">{clinic.email || "—"}</p></div>
+          <div><p className="text-[11px] font-semibold uppercase tracking-wide text-[#9aa3b2]">Zona e idioma</p><p className="mt-1 text-[#5f6c82]">{clinic.timezone} · {clinic.default_language}</p></div>
+          <div><p className="text-[11px] font-semibold uppercase tracking-wide text-[#9aa3b2]">Retención</p><p className="mt-1 text-[#5f6c82]">{clinic.data_retention_days} días</p></div>
+          <div className="sm:col-span-2"><p className="text-[11px] font-semibold uppercase tracking-wide text-[#9aa3b2]">Dirección</p><p className="mt-1 text-[#5f6c82]">{clinic.address || "—"}</p></div>
+          <div className="sm:col-span-2"><p className="text-[11px] font-semibold uppercase tracking-wide text-[#9aa3b2]">Web</p><p className="mt-1 text-[#5f6c82]">{clinic.website || "—"}</p></div>
         </CardContent>
       </Card>
 

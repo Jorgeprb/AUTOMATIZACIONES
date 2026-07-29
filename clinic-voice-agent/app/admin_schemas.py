@@ -188,6 +188,7 @@ class WorkerBase(BaseModel):
     phone_extension: str | None = Field(default=None, max_length=32)
     email: str | None = Field(default=None, max_length=320)
     is_active: bool = True
+    inherit_clinic_hours: bool = True
     working_hours_json: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -206,6 +207,7 @@ class WorkerUpdate(BaseModel):
     phone_extension: str | None = Field(default=None, max_length=32)
     email: str | None = Field(default=None, max_length=320)
     is_active: bool | None = None
+    inherit_clinic_hours: bool | None = None
     working_hours_json: dict[str, Any] | None = None
 
 
@@ -1188,8 +1190,10 @@ class TestSessionCreate(BaseModel):
     """Start one browser-based assistant simulation."""
 
     assistant_config_id: uuid.UUID
-    use_real_calendar: bool = False
-    engine: Literal["simulator", "openai"] | None = None
+    use_real_calendar: bool = True
+    # Legacy clients may still send "simulator". The API ignores the value and
+    # always runs the OpenAI engine with the real calendar enabled.
+    engine: Literal["simulator", "openai"] | None = "openai"
 
 
 class TestSessionMessageCreate(BaseModel):

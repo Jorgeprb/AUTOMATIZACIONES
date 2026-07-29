@@ -50,14 +50,28 @@ def _frontend_redirect(
     settings: Settings,
     *,
     clinic_id: uuid.UUID | None,
+    portal: str = "client",
     outcome: str,
     reason: str,
     message: str,
     account_email: str | None = None,
 ) -> RedirectResponse:
-    """Redirect OAuth browser flow back to the administration panel."""
-    base_url = settings.frontend_base_url.rstrip("/") or "http://localhost:5173"
-    path = f"/clinics/{clinic_id}/calendar" if clinic_id else "/settings"
+    """Redirect OAuth browser flow back to the portal that started it."""
+    is_admin = portal == "admin"
+    base_url = (
+        settings.admin_frontend_base_url if is_admin else settings.client_frontend_base_url
+    ).rstrip("/")
+    if not base_url:
+        base_url = "http://localhost:5173" if is_admin else "http://localhost:5174"
+    path = (
+        f"/clinics/{clinic_id}/calendar"
+        if is_admin and clinic_id
+        else f"/clinics/{clinic_id}/settings/calendar"
+        if clinic_id
+        else "/settings"
+        if is_admin
+        else "/clinics"
+    )
     query = {
         "google": outcome,
         "reason": reason,
@@ -72,17 +86,18 @@ def _frontend_redirect(
     )
 
 
-def _clinic_id_from_state(
+def _context_from_state(
     settings: Settings,
     state_value: str | None,
-) -> uuid.UUID | None:
-    """Best-effort clinic recovery for callback error redirects."""
+) -> tuple[uuid.UUID | None, str]:
+    """Best-effort clinic and portal recovery for callback redirects."""
     if not state_value:
-        return None
+        return None, "client"
     try:
-        return decode_google_oauth_state(settings, state_value).clinic_id
+        state = decode_google_oauth_state(settings, state_value)
+        return state.clinic_id, state.portal
     except GoogleOAuthError:
-        return None
+        return None, "client"
 
 
 def _authorization_response_url(settings: Settings, request: Request) -> str:
@@ -118,7 +133,11 @@ def start_google_oauth(
             detail="Clinic not found.",
         )
     try:
-        authorization = create_google_authorization_request(settings, clinic_id)
+        authorization = create_google_authorization_request(
+            settings,
+            clinic_id,
+            portal="admin" if principal.is_super_admin else "client",
+        )
     except GoogleOAuthConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -140,7 +159,7 @@ def google_oauth_callback(
     error: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
     """Exchange Google's authorization code and store encrypted credentials."""
-    clinic_id = _clinic_id_from_state(settings, state_value)
+    clinic_id, portal = _context_from_state(settings, state_value)
     logger.info(
         "google_oauth_callback_received",
         extra={
@@ -161,6 +180,7 @@ def google_oauth_callback(
         return _frontend_redirect(
             settings,
             clinic_id=clinic_id,
+            portal=portal,
             outcome="error",
             reason="google_rejected",
             message=f"Google authorization failed: {error}",
@@ -173,6 +193,7 @@ def google_oauth_callback(
         return _frontend_redirect(
             settings,
             clinic_id=None,
+            portal=portal,
             outcome="error",
             reason="missing_state",
             message="Google OAuth callback is missing state.",
@@ -198,6 +219,7 @@ def google_oauth_callback(
         return _frontend_redirect(
             settings,
             clinic_id=clinic_id,
+            portal=portal,
             outcome="error",
             reason="oauth_misconfigured",
             message=_configuration_error_detail(exc),
@@ -215,6 +237,7 @@ def google_oauth_callback(
         return _frontend_redirect(
             settings,
             clinic_id=clinic_id,
+            portal=portal,
             outcome="error",
             reason="invalid_state",
             message=str(exc),
@@ -232,6 +255,7 @@ def google_oauth_callback(
         return _frontend_redirect(
             settings,
             clinic_id=clinic_id,
+            portal=portal,
             outcome="error",
             reason="google_token_exchange_failed",
             message=str(exc),
@@ -249,6 +273,7 @@ def google_oauth_callback(
         return _frontend_redirect(
             settings,
             clinic_id=clinic_id,
+            portal=portal,
             outcome="error",
             reason="credential_encryption_failed",
             message=str(exc),
@@ -265,6 +290,7 @@ def google_oauth_callback(
         return _frontend_redirect(
             settings,
             clinic_id=clinic_id,
+            portal=portal,
             outcome="error",
             reason="db_save_failed",
             message=str(exc),
@@ -282,6 +308,7 @@ def google_oauth_callback(
         return _frontend_redirect(
             settings,
             clinic_id=clinic_id,
+            portal=portal,
             outcome="error",
             reason="oauth_failed",
             message=str(exc),
@@ -299,6 +326,7 @@ def google_oauth_callback(
         return _frontend_redirect(
             settings,
             clinic_id=clinic_id,
+            portal=portal,
             outcome="error",
             reason="unexpected_error",
             message="Unexpected Google OAuth callback error. Check backend logs.",
@@ -314,6 +342,7 @@ def google_oauth_callback(
     return _frontend_redirect(
         settings,
         clinic_id=result.clinic_id,
+        portal=portal,
         outcome="connected",
         reason="connected",
         message="Google Calendar conectado.",

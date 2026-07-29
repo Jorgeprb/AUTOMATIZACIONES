@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle,
   Bot,
   CheckCircle2,
   Clipboard,
@@ -20,7 +19,6 @@ import {
   previewPrompt,
   updateAssistantConfig,
 } from "@/api/assistants";
-import { getPromptContextPreview } from "@/api/knowledge";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ErrorState } from "@/components/common/ErrorState";
 import { LoadingState } from "@/components/common/LoadingState";
@@ -200,17 +198,8 @@ export function AssistantConfigPage() {
     queryKey: ["assistant-options"],
     queryFn: getAssistantOptions,
   });
-  const contextQuery = useQuery({
-    queryKey: ["prompt-context-preview", clinicId],
-    queryFn: () => getPromptContextPreview(clinicId as string),
-    enabled: Boolean(clinicId),
-  });
-
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["assistants", clinicId] });
-    await queryClient.invalidateQueries({
-      queryKey: ["prompt-context-preview", clinicId],
-    });
   };
   const saveMutation = useMutation({
     mutationFn: async (values: AssistantConfigFormValues) => {
@@ -287,29 +276,6 @@ export function AssistantConfigPage() {
           </Button>
         }
       />
-
-      {contextQuery.data?.warnings.length ? (
-        <div className="grid gap-2 md:grid-cols-2">
-          {contextQuery.data.warnings
-            .filter((warning) =>
-              [
-                "No hay servicios activos.",
-                "No hay trabajadores activos.",
-                "No hay calendario conectado.",
-                "No hay número configurado.",
-              ].includes(warning),
-            )
-            .map((warning) => (
-              <div
-                key={warning}
-                className="flex items-start gap-2 rounded-xl border border-[#ffe0a5] bg-[#fff9ec] px-4 py-3 text-sm text-[#78591d]"
-              >
-                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                {warning}
-              </div>
-            ))}
-        </div>
-      ) : null}
 
       {query.isLoading || optionsQuery.isLoading ? <LoadingState rows={4} /> : null}
       {query.error ? <ErrorState error={query.error} /> : null}
@@ -435,7 +401,6 @@ export function AssistantConfigPage() {
               defaultValues={
                 editingConfig ? formValues(editingConfig) : newDefaults
               }
-              contextWarnings={contextQuery.data?.warnings ?? []}
               onSubmit={(values) => saveMutation.mutateAsync(values)}
               onCancel={() => setFormOpen(false)}
               isPending={saveMutation.isPending}

@@ -377,3 +377,63 @@ def test_configured_thirty_minute_grid_never_offers_quarter_hours(
 
     assert _starts(slots) == ["09:30", "10:00", "10:30"]
     assert all(slot.start_at.minute in {0, 30} for slot in slots)
+
+
+def test_worker_inherits_clinic_opening_hours(db_session: Session) -> None:
+    """Inherited workers must follow the clinic schedule instead of their override."""
+    clinic = Clinic(
+        name="Clínica con horario general",
+        timezone="Europe/Madrid",
+        phone_number="+34920000990",
+        opening_hours_json=_weekly_hours([{"start": "10:00", "end": "12:00"}]),
+    )
+    worker = Worker(
+        clinic=clinic,
+        name="Ana",
+        role="Peluquera",
+        inherit_clinic_hours=True,
+        working_hours_json=_weekly_hours([{"start": "08:00", "end": "09:00"}]),
+    )
+    db_session.add_all([clinic, worker])
+    db_session.commit()
+
+    ranges = build_working_ranges(
+        worker,
+        start_date=MONDAY,
+        days_ahead=1,
+        timezone=clinic.timezone,
+    )
+
+    assert [item.start.astimezone(MADRID).strftime("%H:%M") for item in ranges] == [
+        "10:00"
+    ]
+
+
+def test_worker_custom_hours_override_clinic(db_session: Session) -> None:
+    """Unchecking inheritance must apply only the worker's own schedule."""
+    clinic = Clinic(
+        name="Clínica con excepción",
+        timezone="Europe/Madrid",
+        phone_number="+34920000991",
+        opening_hours_json=_weekly_hours([{"start": "10:00", "end": "12:00"}]),
+    )
+    worker = Worker(
+        clinic=clinic,
+        name="Luis",
+        role="Barbero",
+        inherit_clinic_hours=False,
+        working_hours_json=_weekly_hours([{"start": "08:00", "end": "09:00"}]),
+    )
+    db_session.add_all([clinic, worker])
+    db_session.commit()
+
+    ranges = build_working_ranges(
+        worker,
+        start_date=MONDAY,
+        days_ahead=1,
+        timezone=clinic.timezone,
+    )
+
+    assert [item.start.astimezone(MADRID).strftime("%H:%M") for item in ranges] == [
+        "08:00"
+    ]

@@ -9,6 +9,7 @@ export interface Worker {
   phone_extension: string | null;
   email: string | null;
   is_active: boolean;
+  inherit_clinic_hours: boolean;
   working_hours_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;

@@ -8,7 +8,6 @@ import {
   Settings2,
   Upload,
   UserRound,
-  UserX,
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -54,7 +53,6 @@ interface CustomerFormState {
   notes: string;
   preferred_worker_id: string;
   personalization_enabled: boolean;
-  is_active: boolean;
   custom_values_json: Record<string, unknown>;
 }
 
@@ -65,7 +63,6 @@ const emptyCustomer: CustomerFormState = {
   notes: "",
   preferred_worker_id: "",
   personalization_enabled: true,
-  is_active: true,
   custom_values_json: {},
 };
 
@@ -83,7 +80,6 @@ export function CustomersPage() {
   const clinicId = useClinicRoute();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [activeFilter, setActiveFilter] = useState("all");
   const [customerDialogOpen, setCustomerDialogOpen] = useState(false);
   const [detailCustomerId, setDetailCustomerId] = useState<string | null>(null);
   const [fieldsOpen, setFieldsOpen] = useState(false);
@@ -96,13 +92,8 @@ export function CustomersPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const customersQuery = useQuery({
-    queryKey: ["customers", clinicId, search, activeFilter],
-    queryFn: () =>
-      listCustomers(
-        clinicId as string,
-        search,
-        activeFilter === "all" ? undefined : activeFilter === "active",
-      ),
+    queryKey: ["customers", clinicId, search],
+    queryFn: () => listCustomers(clinicId as string, search, true),
     enabled: Boolean(clinicId),
   });
   const fieldsQuery = useQuery({
@@ -138,7 +129,6 @@ export function CustomersPage() {
         notes: form.notes || null,
         preferred_worker_id: form.preferred_worker_id || null,
         personalization_enabled: form.personalization_enabled,
-        is_active: form.is_active,
         custom_values_json: form.custom_values_json,
       };
       return editing
@@ -209,7 +199,6 @@ export function CustomersPage() {
             notes: row.notes ?? "",
             preferred_worker_id: row.preferred_worker_id ?? "",
             personalization_enabled: row.personalization_enabled,
-            is_active: row.is_active,
             custom_values_json: row.custom_values_json,
           }
         : emptyCustomer,
@@ -276,21 +265,14 @@ export function CustomersPage() {
         }
       />
 
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_190px]">
-        <div className="relative">
-          <Search className="absolute left-3 top-3 size-4 text-[#8b96a8]" />
-          <Input
-            className="pl-9"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar por nombre o teléfono"
-          />
-        </div>
-        <Select value={activeFilter} onChange={(event) => setActiveFilter(event.target.value)}>
-          <option value="all">Todos los estados</option>
-          <option value="active">Activos</option>
-          <option value="inactive">Inactivos</option>
-        </Select>
+      <div className="relative max-w-2xl">
+        <Search className="absolute left-3 top-3 size-4 text-[#8b96a8]" />
+        <Input
+          className="pl-9"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Buscar por nombre o teléfono"
+        />
       </div>
 
       {!customers.length ? (
@@ -301,21 +283,20 @@ export function CustomersPage() {
         />
       ) : (
         <div className="overflow-hidden rounded-2xl border border-[#e4e8ef] bg-white">
-          <div className="hidden grid-cols-[minmax(180px,1.2fr)_180px_minmax(180px,1fr)_160px_120px] gap-4 border-b bg-[#f8fafc] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#718096] md:grid">
-            <span>Cliente</span><span>Teléfono</span><span>Profesional</span><span>Último contacto</span><span>Estado</span>
+          <div className="hidden grid-cols-[minmax(180px,1.2fr)_180px_minmax(180px,1fr)_160px] gap-4 border-b bg-[#f8fafc] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#718096] md:grid">
+            <span>Cliente</span><span>Teléfono</span><span>Profesional</span><span>Último contacto</span>
           </div>
           {customers.map((row) => (
             <button
               type="button"
               key={row.id}
-              className="grid w-full gap-2 border-b px-5 py-4 text-left transition last:border-b-0 hover:bg-[#f8fbff] md:grid-cols-[minmax(180px,1.2fr)_180px_minmax(180px,1fr)_160px_120px] md:items-center md:gap-4"
+              className="grid w-full gap-2 border-b px-5 py-4 text-left transition last:border-b-0 hover:bg-[#f8fbff] md:grid-cols-[minmax(180px,1.2fr)_180px_minmax(180px,1fr)_160px] md:items-center md:gap-4"
               onClick={() => setDetailCustomerId(row.id)}
             >
               <span><strong className="block text-[#172033]">{row.name}</strong><small className="text-[#748094]">{row.email ?? "Sin email"}</small></span>
               <span className="text-sm text-[#566277]">{row.display_phone}</span>
               <span className="text-sm text-[#566277]">{row.preferred_worker_id ? workerNames.get(row.preferred_worker_id) ?? "Profesional eliminado" : "Sin preferencia"}</span>
               <span className="text-sm text-[#748094]">{formatDate(row.last_contact_at)}</span>
-              <span className={`w-fit rounded-full px-2 py-1 text-xs ${row.is_active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{row.is_active ? "Activo" : "Inactivo"}</span>
             </button>
           ))}
         </div>
@@ -340,15 +321,6 @@ export function CustomersPage() {
         workerNames={workerNames}
         clinicId={clinicId as string}
         onEdit={(customer) => startCustomer(customer)}
-        onDeactivate={(customer) =>
-          updateCustomer(clinicId as string, customer.id, { is_active: false })
-            .then(async () => {
-              await refreshCustomers();
-              await detailQuery.refetch();
-              toast.success("Cliente desactivado");
-            })
-            .catch((error: Error) => toast.error(error.message))
-        }
         onAnonymize={(customer) => anonymize.mutate(customer.id)}
         onMerge={(customer) => {
           setMergeSource(customer);
@@ -408,23 +380,22 @@ function CustomerFormDialog({ open, onOpenChange, editing, form, setForm, fields
     <Field label="Notas"><Textarea value={form.notes} onChange={(event) => setForm({...form,notes:event.target.value})}/></Field>
     {fields.filter((field)=>field.is_active).map((field)=><CustomValueInput key={field.id} field={field} value={form.custom_values_json[field.key]} onChange={(value)=>setForm({...form,custom_values_json:{...form.custom_values_json,[field.key]:value}})}/>) }
     <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.personalization_enabled} onChange={(event)=>setForm({...form,personalization_enabled:event.target.checked})}/>Permitir personalización por nombre</label>
-    <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.is_active} onChange={(event)=>setForm({...form,is_active:event.target.checked})}/>Cliente activo</label>
     <Button className="w-full" disabled={!form.name || !form.phone || pending} onClick={onSave}>{pending ? "Guardando…" : "Guardar"}</Button>
   </div></DialogContent></Dialog>;
 }
 
-function CustomerDetailDialog({ detail, loading, open, onOpenChange, workerNames, clinicId, onEdit, onDeactivate, onAnonymize, onMerge }: {
+function CustomerDetailDialog({ detail, loading, open, onOpenChange, workerNames, clinicId, onEdit, onAnonymize, onMerge }: {
   detail?: CustomerDetail; loading: boolean; open: boolean; onOpenChange: (open:boolean)=>void;
   workerNames: Map<string,string>; clinicId:string;
-  onEdit:(customer:ClinicCustomer)=>void; onDeactivate:(customer:ClinicCustomer)=>void; onAnonymize:(customer:ClinicCustomer)=>void; onMerge:(customer:ClinicCustomer)=>void;
+  onEdit:(customer:ClinicCustomer)=>void; onAnonymize:(customer:ClinicCustomer)=>void; onMerge:(customer:ClinicCustomer)=>void;
 }) {
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[92vh] max-w-4xl overflow-y-auto"><DialogHeader><DialogTitle>Ficha del cliente</DialogTitle></DialogHeader>{loading || !detail ? <LoadingState rows={5}/> : <div className="space-y-6">
     <div className="flex flex-wrap items-start justify-between gap-4 rounded-xl bg-[#f7f9fc] p-4"><div><h3 className="text-xl font-semibold text-[#172033]">{detail.name}</h3><p className="text-sm text-[#657186]">{detail.display_phone} · {detail.email ?? "sin email"}</p><p className="mt-1 text-xs text-[#8490a2]">Último contacto: {formatDate(detail.last_contact_at)}</p></div><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={()=>onEdit(detail)}>Editar</Button><Button size="sm" variant="outline" asChild><Link to={`/clinics/${clinicId}/calendar?customer_id=${detail.id}`}><CalendarPlus className="size-4"/>Nueva cita</Link></Button><Button size="sm" variant="ghost" onClick={()=>onMerge(detail)}><Merge className="size-4"/>Fusionar</Button></div></div>
-    <div className="grid gap-4 md:grid-cols-2"><InfoCard title="Preferencias"><p>Profesional: {detail.preferred_worker_id ? workerNames.get(detail.preferred_worker_id) ?? "No disponible" : "Sin preferencia"}</p><p>Personalización: {detail.personalization_enabled ? "Permitida" : "Desactivada"}</p><p>Estado: {detail.is_active ? "Activo" : "Inactivo"}</p></InfoCard><InfoCard title="Notas"><p className="whitespace-pre-wrap">{detail.notes || "Sin notas"}</p></InfoCard></div>
+    <div className="grid gap-4 md:grid-cols-2"><InfoCard title="Preferencias"><p>Profesional: {detail.preferred_worker_id ? workerNames.get(detail.preferred_worker_id) ?? "No disponible" : "Sin preferencia"}</p><p>Personalización: {detail.personalization_enabled ? "Permitida" : "Desactivada"}</p></InfoCard><InfoCard title="Notas"><p className="whitespace-pre-wrap">{detail.notes || "Sin notas"}</p></InfoCard></div>
     {Object.keys(detail.custom_values_json).length > 0 && <InfoCard title="Datos personalizados"><dl className="grid gap-2 sm:grid-cols-2">{Object.entries(detail.custom_values_json).map(([key,value])=><div key={key}><dt className="text-xs font-semibold uppercase text-[#8792a4]">{key}</dt><dd>{formatUnknown(value)}</dd></div>)}</dl></InfoCard>}
     <InfoCard title={`Historial de citas (${detail.appointments.length})`}><div className="space-y-2">{detail.appointments.length ? detail.appointments.map((appointment)=><div key={appointment.id} className="flex flex-wrap justify-between gap-2 border-b py-2 text-sm"><span>{new Date(appointment.start_at).toLocaleString("es-ES")}</span><span>{workerNames.get(appointment.worker_id) ?? "Profesional"}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-xs">{appointment.status}</span></div>) : <p>Sin citas relacionadas.</p>}</div></InfoCard>
     <InfoCard title={`Historial de llamadas (${detail.calls.length})`}><div className="space-y-2">{detail.calls.length ? detail.calls.map((call)=><div key={call.id} className="border-b py-2 text-sm"><div className="flex flex-wrap justify-between gap-2"><span>{new Date(call.started_at).toLocaleString("es-ES")}</span><span>{call.outcome || call.status}</span></div>{call.summary_text && <p className="mt-1 text-[#657186]">{call.summary_text}</p>}</div>) : <p>Sin llamadas relacionadas.</p>}</div></InfoCard>
-    <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" disabled={!detail.is_active} onClick={()=>onDeactivate(detail)}><UserX className="size-4"/>Desactivar</Button><Button variant="destructive" onClick={()=>onAnonymize(detail)}>Anonimizar datos</Button></div>
+    <div className="flex flex-wrap justify-end gap-2"><Button variant="destructive" onClick={()=>onAnonymize(detail)}>Anonimizar datos</Button></div>
   </div>}</DialogContent></Dialog>;
 }
 

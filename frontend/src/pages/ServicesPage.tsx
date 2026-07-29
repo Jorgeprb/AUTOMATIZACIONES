@@ -15,7 +15,6 @@ import { EmptyState } from "@/components/common/EmptyState";
 import { ErrorState } from "@/components/common/ErrorState";
 import { LoadingState } from "@/components/common/LoadingState";
 import { PageHeader } from "@/components/common/PageHeader";
-import { PromptContextPreview } from "@/components/common/PromptContextPreview";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { ServiceForm } from "@/components/forms/ServiceForm";
 import { DataTable, type DataTableColumn } from "@/components/tables/DataTable";
@@ -114,9 +113,6 @@ export function ServicesPage() {
   });
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["services", clinicId] });
-    await queryClient.invalidateQueries({
-      queryKey: ["prompt-context-preview", clinicId],
-    });
   };
   const createMutation = useMutation({
     mutationFn: (values: ServiceFormValues) =>
@@ -322,8 +318,6 @@ export function ServicesPage() {
           }
         />
       ) : null}
-
-      {clinicId ? <PromptContextPreview clinicId={clinicId} /> : null}
 
       <Dialog
         open={formOpen}

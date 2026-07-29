@@ -142,7 +142,6 @@ export function AssistantConfigForm({
   clinicId,
   options,
   defaultValues = assistantConfigDefaults,
-  contextWarnings = [],
   onSubmit,
   onCancel,
   isPending,
@@ -151,7 +150,6 @@ export function AssistantConfigForm({
   assistantConfigId?: string | null;
   options: AssistantOptions;
   defaultValues?: AssistantConfigFormValues;
-  contextWarnings?: string[];
   onSubmit: (values: AssistantConfigFormValues) => void | Promise<unknown>;
   onCancel: () => void;
   isPending: boolean;
@@ -338,14 +336,6 @@ export function AssistantConfigForm({
       className="space-y-6"
       onSubmit={handleSubmit(async (values) => onSubmit(values))}
     >
-      {contextWarnings.length ? (
-        <div className="rounded-xl border border-[#ffe0a5] bg-[#fff9ec] p-4 text-sm text-[#78591d]">
-          {contextWarnings.map((warning) => (
-            <p key={warning}>• {warning}</p>
-          ))}
-        </div>
-      ) : null}
-
       <Section
         title="Identidad y voz"
         description="Lo que la persona escucha y cómo suena el asistente. Los detalles técnicos se configuran automáticamente."

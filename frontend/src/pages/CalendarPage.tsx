@@ -53,6 +53,45 @@ interface WorkerCalendarSelection {
   colorId: string;
 }
 
+function EventColorPicker({
+  value,
+  colors,
+  onChange,
+}: {
+  value: string;
+  colors: Array<{ id: string; background: string; foreground: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2" role="group" aria-label="Color de evento">
+      <button
+        type="button"
+        title="Color automático"
+        aria-label="Usar color automático"
+        onClick={() => onChange("")}
+        className={`grid size-8 place-items-center rounded-full border bg-white text-xs font-bold text-[#7b8799] transition ${
+          value === "" ? "ring-2 ring-[#315efb] ring-offset-2" : "hover:scale-105"
+        }`}
+      >
+        A
+      </button>
+      {colors.map((color) => (
+        <button
+          key={color.id}
+          type="button"
+          title="Seleccionar este color"
+          aria-label="Seleccionar color de evento"
+          onClick={() => onChange(color.id)}
+          className={`size-8 rounded-full border border-black/10 transition ${
+            value === color.id ? "ring-2 ring-[#315efb] ring-offset-2" : "hover:scale-105"
+          }`}
+          style={{ backgroundColor: color.background }}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function CalendarPage() {
   const clinicId = useClinicRoute();
   const [searchParams] = useSearchParams();
@@ -583,22 +622,14 @@ export function CalendarPage() {
                         </Select>
                       </div>
                       <div>
-                        <Label htmlFor={`color-${worker.id}`}>Color de evento</Label>
-                        <Select
-                          id={`color-${worker.id}`}
-                          className="mt-1.5"
+                        <Label>Color de evento</Label>
+                        <EventColorPicker
                           value={selection.colorId}
-                          onChange={(event) =>
-                            updateSelection(worker.id, { colorId: event.target.value })
+                          colors={calendarsQuery.data?.event_colors ?? []}
+                          onChange={(colorId) =>
+                            updateSelection(worker.id, { colorId })
                           }
-                        >
-                          <option value="">Color por defecto</option>
-                          {calendarsQuery.data?.event_colors.map((color) => (
-                            <option key={color.id} value={color.id}>
-                              Color {color.id} · {color.background}
-                            </option>
-                          ))}
-                        </Select>
+                        />
                       </div>
                       <Button
                         disabled={!selection.calendarId || linkMutation.isPending}

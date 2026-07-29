@@ -47,7 +47,6 @@ const clientClinicItems = [
   { label: "Clientes", icon: UserRoundCog, suffix: "customers" },
   { label: "Estadísticas", icon: BarChart3, suffix: "statistics" },
   { label: "Conversaciones", icon: MessageSquareText, suffix: "conversations" },
-  { label: "Calendario", icon: CalendarDays, suffix: "calendar" },
   { label: "Consola de prueba", icon: FlaskConical, suffix: "test" },
 ];
 

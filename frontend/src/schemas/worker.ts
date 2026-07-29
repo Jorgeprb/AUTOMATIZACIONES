@@ -20,6 +20,7 @@ export const workerFormSchema = z.object({
   calendar_id: z.string().trim().max(320).optional().or(z.literal("")),
   color_id: z.string().trim().max(32).optional().or(z.literal("")),
   is_active: z.boolean(),
+  inherit_clinic_hours: z.boolean(),
   working_hours_json: weeklyHoursSchema,
 });
 
@@ -33,6 +34,7 @@ export interface WorkerPayload {
   calendar_id: string | null;
   color_id: string | null;
   is_active: boolean;
+  inherit_clinic_hours: boolean;
   working_hours_json: WeeklyHours;
 }
 
@@ -45,5 +47,6 @@ export const workerDefaults: WorkerFormValues = {
   calendar_id: "",
   color_id: "",
   is_active: true,
+  inherit_clinic_hours: true,
   working_hours_json: defaultWeeklyHours,
 };

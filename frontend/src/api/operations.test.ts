@@ -74,6 +74,7 @@ describe("operational API calls", () => {
       calendar_id: null,
       color_id: null,
       is_active: true,
+      inherit_clinic_hours: true,
       working_hours_json: defaultWeeklyHours,
     });
     expect(apiRequest).toHaveBeenCalledWith(

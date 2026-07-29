@@ -96,7 +96,7 @@ def list_calendars(
         )
     except GoogleAuthorizationRequired as exc:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
             detail=str(exc),
         ) from exc
 

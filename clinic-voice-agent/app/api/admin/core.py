@@ -650,11 +650,21 @@ def get_admin_google_oauth_start_url(
     clinic_id: uuid.UUID,
     session: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> GoogleOAuthStartUrlResponse:
     """Return the Google authorization URL only when OAuth settings are valid."""
+    if not principal.can_write_clinic(clinic_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have write access to this clinic.",
+        )
     clinic_or_404(session, clinic_id)
     try:
-        authorization = create_google_authorization_request(settings, clinic_id)
+        authorization = create_google_authorization_request(
+            settings,
+            clinic_id,
+            portal="admin" if principal.is_super_admin else "client",
+        )
     except GoogleOAuthConfigurationError as exc:
         variables = ", ".join(issue.variable for issue in exc.issues)
         raise HTTPException(
@@ -749,7 +759,7 @@ def test_admin_worker_freebusy(
         )[worker.calendar_id]
     except GoogleAuthorizationRequired as exc:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
             detail=str(exc),
         ) from exc
     except SchedulingError as exc:
