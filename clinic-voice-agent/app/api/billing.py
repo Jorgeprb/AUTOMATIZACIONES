@@ -17,6 +17,7 @@ from app.db import get_db
 from app.enterprise_schemas import (
     BillingAccountRead,
     CatalogItem,
+    ClientProvisioningRead,
     CheckoutRequest,
     CheckoutResponse,
     CommercialSummary,
@@ -28,6 +29,7 @@ from app.enterprise_schemas import (
 )
 from app.enterprise_service import (
     catalog_rows,
+    portal_access_state_for_account,
     require_account_clinic,
     require_account_for_principal,
     sync_catalog_from_settings,
@@ -220,6 +222,7 @@ def order_status(
 @router.get("/summary", response_model=CommercialSummary)
 def commercial_summary(
     session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
     principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> CommercialSummary:
     account = require_account_for_principal(session, principal)
@@ -267,18 +270,26 @@ def commercial_summary(
             )
         )
     )
+    access = portal_access_state_for_account(session, account.id)
     return CommercialSummary(
         account=_account_read(session, account),
         orders=[OrderRead.model_validate(row) for row in orders],
         subscriptions=[SubscriptionRead.model_validate(row) for row in subs],
         payments=[PaymentRead.model_validate(row) for row in payments],
-        provisioning=[ProvisioningRead.model_validate(row) for row in provisioning],
+        provisioning=[ClientProvisioningRead.model_validate(row) for row in provisioning],
         entitlements=[EntitlementRead.model_validate(row) for row in entitlements],
         phone_numbers=phones,
         can_use_production=any(
             row.code == "assistant_production" and row.status == "active"
             for row in entitlements
         ),
+        portal_unlocked=access.unlocked,
+        purchased_clinic_ids=sorted(access.purchased_clinic_ids, key=str),
+        assigned_phone_clinic_ids=sorted(access.assigned_phone_clinic_ids, key=str),
+        pending_activation_clinic_ids=sorted(
+            access.pending_activation_clinic_ids, key=str
+        ),
+        demo_phone_number=settings.demo_phone_number,
     )
 
 

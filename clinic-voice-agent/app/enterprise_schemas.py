@@ -382,15 +382,32 @@ class EntitlementRead(ORMModel):
     metadata_json: dict[str, Any]
 
 
+class ClientProvisioningRead(ORMModel):
+    id: uuid.UUID
+    clinic_id: uuid.UUID
+    status: str
+    quantity: int
+    assigned_number: str | None
+    provisioned_at: datetime | None
+    activated_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class CommercialSummary(BaseModel):
     account: BillingAccountRead | None
     orders: list[OrderRead]
     subscriptions: list[SubscriptionRead]
     payments: list[PaymentRead]
-    provisioning: list[ProvisioningRead]
+    provisioning: list[ClientProvisioningRead]
     entitlements: list[EntitlementRead]
     phone_numbers: list[str]
     can_use_production: bool
+    portal_unlocked: bool
+    purchased_clinic_ids: list[uuid.UUID]
+    assigned_phone_clinic_ids: list[uuid.UUID]
+    pending_activation_clinic_ids: list[uuid.UUID]
+    demo_phone_number: str
 
 
 class RegisterRequest(BaseModel):

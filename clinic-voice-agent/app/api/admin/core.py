@@ -106,6 +106,14 @@ from app.voice_providers.catalog import (
 
 router = APIRouter(prefix="/admin")
 
+
+def _require_super_admin(principal: AdminPrincipal) -> None:
+    if not principal.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo la administración global puede gestionar números y rutas SIP.",
+        )
+
 VOICE_LABELS = {
     "marin": "Marin · recomendada por OpenAI",
     "cedar": "Cedar · recomendada por OpenAI",
@@ -320,10 +328,14 @@ def update_clinic(
     clinic_id: uuid.UUID,
     payload: ClinicUpdate,
     session: Annotated[Session, Depends(get_db)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> Clinic:
-    """Partially update one clinic."""
+    """Partially update one clinic without exposing telephony assignment to clients."""
     clinic = clinic_or_404(session, clinic_id)
-    apply_update(clinic, payload)
+    values = payload.model_dump(exclude_unset=True)
+    if not principal.is_super_admin:
+        values.pop("main_phone_number", None)
+    set_values(clinic, values)
     commit_or_conflict(session, detail="The main phone number is already in use.")
     session.refresh(clinic)
     return clinic
@@ -356,11 +368,13 @@ def delete_clinic(
 def list_phone_numbers(
     clinic_id: uuid.UUID,
     session: Annotated[Session, Depends(get_db)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     is_active: bool | None = Query(default=None),
 ) -> Page[PhoneNumberRead]:
     """List telephone numbers owned by a clinic."""
+    _require_super_admin(principal)
     clinic_or_404(session, clinic_id)
     statement = select(PhoneNumber).where(PhoneNumber.clinic_id == clinic_id)
     if is_active is not None:
@@ -384,8 +398,10 @@ def create_phone_number(
     clinic_id: uuid.UUID,
     payload: PhoneNumberCreate,
     session: Annotated[Session, Depends(get_db)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> PhoneNumber:
     """Create one routed clinic number."""
+    _require_super_admin(principal)
     clinic_or_404(session, clinic_id)
     phone_number = PhoneNumber(clinic_id=clinic_id, **payload.model_dump())
     session.add(phone_number)
@@ -403,8 +419,10 @@ def get_phone_number(
     clinic_id: uuid.UUID,
     phone_number_id: uuid.UUID,
     session: Annotated[Session, Depends(get_db)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> PhoneNumber:
     """Get one clinic phone number."""
+    _require_super_admin(principal)
     return nested_or_404(
         session,
         PhoneNumber,
@@ -424,9 +442,11 @@ def update_phone_number(
     phone_number_id: uuid.UUID,
     payload: PhoneNumberUpdate,
     session: Annotated[Session, Depends(get_db)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> PhoneNumber:
     """Partially update one clinic phone number."""
-    phone_number = get_phone_number(clinic_id, phone_number_id, session)
+    _require_super_admin(principal)
+    phone_number = get_phone_number(clinic_id, phone_number_id, session, principal)
     apply_update(phone_number, payload)
     commit_or_conflict(session, detail="The phone number is already registered.")
     session.refresh(phone_number)
@@ -442,9 +462,11 @@ def delete_phone_number(
     clinic_id: uuid.UUID,
     phone_number_id: uuid.UUID,
     session: Annotated[Session, Depends(get_db)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
 ) -> DeleteResponse:
     """Delete one clinic phone number."""
-    phone_number = get_phone_number(clinic_id, phone_number_id, session)
+    _require_super_admin(principal)
+    phone_number = get_phone_number(clinic_id, phone_number_id, session, principal)
     session.delete(phone_number)
     commit_or_conflict(session)
     return DeleteResponse(id=phone_number_id)

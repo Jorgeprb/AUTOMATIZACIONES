@@ -1,4 +1,2 @@
-Cambios para client.autogal.es y corrección del endpoint de estadísticas.
-Contiene 11 archivos modificados o añadidos.
-No contiene migraciones porque el esquema de base de datos no cambia.
-Consulta docs/CLIENT_PORTAL_UPDATE_20260729.md.
+Contiene únicamente los archivos añadidos o modificados para el desbloqueo comercial, dashboard de bienvenida, ajustes agrupados y restricción técnica de números.
+No hay migraciones nuevas. Consulta docs/CLIENT_PORTAL_UNLOCK_AND_SETTINGS_20260729.md.

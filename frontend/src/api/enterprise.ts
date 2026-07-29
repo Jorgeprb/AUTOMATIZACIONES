@@ -102,10 +102,15 @@ export interface CommercialSummary {
   orders: Array<{ id: string; status: string; total_one_time_minor: number; total_recurring_minor: number; created_at: string }>;
   subscriptions: Array<{ id: string; clinic_id: string; status: string; quantity: number; current_period_end: string | null; cancel_at_period_end: boolean; canceled_at: string | null }>;
   payments: Array<{ id: string; clinic_id: string | null; amount_minor: number; currency: string; status: string; paid_at: string | null; failure_code: string | null; created_at: string }>;
-  provisioning: Array<{ id: string; clinic_id: string; status: string; quantity: number; assigned_number: string | null; provider: string | null; provisioned_at: string | null; activated_at: string | null; created_at: string }>;
+  provisioning: Array<{ id: string; clinic_id: string; status: string; quantity: number; assigned_number: string | null; provisioned_at: string | null; activated_at: string | null; created_at: string; updated_at: string }>;
   entitlements: Array<{ id: string; clinic_id: string; code: string; status: string; quantity: number }>;
   phone_numbers: string[];
   can_use_production: boolean;
+  portal_unlocked: boolean;
+  purchased_clinic_ids: string[];
+  assigned_phone_clinic_ids: string[];
+  pending_activation_clinic_ids: string[];
+  demo_phone_number: string;
 }
 
 export function listCustomers(clinicId: string, search = "", active?: boolean): Promise<ClinicCustomer[]> {

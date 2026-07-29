@@ -48,6 +48,7 @@ import type {
   ClinicPayload,
 } from "@/schemas/clinic";
 import { normalizeWeeklyHours } from "@/schemas/hours";
+import { isClientPortal } from "@/lib/portal";
 import type {
   PhoneNumber as ClinicPhoneNumber,
   PhoneNumberFormValues,
@@ -114,7 +115,7 @@ function phonePayload(values: PhoneNumberFormValues): PhoneNumberPayload {
   };
 }
 
-export function ClinicDetailPage() {
+export function ClinicDetailPage({ embedded = false }: { embedded?: boolean }) {
   const clinicId = useClinicRoute();
   const queryClient = useQueryClient();
   const enabled = Boolean(clinicId);
@@ -131,7 +132,7 @@ export function ClinicDetailPage() {
   const phonesQuery = useQuery({
     queryKey: ["phone-numbers", clinicId],
     queryFn: () => listPhoneNumbers(clinicId as string),
-    enabled,
+    enabled: enabled && !isClientPortal,
   });
   const calendarQuery = useQuery({
     queryKey: ["calendar-status", clinicId],
@@ -196,21 +197,33 @@ export function ClinicDetailPage() {
 
   return (
     <div className="space-y-7">
-      <PageHeader
-        title={clinic.name}
-        description={clinic.description || "Configuración operativa de la clínica."}
-        actions={
-          <div className="flex items-center gap-2">
-            <StatusBadge status={clinic.is_active ? "success" : "neutral"}>
-              {clinic.is_active ? "Clínica activa" : "Clínica inactiva"}
-            </StatusBadge>
-            <Button variant="outline" onClick={() => setClinicFormOpen(true)}>
-              <Pencil className="size-4" />
-              Editar
-            </Button>
+      {!embedded ? (
+        <PageHeader
+          title={clinic.name}
+          description={clinic.description || "Configuración operativa de la clínica."}
+          actions={
+            <div className="flex items-center gap-2">
+              <StatusBadge status={clinic.is_active ? "success" : "neutral"}>
+                {clinic.is_active ? "Clínica activa" : "Clínica inactiva"}
+              </StatusBadge>
+              <Button variant="outline" onClick={() => setClinicFormOpen(true)}>
+                <Pencil className="size-4" />
+                Editar
+              </Button>
+            </div>
+          }
+        />
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-bold text-[#253149]">Datos generales</h2>
+            <p className="mt-1 text-sm text-[#748096]">Información pública, horario y privacidad de {clinic.name}.</p>
           </div>
-        }
-      />
+          <Button variant="outline" onClick={() => setClinicFormOpen(true)}>
+            <Pencil className="size-4" />Editar datos
+          </Button>
+        </div>
+      )}
 
       {!calendarQuery.data?.connected ? (
         <div className="flex items-start gap-3 rounded-xl border border-[#ffe1a8] bg-[#fff9ed] p-4 text-sm text-[#79591e]">
@@ -222,14 +235,14 @@ export function ClinicDetailPage() {
             </p>
           </div>
           <Button asChild size="sm" variant="outline" className="ml-auto">
-            <Link to={`/clinics/${clinicId}/calendar`}>Configurar</Link>
+            <Link to={isClientPortal ? `/clinics/${clinicId}/settings/calendar` : `/clinics/${clinicId}/calendar`}>Configurar</Link>
           </Button>
         </div>
       ) : null}
 
       <Card>
         <CardContent className="grid gap-5 pt-5 sm:grid-cols-2 xl:grid-cols-4">
-          <div><p className="text-xs font-semibold uppercase text-[#8a95a7]">Teléfono</p><p className="mt-2 font-semibold">{clinic.main_phone_number}</p></div>
+          <div><p className="text-xs font-semibold uppercase text-[#8a95a7]">Teléfono</p><p className="mt-2 font-semibold">{clinic.main_phone_number.startsWith("pending-") ? "Pendiente de asignación" : clinic.main_phone_number}</p></div>
           <div><p className="text-xs font-semibold uppercase text-[#8a95a7]">Email</p><p className="mt-2 font-semibold">{clinic.email || "—"}</p></div>
           <div><p className="text-xs font-semibold uppercase text-[#8a95a7]">Zona / idioma</p><p className="mt-2 font-semibold">{clinic.timezone} · {clinic.default_language}</p></div>
           <div><p className="text-xs font-semibold uppercase text-[#8a95a7]">Retención</p><p className="mt-2 font-semibold">{clinic.data_retention_days} días</p></div>
@@ -238,6 +251,8 @@ export function ClinicDetailPage() {
         </CardContent>
       </Card>
 
+      {!isClientPortal ? (
+        <>
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div>
@@ -330,7 +345,10 @@ export function ClinicDetailPage() {
           </p>
         </CardContent>
       </Card>
+        </>
+      ) : null}
 
+      {!isClientPortal ? (
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {sections.map((section) => (
           <Link key={section.suffix} to={`/clinics/${clinicId}/${section.suffix}`}>
@@ -347,6 +365,7 @@ export function ClinicDetailPage() {
           </Link>
         ))}
       </div>
+      ) : null}
 
       <Dialog open={clinicFormOpen} onOpenChange={setClinicFormOpen}>
         <DialogContent>
@@ -362,10 +381,13 @@ export function ClinicDetailPage() {
             onCancel={() => setClinicFormOpen(false)}
             isPending={updateClinicMutation.isPending}
             submitLabel="Guardar cambios"
+            hidePhoneNumber={isClientPortal}
           />
         </DialogContent>
       </Dialog>
 
+      {!isClientPortal ? (
+        <>
       <Dialog
         open={phoneFormOpen}
         onOpenChange={(open) => {
@@ -406,6 +428,8 @@ export function ClinicDetailPage() {
           if (deletingPhone) deletePhoneMutation.mutate(deletingPhone.id);
         }}
       />
+        </>
+      ) : null}
     </div>
   );
 }

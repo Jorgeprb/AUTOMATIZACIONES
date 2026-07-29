@@ -6,6 +6,7 @@ import hashlib
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -26,9 +27,80 @@ from app.models import (
     Clinic,
     ClinicEntitlement,
     IntegrationOutbox,
+    PhoneNumber,
+    PhoneProvisioningOrder,
+    PurchaseOrder,
+    PurchaseOrderItem,
 )
 
 PRODUCTION_ENTITLEMENT_CODES = frozenset({"assistant_production", "phone_number"})
+
+
+@dataclass(frozen=True, slots=True)
+class PortalAccessState:
+    unlocked: bool
+    purchased_clinic_ids: frozenset[uuid.UUID]
+    assigned_phone_clinic_ids: frozenset[uuid.UUID]
+    pending_activation_clinic_ids: frozenset[uuid.UUID]
+
+
+def portal_access_state_for_account(
+    session: Session, billing_account_id: uuid.UUID
+) -> PortalAccessState:
+    purchased = frozenset(
+        clinic_id
+        for clinic_id in session.scalars(
+            select(PurchaseOrder.clinic_id)
+            .join(PurchaseOrderItem, PurchaseOrderItem.order_id == PurchaseOrder.id)
+            .join(BillingProduct, BillingProduct.id == PurchaseOrderItem.product_id)
+            .where(
+                PurchaseOrder.billing_account_id == billing_account_id,
+                PurchaseOrder.status == "paid",
+                PurchaseOrder.clinic_id.is_not(None),
+                BillingProduct.code == "phone_number",
+            )
+            .distinct()
+        )
+        if clinic_id is not None
+    )
+    assigned = frozenset(
+        session.scalars(
+            select(PhoneNumber.clinic_id)
+            .join(Clinic, Clinic.id == PhoneNumber.clinic_id)
+            .where(
+                Clinic.billing_account_id == billing_account_id,
+                PhoneNumber.is_active.is_(True),
+            )
+            .distinct()
+        )
+    )
+    pending = frozenset(
+        session.scalars(
+            select(PhoneProvisioningOrder.clinic_id)
+            .where(
+                PhoneProvisioningOrder.billing_account_id == billing_account_id,
+                PhoneProvisioningOrder.status.in_(
+                    ("paid_pending_provisioning", "provisioned")
+                ),
+            )
+            .distinct()
+        )
+    )
+    return PortalAccessState(
+        unlocked=bool(purchased or assigned),
+        purchased_clinic_ids=purchased,
+        assigned_phone_clinic_ids=assigned,
+        pending_activation_clinic_ids=pending,
+    )
+
+
+def portal_access_state_for_user(
+    session: Session, user_id: uuid.UUID
+) -> PortalAccessState:
+    account = account_for_user(session, user_id)
+    if account is None:
+        return PortalAccessState(False, frozenset(), frozenset(), frozenset())
+    return portal_access_state_for_account(session, account.id)
 
 
 def normalize_email(value: str) -> str:

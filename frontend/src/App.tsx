@@ -1,9 +1,10 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { LoadingState } from "@/components/common/LoadingState";
 import { RequireAuth } from "@/components/layout/RequireAuth";
+import { RequirePortalUnlock } from "@/components/layout/RequirePortalUnlock";
 import { isAdminPortal, isClientPortal } from "@/lib/portal";
 
 const DashboardPage = lazy(() =>
@@ -19,6 +20,11 @@ const ClinicsPage = lazy(() =>
 const ClinicDetailPage = lazy(() =>
   import("@/pages/ClinicDetailPage").then((module) => ({
     default: module.ClinicDetailPage,
+  })),
+);
+const ClinicSettingsPage = lazy(() =>
+  import("@/pages/ClinicSettingsPage").then((module) => ({
+    default: module.ClinicSettingsPage,
   })),
 );
 const WorkersPage = lazy(() =>
@@ -90,6 +96,14 @@ const LoginPage = lazy(() =>
   })),
 );
 
+function unlocked(element: ReactNode) {
+  return isClientPortal ? (
+    <RequirePortalUnlock>{element}</RequirePortalUnlock>
+  ) : (
+    element
+  );
+}
+
 export default function App() {
   return (
     <Suspense fallback={<div className="p-8"><LoadingState rows={6} /></div>}>
@@ -100,19 +114,20 @@ export default function App() {
           <Route element={<AppShell />}>
             <Route index element={<DashboardPage />} />
             <Route path="clinics" element={<ClinicsPage />} />
-            <Route path="clinics/:clinicId" element={<ClinicDetailPage />} />
-            <Route path="clinics/:clinicId/workers" element={<WorkersPage />} />
-            <Route path="clinics/:clinicId/customers" element={<CustomersPage />} />
-            <Route path="clinics/:clinicId/resources" element={<ResourcesPage />} />
-            <Route path="clinics/:clinicId/statistics" element={<StatisticsPage />} />
+            <Route path="clinics/:clinicId" element={unlocked(<ClinicDetailPage />)} />
+            <Route path="clinics/:clinicId/settings/:section?" element={unlocked(<ClinicSettingsPage />)} />
+            <Route path="clinics/:clinicId/workers" element={unlocked(<WorkersPage />)} />
+            <Route path="clinics/:clinicId/customers" element={unlocked(<CustomersPage />)} />
+            <Route path="clinics/:clinicId/resources" element={unlocked(<ResourcesPage />)} />
+            <Route path="clinics/:clinicId/statistics" element={unlocked(<StatisticsPage />)} />
             <Route path="clinics/:clinicId/purchases" element={<PurchasesPage />} />
             <Route
               path="clinics/:clinicId/services"
-              element={<ServicesPage />}
+              element={unlocked(<ServicesPage />)}
             />
             <Route
               path="clinics/:clinicId/assistant"
-              element={<AssistantConfigPage />}
+              element={unlocked(<AssistantConfigPage />)}
             />
             <Route
               path="clinics/:clinicId/flows"
@@ -120,23 +135,23 @@ export default function App() {
             />
             <Route
               path="clinics/:clinicId/knowledge"
-              element={<KnowledgePage />}
+              element={unlocked(<KnowledgePage />)}
             />
             <Route
               path="clinics/:clinicId/conversations"
-              element={<ConversationsPage />}
+              element={unlocked(<ConversationsPage />)}
             />
             <Route
               path="clinics/:clinicId/conversations/:callId"
-              element={<ConversationDetailPage />}
+              element={unlocked(<ConversationDetailPage />)}
             />
             <Route
               path="clinics/:clinicId/calendar"
-              element={<CalendarPage />}
+              element={unlocked(<CalendarPage />)}
             />
             <Route
               path="clinics/:clinicId/test"
-              element={<TestConsolePage />}
+              element={unlocked(<TestConsolePage />)}
             />
             <Route path="users" element={isAdminPortal ? <ClientAccountsPage /> : <Navigate to="/" replace />} />
             <Route path="business" element={isAdminPortal ? <BusinessAdminPage /> : <Navigate to="/" replace />} />

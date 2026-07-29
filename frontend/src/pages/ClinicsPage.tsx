@@ -30,6 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useActiveClinic } from "@/hooks/useActiveClinic";
+import { useCommercialAccess } from "@/hooks/useCommercialAccess";
 import { formatDate } from "@/lib/format";
 import { getCurrentAdmin } from "@/lib/auth";
 import { isClientPortal } from "@/lib/portal";
@@ -75,6 +76,7 @@ function payload(values: ClinicFormValues): ClinicPayload {
 export function ClinicsPage() {
   const queryClient = useQueryClient();
   const { activeClinicId, setActiveClinicId } = useActiveClinic();
+  const access = useCommercialAccess();
   const [editingClinic, setEditingClinic] = useState<Clinic | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [deletingClinic, setDeletingClinic] = useState<Clinic | null>(null);
@@ -163,7 +165,8 @@ export function ClinicsPage() {
           <div>
             <Link
               className="font-semibold text-[#263249] hover:text-[#315efb]"
-              to={`/clinics/${clinic.id}`}
+              to={isClientPortal && !access.unlocked ? "/" : isClientPortal ? `/clinics/${clinic.id}/settings/general` : `/clinics/${clinic.id}`}
+              onClick={() => setActiveClinicId(clinic.id)}
             >
               {clinic.name}
             </Link>
@@ -176,7 +179,10 @@ export function ClinicsPage() {
       {
         key: "phone",
         header: "Teléfono",
-        cell: (clinic) => clinic.main_phone_number,
+        cell: (clinic) =>
+          clinic.main_phone_number.startsWith("pending-")
+            ? "Pendiente de asignación"
+            : clinic.main_phone_number,
       },
       {
         key: "timezone",
@@ -211,7 +217,10 @@ export function ClinicsPage() {
         cell: (clinic) => (
           <div className="flex justify-end gap-1">
             <Button asChild size="icon" variant="ghost" title="Abrir">
-              <Link to={`/clinics/${clinic.id}`}>
+              <Link
+                to={isClientPortal && !access.unlocked ? "/" : isClientPortal ? `/clinics/${clinic.id}/settings/general` : `/clinics/${clinic.id}`}
+                onClick={() => setActiveClinicId(clinic.id)}
+              >
                 <ExternalLink className="size-4" />
               </Link>
             </Button>
@@ -231,7 +240,7 @@ export function ClinicsPage() {
         ),
       },
     ],
-    [canManageTenants],
+    [access.unlocked, canManageTenants, setActiveClinicId],
   );
 
   return (
@@ -295,9 +304,10 @@ export function ClinicsPage() {
               Configura los datos básicos que utilizarán el panel y el asistente.
             </DialogDescription>
           </DialogHeader>
-          {isClientPortal && !editingClinic ? (
-            <ClientClinicCreateForm
-              isPending={createMutation.isPending}
+          {isClientPortal ? (
+            <ClientClinicForm
+              clinic={editingClinic}
+              isPending={createMutation.isPending || updateMutation.isPending}
               onCancel={() => setFormOpen(false)}
               onSubmit={handleSubmit}
             />
@@ -330,21 +340,22 @@ export function ClinicsPage() {
   );
 }
 
-function ClientClinicCreateForm({
+function ClientClinicForm({
+  clinic,
   isPending,
   onCancel,
   onSubmit,
 }: {
+  clinic: Clinic | null;
   isPending: boolean;
   onCancel: () => void;
   onSubmit: (values: ClinicFormValues) => Promise<void>;
 }) {
   const [values, setValues] = useState({
-    name: "",
-    timezone: "Europe/Madrid",
-    main_phone_number: "",
-    email: "",
-    address: "",
+    name: clinic?.name ?? "",
+    timezone: clinic?.timezone ?? "Europe/Madrid",
+    email: clinic?.email ?? "",
+    address: clinic?.address ?? "",
   });
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -353,7 +364,7 @@ function ClientClinicCreateForm({
       ...clinicDefaults,
       name: values.name.trim(),
       timezone: values.timezone.trim(),
-      main_phone_number: values.main_phone_number.trim() || "pending",
+      main_phone_number: clinic?.main_phone_number || "pending",
       email: values.email.trim(),
       address: values.address.trim(),
     });
@@ -382,16 +393,6 @@ function ClientClinicCreateForm({
         />
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="new-clinic-phone">Teléfono principal</Label>
-        <Input
-          id="new-clinic-phone"
-          maxLength={32}
-          placeholder="Opcional hasta que se asigne el número"
-          value={values.main_phone_number}
-          onChange={(event) => setValues({ ...values, main_phone_number: event.target.value })}
-        />
-      </div>
-      <div className="space-y-1.5">
         <Label htmlFor="new-clinic-email">Email</Label>
         <Input
           id="new-clinic-email"
@@ -414,7 +415,7 @@ function ClientClinicCreateForm({
           Cancelar
         </Button>
         <Button type="submit" disabled={isPending || !values.name.trim()}>
-          {isPending ? "Creando…" : "Crear clínica"}
+          {isPending ? "Guardando…" : clinic ? "Guardar cambios" : "Crear clínica"}
         </Button>
       </div>
     </form>

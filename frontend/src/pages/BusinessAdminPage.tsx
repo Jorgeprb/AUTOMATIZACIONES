@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, CreditCard, Euro, PackagePlus, PhoneCall, ReceiptText, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Building2, CreditCard, Euro, PackagePlus, PhoneCall, ReceiptText, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -98,8 +98,19 @@ export function BusinessAdminPage() {
   if ([stats, accounts, provisioning, products, prices].some((query) => query.isLoading)) return <LoadingState rows={9} />;
   if (stats.isError) return <ErrorState error={stats.error} onRetry={() => stats.refetch()} />;
 
+  const pendingRows = provisioning.data?.filter((row) => row.status === "paid_pending_provisioning") ?? [];
+
   return <div className="space-y-7">
     <PageHeader title="Negocio y provisión" description="Cuentas comerciales, catálogo, MRR, pagos y cola de números." />
+    {pendingRows.length ? (
+      <Card className="border-[#f0c5ca] bg-[#fff5f6]">
+        <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+          <span className="grid size-11 place-items-center rounded-xl bg-[#ffe4e7] text-[#b62f40]"><AlertTriangle className="size-5" /></span>
+          <div className="flex-1"><p className="font-semibold text-[#932a38]">Hay {pendingRows.length} número(s) pendiente(s) de activar</p><p className="mt-1 text-sm text-[#9b4d58]">El pago está confirmado. Asigna el número y marca la provisión como activa.</p></div>
+          <Button variant="outline" onClick={() => startProvisioning(pendingRows[0]!)}>Gestionar ahora</Button>
+        </CardContent>
+      </Card>
+    ) : null}
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <MetricCard icon={Building2} label="Clínicas" value={String(stats.data?.clinics ?? 0)} />
       <MetricCard icon={ShieldCheck} label="Suscripciones activas" value={String(stats.data?.active_subscriptions ?? 0)} accent="green" />

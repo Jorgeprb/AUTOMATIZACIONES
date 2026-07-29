@@ -26,12 +26,14 @@ export function ClinicForm({
   onCancel,
   isPending,
   submitLabel,
+  hidePhoneNumber = false,
 }: {
   defaultValues?: ClinicFormValues;
   onSubmit: (values: ClinicFormValues) => void | Promise<unknown>;
   onCancel: () => void;
   isPending: boolean;
   submitLabel: string;
+  hidePhoneNumber?: boolean;
 }) {
   const {
     register,
@@ -68,16 +70,18 @@ export function ClinicForm({
           />
           <FieldError message={errors.legal_name?.message} />
         </div>
-        <div>
-          <Label htmlFor="main_phone_number">Teléfono principal</Label>
-          <Input
-            id="main_phone_number"
-            className="mt-1.5"
-            placeholder="+34910000000"
-            {...register("main_phone_number")}
-          />
-          <FieldError message={errors.main_phone_number?.message} />
-        </div>
+        {!hidePhoneNumber ? (
+          <div>
+            <Label htmlFor="main_phone_number">Teléfono principal</Label>
+            <Input
+              id="main_phone_number"
+              className="mt-1.5"
+              placeholder="+34910000000"
+              {...register("main_phone_number")}
+            />
+            <FieldError message={errors.main_phone_number?.message} />
+          </div>
+        ) : null}
         <div>
           <Label htmlFor="email">Email público</Label>
           <Input
