@@ -75,6 +75,28 @@ export function ServiceForm({
       </FormSection>
 
       <FormSection
+        title="Comprensión por voz"
+        description="Ayuda al asistente a clasificar expresiones libres sin inventar servicios."
+      >
+        <div>
+          <Label htmlFor="service-aliases">Alias y sinónimos</Label>
+          <Textarea id="service-aliases" className="mt-1.5" placeholder="corte de caballero, cortar el pelo" {...register("aliases_text")} />
+        </div>
+        <div>
+          <Label htmlFor="service-keywords">Palabras clave</Label>
+          <Textarea id="service-keywords" className="mt-1.5" placeholder="corte, pelo, caballero" {...register("keywords_text")} />
+        </div>
+        <div className="sm:col-span-2">
+          <Label htmlFor="service-phrases">Expresiones habituales</Label>
+          <Textarea id="service-phrases" className="mt-1.5" placeholder="Quiero cortarme el pelo\nSolo necesito un corte" {...register("common_phrases_text")} />
+        </div>
+        <div className="sm:col-span-2">
+          <Label htmlFor="service-disambiguation">Instrucciones de desambiguación</Label>
+          <Textarea id="service-disambiguation" className="mt-1.5" placeholder="Diferenciar de corte y barba preguntando si también quiere arreglar la barba." {...register("disambiguation_instructions")} />
+        </div>
+      </FormSection>
+
+      <FormSection
         title="Precio"
         description="El texto tiene prioridad al informar por teléfono."
       >

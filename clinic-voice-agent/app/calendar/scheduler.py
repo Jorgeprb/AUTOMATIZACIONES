@@ -618,6 +618,13 @@ def propose_slots(
             preferred_window=preferred_window,
         )
     )
+    # When the requested date has valid options, keep the answer focused on that
+    # date instead of filling the remaining result count with the same clock time
+    # on a later week. Only search later dates when the requested day has no slot.
+    if preferred_date is not None:
+        requested_day = [slot for slot in candidates if slot.start_at.date() == target_date]
+        if requested_day:
+            return requested_day[:max_slots]
     return candidates[:max_slots]
 
 

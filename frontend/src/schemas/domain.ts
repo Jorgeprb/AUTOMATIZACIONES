@@ -20,6 +20,10 @@ export interface Service {
   name: string;
   public_name: string;
   description: string | null;
+  aliases_json: string[];
+  common_phrases_json: string[];
+  keywords_json: string[];
+  disambiguation_instructions: string | null;
   price_text: string | null;
   price_amount: string | null;
   currency: string;
@@ -89,6 +93,13 @@ export interface AssistantConfig {
   allow_price_answers: boolean;
   ask_service: boolean;
   service_prompt_mode: "list_services" | "ask_open" | "infer_confirm";
+  known_customer_name_enabled: boolean;
+  known_customer_greeting_enabled: boolean;
+  known_customer_greeting_template: string;
+  known_customer_explanation_template: string;
+  remember_customer_after_booking: boolean;
+  suggest_preferred_worker_enabled: boolean;
+  ask_worker_preference_enabled: boolean;
   slot_interval_minutes: 5 | 10 | 15 | 20 | 30 | 60;
   direct_availability_response: boolean;
   direct_booking_response: boolean;

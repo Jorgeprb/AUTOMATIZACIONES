@@ -232,6 +232,10 @@ class ServiceBase(BaseModel):
     buffer_after_minutes: int = Field(default=0, ge=0)
     requires_worker: bool = True
     allowed_worker_ids: list[uuid.UUID] | None = None
+    aliases_json: list[str] = Field(default_factory=list)
+    common_phrases_json: list[str] = Field(default_factory=list)
+    keywords_json: list[str] = Field(default_factory=list)
+    disambiguation_instructions: str | None = None
     is_bookable_by_bot: bool = True
     is_active: bool = True
 
@@ -260,6 +264,10 @@ class ServiceUpdate(BaseModel):
     buffer_after_minutes: int | None = Field(default=None, ge=0)
     requires_worker: bool | None = None
     allowed_worker_ids: list[uuid.UUID] | None = None
+    aliases_json: list[str] | None = None
+    common_phrases_json: list[str] | None = None
+    keywords_json: list[str] | None = None
+    disambiguation_instructions: str | None = None
     is_bookable_by_bot: bool | None = None
     is_active: bool | None = None
 
@@ -364,6 +372,13 @@ class AssistantConfigBase(BaseModel):
     post_booking_followup_message: str | None = Field(default=None, max_length=300)
     hangup_after_no_more_help: bool = True
     hangup_on_natural_goodbye: bool = True
+    known_customer_name_enabled: bool = True
+    known_customer_greeting_enabled: bool = True
+    known_customer_greeting_template: str = Field(default="Ola, {customer_name}. En que podo axudarche?", max_length=1000)
+    known_customer_explanation_template: str = Field(default="Non te preocupes, non son vidente. Recoñecín o número porque estás na base de datos para ofrecerche unha atención máis personalizada.", max_length=2000)
+    remember_customer_after_booking: bool = True
+    suggest_preferred_worker_enabled: bool = True
+    ask_worker_preference_enabled: bool = True
     max_proposed_slots: int = Field(default=3, ge=1, le=10)
     max_consecutive_questions: int = Field(default=2, ge=1, le=5)
     conversation_style: Literal["natural", "formal", "comercial", "breve"] = "natural"
@@ -498,6 +513,13 @@ class AssistantConfigUpdate(BaseModel):
     post_booking_followup_message: str | None = Field(default=None, max_length=300)
     hangup_after_no_more_help: bool | None = None
     hangup_on_natural_goodbye: bool | None = None
+    known_customer_name_enabled: bool | None = None
+    known_customer_greeting_enabled: bool | None = None
+    known_customer_greeting_template: str | None = Field(default=None, max_length=1000)
+    known_customer_explanation_template: str | None = Field(default=None, max_length=2000)
+    remember_customer_after_booking: bool | None = None
+    suggest_preferred_worker_enabled: bool | None = None
+    ask_worker_preference_enabled: bool | None = None
     max_proposed_slots: int | None = Field(default=None, ge=1, le=10)
     max_consecutive_questions: int | None = Field(default=None, ge=1, le=5)
     conversation_style: (

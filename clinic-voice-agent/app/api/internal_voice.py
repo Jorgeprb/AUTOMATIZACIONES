@@ -6,6 +6,7 @@ import re
 import uuid
 from decimal import Decimal
 from typing import Annotated, Any, Literal
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
@@ -15,7 +16,10 @@ from sqlalchemy.orm import Session
 from app.audio import TTSGenerationError, synthesize_speech
 from app.config import Settings, get_settings
 from app.db import get_db, get_session_factory
-from app.models import AssistantConfig, CallEvent, CallSession, CallStatus, Clinic
+from app.customer_service import normalize_customer_phone
+from app.enterprise_service import require_production_entitlement
+from app.enterprise_service import enqueue_outbox
+from app.models import AssistantConfig, CallEvent, CallSession, CallStatus, Clinic, ClinicCustomer, Worker
 from app.openai_realtime.prompt_builder import (
     ActiveAssistantConfigMissing,
     ClinicContext,
@@ -100,6 +104,9 @@ class VoiceContextResponse(BaseModel):
     resolved_called_number: str | None
     clinic: VoiceClinicInfo
     tools: list[dict[str, Any]]
+    customer_id: uuid.UUID | None = None
+    customer_name: str | None = None
+    preferred_worker_id: uuid.UUID | None = None
 
 
 class InternalTTSRequest(BaseModel):
@@ -157,6 +164,11 @@ class InternalTranscriptRequest(BaseModel):
     role: Literal["user", "assistant"]
     text: str = Field(min_length=1, max_length=8000)
     event_id: str | None = Field(default=None, max_length=256)
+
+
+class InternalCallCloseRequest(BaseModel):
+    call_session_id: uuid.UUID
+    reason: str = Field(default="normal", max_length=120)
 
 
 def _decimal_to_str(value: Decimal | None) -> str | None:
@@ -332,6 +344,10 @@ def create_voice_context(
         ) from exc
 
     config = context.active_assistant_config
+    # Legacy clinics created before commercial billing remain operational. New
+    # self-service clinics are gated server-side by paid production rights.
+    if context.clinic.billing_account_id is not None:
+        require_production_entitlement(session, context.clinic.id)
     caller_phone = _caller_phone(payload)
     called_number = (
         context.phone_number.phone_number
@@ -344,6 +360,25 @@ def create_voice_context(
     effective_transcript_enabled = bool(
         config.transcript_enabled or settings.enable_call_transcription
     )
+    known_customer: ClinicCustomer | None = None
+    normalized_caller: str | None = None
+    try:
+        normalized_caller = normalize_customer_phone(caller_phone)
+    except ValueError:
+        normalized_caller = None
+    if normalized_caller:
+        matches = list(
+            session.scalars(
+                select(ClinicCustomer).where(
+                    ClinicCustomer.clinic_id == context.clinic.id,
+                    ClinicCustomer.normalized_phone == normalized_caller,
+                    ClinicCustomer.is_active.is_(True),
+                )
+            )
+        )
+        if len(matches) == 1 and matches[0].personalization_enabled:
+            known_customer = matches[0]
+            known_customer.last_contact_at = datetime.now(UTC)
     call_session = CallSession(
         clinic_id=context.clinic.id,
         phone_number_id=context.phone_number.id if context.phone_number else None,
@@ -351,6 +386,8 @@ def create_voice_context(
         openai_call_id=payload.openai_call_id,
         provider_call_id=payload.provider_call_id,
         caller_phone=caller_phone,
+        caller_name=(known_customer.name if known_customer and config.known_customer_name_enabled else None),
+        customer_id=(known_customer.id if known_customer else None),
         called_number=called_number,
         status=CallStatus.ACTIVE,
         recording_enabled=config.recording_enabled,
@@ -370,8 +407,26 @@ def create_voice_context(
     session.refresh(call_session)
 
     instructions = build_realtime_instructions(context)
+    first_message = config.first_message
+    customer_instruction = ""
+    if known_customer is not None:
+        worker_name = None
+        if known_customer.preferred_worker_id:
+            worker = session.get(Worker, known_customer.preferred_worker_id)
+            if worker is not None and worker.clinic_id == context.clinic.id and worker.is_active:
+                worker_name = worker.name
+        if config.known_customer_greeting_enabled and config.known_customer_name_enabled:
+            first_message = config.known_customer_greeting_template.replace("{customer_name}", known_customer.name)
+        customer_instruction = (
+            "\n\n# Cliente conocido\n"
+            f"Nombre reconocido: {known_customer.name if config.known_customer_name_enabled else 'no utilizar'}. "
+            "No recites datos privados ni expliques detalles internos. "
+            f"Si pregunta cómo conoces su nombre, responde exactamente con: {config.known_customer_explanation_template}"
+        )
+        if worker_name and config.suggest_preferred_worker_enabled:
+            customer_instruction += f"\nProfesional preferido: {worker_name}. Puedes preguntar si quiere reservar con esa persona como la última vez."
     instructions = (
-        f"{instructions}\n\n{_caller_phone_instruction(config, caller_phone)}"
+        f"{instructions}{customer_instruction}\n\n{_caller_phone_instruction(config, caller_phone)}"
         f"\n\n# Contexto técnico\n"
         f"clinic_id técnico de esta llamada: {context.clinic.id}. "
         "No lo leas en voz alta.\n"
@@ -408,7 +463,7 @@ def create_voice_context(
         turn_end_silence_ms=config.turn_end_silence_ms,
         transcript_enabled=effective_transcript_enabled,
         language=config.language,
-        first_message=config.first_message,
+        first_message=first_message,
         instructions=instructions,
         prompt=instructions,
         caller=caller_phone,
@@ -416,7 +471,33 @@ def create_voice_context(
         resolved_called_number=resolved_candidate,
         clinic=_clinic_info(context.clinic),
         tools=list(get_realtime_tools()),
+        customer_id=(known_customer.id if known_customer else None),
+        customer_name=(known_customer.name if known_customer and config.known_customer_name_enabled else None),
+        preferred_worker_id=(known_customer.preferred_worker_id if known_customer else None),
     )
+
+
+@router.post("/call/close", status_code=204)
+def close_internal_call(
+    payload: InternalCallCloseRequest,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> None:
+    call = session.get(CallSession, payload.call_session_id)
+    if call is None:
+        raise HTTPException(status_code=404, detail="Call session not found.")
+    if call.ended_at is None:
+        call.ended_at = datetime.now(UTC)
+    if call.status == CallStatus.ACTIVE:
+        call.status = CallStatus.COMPLETED if payload.reason not in {"media_start_failed", "error"} else CallStatus.FAILED
+    if settings.call_analysis_enabled and call.transcript_enabled:
+        enqueue_outbox(
+            session,
+            kind="call_analysis.create",
+            dedupe_key=f"call-analysis:{call.id}:v1",
+            payload={"call_session_id": str(call.id)},
+        )
+    session.commit()
 
 
 @router.post("/tts")

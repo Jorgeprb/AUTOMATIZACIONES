@@ -17,30 +17,6 @@ import {
   Plus,
   Minus,
 } from "lucide-react";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  ArcElement,
-  Tooltip,
-  Filler,
-} from "chart.js";
-import { Line, Doughnut, Bar } from "react-chartjs-2";
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  ArcElement,
-  Tooltip,
-  Filler,
-);
-
 
 /* ---------- design tokens as JS ---------- */
 const BRAND = "oklch(0.52 0.13 245)";
@@ -99,8 +75,8 @@ function Nav() {
           >
             Acceder
           </a>
-          <a href="#cta" className="btn-primary">
-            Solicitar una demo
+          <a href="https://client.autogal.es/register" className="btn-primary">
+            Registrarse
           </a>
         </div>
         <button
@@ -131,8 +107,8 @@ function Nav() {
                 {l}
               </a>
             ))}
-            <a href="#cta" className="btn-primary mt-2 w-full justify-center">
-              Solicitar una demo
+            <a href="https://client.autogal.es/register" className="btn-primary mt-2 w-full justify-center">
+              Registrarse
             </a>
           </div>
         </div>
@@ -203,8 +179,8 @@ function Hero() {
             demanda de tu negocio cuando tu equipo no puede responder.
           </p>
           <div className="mt-10 flex flex-wrap items-center gap-4">
-            <a href="#cta" className="btn-primary">
-              Solicitar una demo <ArrowRight size={16} />
+            <a href="https://client.autogal.es/register" className="btn-primary">
+              Registrarse <ArrowRight size={16} />
             </a>
             <a
               href="#como-funciona"
@@ -455,75 +431,27 @@ function ChartPanel() {
 }
 
 function CallsLineChart({ dark = false }: { dark?: boolean }) {
-  const labelColor = dark ? "rgba(255,255,255,0.55)" : "oklch(0.42 0.025 255)";
-  const grid = dark ? "rgba(255,255,255,0.08)" : "oklch(0.94 0.008 250)";
+  const values = [168, 192, 210, 238, 276, 327];
+  const labels = ["Feb", "Mar", "Abr", "May", "Jun", "Jul"];
+  const width = 720;
+  const height = 240;
+  const padding = 24;
+  const max = Math.max(...values);
+  const points = values.map((value, index) => ({
+    x: padding + (index * (width - padding * 2)) / (values.length - 1),
+    y: height - padding - (value / max) * (height - padding * 2),
+    value,
+    label: labels[index],
+  }));
   return (
-    <Line
-      data={{
-        labels: ["Feb", "Mar", "Abr", "May", "Jun", "Jul"],
-        datasets: [
-          {
-            data: [168, 192, 210, 238, 276, 327],
-            borderColor: BRAND,
-            backgroundColor: (ctx) => {
-              const chart = ctx.chart;
-              const { ctx: c, chartArea } = chart;
-              if (!chartArea) return "rgba(0,0,0,0)";
-              const g = c.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
-              g.addColorStop(0, "rgba(50,110,200,0.22)");
-              g.addColorStop(1, "rgba(50,110,200,0)");
-              return g;
-            },
-            fill: true,
-            tension: 0.38,
-            borderWidth: 2,
-            pointRadius: 0,
-            pointHoverRadius: 4,
-            pointHoverBackgroundColor: BRAND,
-            pointHoverBorderColor: "#fff",
-            pointHoverBorderWidth: 2,
-          },
-        ],
-      }}
-      options={{
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            backgroundColor: dark ? "#0b1220" : "#fff",
-            titleColor: dark ? "#fff" : INK,
-            bodyColor: dark ? "rgba(255,255,255,0.7)" : INK_SOFT,
-            borderColor: dark ? "rgba(255,255,255,0.1)" : HAIRLINE,
-            borderWidth: 1,
-            padding: 10,
-            displayColors: false,
-            titleFont: { family: "Manrope", weight: 600 },
-            bodyFont: { family: "Manrope" },
-          },
-        },
-        scales: {
-          x: {
-            grid: { display: false },
-            border: { display: false },
-            ticks: {
-              color: labelColor,
-              font: { family: "Manrope", size: 11, weight: 500 },
-            },
-          },
-          y: {
-            grid: { color: grid, drawTicks: false },
-            border: { display: false },
-            ticks: {
-              color: labelColor,
-              font: { family: "Manrope", size: 11 },
-              maxTicksLimit: 4,
-              padding: 8,
-            },
-          },
-        },
-      }}
-    />
+    <div className="h-full w-full overflow-hidden" role="img" aria-label="Llamadas gestionadas en los últimos seis meses">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" aria-hidden="true">
+        {[0.25, 0.5, 0.75, 1].map((ratio) => <line key={ratio} x1={padding} y1={height-padding-ratio*(height-padding*2)} x2={width-padding} y2={height-padding-ratio*(height-padding*2)} stroke={dark ? "rgba(255,255,255,.08)" : "#edf0f5"} />)}
+        <polyline fill="none" stroke={BRAND} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" points={points.map((point)=>`${point.x},${point.y}`).join(" ")} />
+        {points.map((point)=><circle key={point.label} cx={point.x} cy={point.y} r="5" fill={dark ? "#0b1220" : "#fff"} stroke={BRAND} strokeWidth="3"><title>{point.label}: {point.value}</title></circle>)}
+      </svg>
+      <div className="-mt-2 flex justify-between px-4 text-[11px]" style={{ color: dark ? "rgba(255,255,255,.55)" : INK_SOFT }}>{labels.map((label)=><span key={label}>{label}</span>)}</div>
+    </div>
   );
 }
 
@@ -1076,33 +1004,14 @@ function BusinessIntelligence() {
             <ChartHeader title="Resultado de las llamadas" />
             <div className="mt-4 flex items-center justify-center">
               <div className="relative h-[180px] w-[180px]">
-                <Doughnut
-                  data={{
-                    labels: [
-                      "Resueltas",
-                      "Gestiones completadas",
-                      "Transferidas",
-                      "Sin acción",
-                      "Fallidas",
-                    ],
-                    datasets: [
-                      {
-                        data: [42, 28, 14, 10, 6],
-                        backgroundColor: [
-                          BRAND,
-                          BRAND_DEEP,
-                          "oklch(0.72 0.06 245)",
-                          "oklch(0.86 0.02 245)",
-                          "oklch(0.92 0.01 245)",
-                        ],
-                        borderWidth: 0,
-                      },
-                    ],
-                  }}
-                  options={{
-                    cutout: "72%",
-                    plugins: { legend: { display: false }, tooltip: { enabled: true } },
-                    maintainAspectRatio: false,
+                <div
+                  className="h-full w-full rounded-full"
+                  role="img"
+                  aria-label="Distribución de resultados de llamada"
+                  style={{
+                    background: `conic-gradient(${BRAND} 0 42%, ${BRAND_DEEP} 42% 70%, oklch(0.72 0.06 245) 70% 84%, oklch(0.86 0.02 245) 84% 94%, oklch(0.92 0.01 245) 94% 100%)`,
+                    WebkitMask: "radial-gradient(circle, transparent 0 52%, #000 53%)",
+                    mask: "radial-gradient(circle, transparent 0 52%, #000 53%)",
                   }}
                 />
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
@@ -1151,56 +1060,22 @@ function BusinessIntelligence() {
           >
             <ChartHeader title="Demanda por servicio" />
             <div className="mt-4 h-[220px]">
-              <Bar
-                data={{
-                  labels: [
-                    "Servicio principal",
-                    "Servicio recurrente",
-                    "Consulta",
-                    "Otra gestión",
-                  ],
-                  datasets: [
-                    {
-                      data: [31, 18, 9, 6],
-                      backgroundColor: [
-                        BRAND,
-                        "oklch(0.62 0.10 245)",
-                        "oklch(0.75 0.06 245)",
-                        "oklch(0.86 0.03 245)",
-                      ],
-                      borderRadius: 4,
-                      barThickness: 18,
-                    },
-                  ],
-                }}
-                options={{
-                  indexAxis: "y" as const,
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: {
-                    legend: { display: false },
-                    tooltip: { enabled: true },
-                  },
-                  scales: {
-                    x: {
-                      grid: { color: "oklch(0.94 0.008 250)", drawTicks: false },
-                      border: { display: false },
-                      ticks: {
-                        color: INK_SOFT,
-                        font: { family: "Manrope", size: 11 },
-                      },
-                    },
-                    y: {
-                      grid: { display: false },
-                      border: { display: false },
-                      ticks: {
-                        color: INK,
-                        font: { family: "Manrope", size: 12, weight: 500 },
-                      },
-                    },
-                  },
-                }}
-              />
+              <div className="space-y-4 pt-2" role="img" aria-label="Demanda por servicio">
+                {[
+                  ["Servicio principal", 31],
+                  ["Servicio recurrente", 18],
+                  ["Consulta", 9],
+                  ["Otra gestión", 6],
+                ].map(([label, value], index) => (
+                  <div key={String(label)} className="grid grid-cols-[9rem_1fr_2rem] items-center gap-3 text-[12px]">
+                    <span className="truncate" style={{ color: INK }}>{label}</span>
+                    <div className="h-4 overflow-hidden rounded-sm" style={{ background: HAIRLINE }}>
+                      <div className="h-full rounded-sm" style={{ width: `${(Number(value) / 31) * 100}%`, background: [BRAND, "oklch(0.62 0.10 245)", "oklch(0.75 0.06 245)", "oklch(0.86 0.03 245)"][index] }} />
+                    </div>
+                    <strong className="numeric" style={{ color: INK }}>{value}</strong>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -1602,8 +1477,8 @@ function CTA() {
             cómo encajaría Autogal en tu operativa.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-5">
-            <a href="#" className="btn-primary">
-              Solicitar una demo <ArrowRight size={16} />
+            <a href="https://client.autogal.es/register" className="btn-primary">
+              Registrarse <ArrowRight size={16} />
             </a>
             <a
               href="#"

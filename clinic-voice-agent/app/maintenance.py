@@ -19,11 +19,18 @@ from app.config import Settings
 from app.db import get_session_factory
 from app.models import (
     AdminSession,
+    AdminUser,
+    BillingAccount,
     CallSession,
     CallStatus,
     Clinic,
     IntegrationOutbox,
+    PaymentRecord,
+    PhoneProvisioningOrder,
+    PurchaseOrder,
 )
+from app.call_analysis_service import analyze_call
+from app.emailing import email_provider
 
 logger = logging.getLogger(__name__)
 _MAINTENANCE_LOCK_ID = 0x4155544F47414C  # "AUTOGAL"
@@ -84,6 +91,45 @@ def _mark_outbox_failure(item: IntegrationOutbox, exc: Exception) -> None:
         item.status = "dead_letter"
 
 
+
+
+def _resolve_email_payload(session: Session, payload: dict[str, Any]) -> tuple[str, str, str]:
+    """Resolve outbox templates without exposing secrets in payloads."""
+    if payload.get("to") and payload.get("subject") and payload.get("text"):
+        return str(payload["to"]), str(payload["subject"]), str(payload["text"])
+    template = str(payload.get("template") or "")
+    if template in {"purchase_confirmed", "number_pending"}:
+        order = session.get(PurchaseOrder, uuid.UUID(str(payload["order_id"])))
+        if order is None:
+            raise ValueError("purchase order not found")
+        account = session.get(BillingAccount, order.billing_account_id)
+        if account is None:
+            raise ValueError("billing account not found")
+        return (
+            account.billing_email,
+            "Compra confirmada en Autogal",
+            "Hemos confirmado tu compra. Tu número estará activo en menos de 24 horas y te avisaremos por correo electrónico.",
+        )
+    if template == "number_activated":
+        row = session.get(PhoneProvisioningOrder, uuid.UUID(str(payload["provisioning_order_id"])))
+        if row is None:
+            raise ValueError("provisioning order not found")
+        account = session.get(BillingAccount, row.billing_account_id)
+        if account is None:
+            raise ValueError("billing account not found")
+        return account.billing_email, "Tu número Autogal está activo", f"Tu número {row.assigned_number or ''} ya está activo."
+    if template in {"invoice_paid", "payment_failed"}:
+        payment = session.get(PaymentRecord, uuid.UUID(str(payload["payment_record_id"])))
+        if payment is None:
+            raise ValueError("payment record not found")
+        account = session.get(BillingAccount, payment.billing_account_id)
+        if account is None:
+            raise ValueError("billing account not found")
+        if template == "invoice_paid":
+            return account.billing_email, "Factura disponible en Autogal", "Tu pago se ha confirmado y la factura está disponible en tu área de cliente."
+        return account.billing_email, "No se pudo completar un pago de Autogal", "No se pudo completar el pago. Revisa el método de pago desde Gestionar suscripción."
+    raise ValueError(f"unsupported email template: {template}")
+
 def process_outbox(session: Session, settings: Settings, *, limit: int = 50) -> int:
     """Retry pending integration compensations with exponential backoff."""
     now = datetime.now(UTC)
@@ -103,15 +149,22 @@ def process_outbox(session: Session, settings: Settings, *, limit: int = 50) -> 
     for item in items:
         payload: dict[str, Any] = item.payload_json
         try:
-            if item.kind != "google_calendar.delete_event":
+            if item.kind == "google_calendar.delete_event":
+                clinic_id = uuid.UUID(str(payload["clinic_id"]))
+                client = get_authorized_calendar_client(session, settings, clinic_id)
+                client.events().delete(
+                    calendarId=str(payload["calendar_id"]),
+                    eventId=str(payload["event_id"]),
+                    sendUpdates="none",
+                ).execute()
+            elif item.kind == "email.send":
+                to, subject, body = _resolve_email_payload(session, payload)
+                email_provider(settings).send(to=to, subject=subject, text=body)
+            elif item.kind == "call_analysis.create":
+                if settings.call_analysis_enabled:
+                    analyze_call(session, settings, uuid.UUID(str(payload["call_session_id"])))
+            else:
                 raise ValueError(f"unsupported outbox kind: {item.kind}")
-            clinic_id = uuid.UUID(str(payload["clinic_id"]))
-            client = get_authorized_calendar_client(session, settings, clinic_id)
-            client.events().delete(
-                calendarId=str(payload["calendar_id"]),
-                eventId=str(payload["event_id"]),
-                sendUpdates="none",
-            ).execute()
         except (Exception, GoogleAuthorizationRequired) as exc:
             _mark_outbox_failure(item, exc)
             logger.warning(

@@ -21,12 +21,12 @@ def test_bootstrap_login_session_and_revocation(
     db_session: Session, monkeypatch,
 ) -> None:
     monkeypatch.setenv("ADMIN_BOOTSTRAP_USERNAME", "admin")
-    monkeypatch.setenv("ADMIN_BOOTSTRAP_PASSWORD", "Tatodobajocontrol")
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_PASSWORD", "Test-only-password-123!")
     settings = Settings()
     user = ensure_bootstrap_admin(db_session, settings)
-    assert verify_password("Tatodobajocontrol", user.password_hash)
+    assert verify_password("Test-only-password-123!", user.password_hash)
     authenticated = authenticate_admin(
-        db_session, "admin", "Tatodobajocontrol", settings
+        db_session, "admin", "Test-only-password-123!", settings
     )
     assert authenticated is not None
     token, _, record = create_admin_session(
@@ -54,5 +54,5 @@ def test_failed_logins_lock_account(db_session: Session, monkeypatch) -> None:
     db_session.refresh(user)
     assert user.locked_until is not None
     assert authenticate_admin(
-        db_session, user.username, "Tatodobajocontrol", settings
+        db_session, user.username, "Test-only-password-123!", settings
     ) is None

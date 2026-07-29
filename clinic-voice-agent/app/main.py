@@ -16,12 +16,15 @@ from app.api import (
     admin,
     agent,
     auth,
+    billing,
     calendar,
     calls,
     dev,
     google_auth,
     health,
     internal_voice,
+    registration,
+    stripe_webhook,
     workers,
 )
 from app.auth import ensure_bootstrap_admin
@@ -221,7 +224,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     application.include_router(health.router)
     application.include_router(auth.router)
+    application.include_router(registration.router)
     application.include_router(google_auth.router)
+    application.include_router(stripe_webhook.router)
     internal_dependencies = [Depends(require_internal_api_key)]
     application.include_router(
         calendar.router,
@@ -251,6 +256,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(
         admin.router,
         prefix="/api",
+        dependencies=[Depends(require_admin_access)],
+    )
+    application.include_router(
+        billing.router,
         dependencies=[Depends(require_admin_access)],
     )
     if application_settings.app_environment != "production":

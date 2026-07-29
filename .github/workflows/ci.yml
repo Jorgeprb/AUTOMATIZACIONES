@@ -30,7 +30,7 @@ jobs:
       DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/test
       INTERNAL_API_KEY: test-internal-api-key-with-32-characters
       ADMIN_API_KEY: test-admin-api-key-with-32-characters
-      ADMIN_BOOTSTRAP_PASSWORD: Tatodobajocontrol
+      ADMIN_BOOTSTRAP_PASSWORD: Test-only-password-123!
       OPENAI_API_KEY: test-openai-key
       OPENAI_WEBHOOK_SECRET: test-webhook-secret
       OPENAI_PROJECT_ID: proj_test

@@ -358,6 +358,17 @@ class GatewayCallSession:
         if self.rtp_transport is not None:
             self.rtp_transport.close()
         self.port_pool.release(self.rtp_port)
+        if self.context is not None:
+            try:
+                await self.backend.close_call(
+                    call_session_id=self.context.call_session_id,
+                    reason=reason,
+                )
+            except Exception:
+                logger.exception(
+                    "backend_call_close_failed",
+                    extra={"call_id": self.call_id, "reason": reason},
+                )
         logger.info(
             "sip_call_closed",
             extra={

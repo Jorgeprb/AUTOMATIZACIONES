@@ -654,6 +654,20 @@ export function AssistantConfigForm({
               clara; si no, pregunta sin inventar.
             </p>
           </div>
+          <div className="rounded-xl border border-[#e4e8ef] bg-white p-4 md:col-span-2">
+            <p className="font-semibold text-[#27344b]">Clientes conocidos y profesional preferido</p>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <SwitchField label="Usar el nombre de clientes conocidos" checked={watch("known_customer_name_enabled")} onChange={(checked) => setValue("known_customer_name_enabled", checked)} />
+              <SwitchField label="Saludo personalizado para clientes conocidos" checked={watch("known_customer_greeting_enabled")} onChange={(checked) => setValue("known_customer_greeting_enabled", checked)} />
+              <SwitchField label="Recordar al cliente después de reservar" checked={watch("remember_customer_after_booking")} onChange={(checked) => setValue("remember_customer_after_booking", checked)} />
+              <SwitchField label="Sugerir el profesional preferido" checked={watch("suggest_preferred_worker_enabled")} onChange={(checked) => setValue("suggest_preferred_worker_enabled", checked)} />
+              <SwitchField label="Preguntar por preferencia de profesional" checked={watch("ask_worker_preference_enabled")} onChange={(checked) => setValue("ask_worker_preference_enabled", checked)} />
+            </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div><Label>Plantilla de saludo conocido</Label><Textarea className="mt-2" {...register("known_customer_greeting_template")} /></div>
+              <div><Label>Explicación si pregunta cómo sabes su nombre</Label><Textarea className="mt-2" {...register("known_customer_explanation_template")} /></div>
+            </div>
+          </div>
           <SwitchField
             label="Pedir un motivo general"
             description="Solo una descripción breve; nunca historia clínica."

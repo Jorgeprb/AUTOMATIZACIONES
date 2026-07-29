@@ -64,7 +64,7 @@ export function ClientAccountsPage() {
   const clinics = clinicsQuery.data?.items ?? [];
 
   return <div className="space-y-7">
-    <PageHeader title="Clientes y accesos" description="Invita cuentas y decide qué clínicas puede gestionar cada cliente." actions={<Button onClick={startCreate}><Plus className="size-4" />Nuevo acceso</Button>} />
+    <PageHeader title="Usuarios y accesos" description="Invita cuentas y decide qué clínicas puede gestionar cada usuario." actions={<Button onClick={startCreate}><Plus className="size-4" />Nuevo acceso</Button>} />
     <div className="rounded-xl border border-[#dbe4ff] bg-[#f3f6ff] p-4 text-sm text-[#415476]"><ShieldCheck className="mr-2 inline size-4 text-[#315efb]" />El cliente inicia sesión con su cuenta Google y solo recibe las clínicas asignadas.</div>
     <DataTable columns={columns} rows={usersQuery.data ?? []} rowKey={(user) => user.id} />
     <Dialog open={open} onOpenChange={setOpen}><DialogContent><DialogHeader><DialogTitle>{editing ? "Editar acceso" : "Nuevo acceso de cliente"}</DialogTitle><DialogDescription>La dirección debe coincidir con la cuenta Google que utilizará el cliente.</DialogDescription></DialogHeader>

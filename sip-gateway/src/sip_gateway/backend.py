@@ -233,6 +233,16 @@ class BackendClient:
         )
 
 
+    async def close_call(self, *, call_session_id: str, reason: str) -> None:
+        """Finalize the durable backend call projection without delaying SIP teardown."""
+        response = await self._client.post(
+            f"{self._settings.backend_internal_url}/api/internal/voice/call/close",
+            json={"call_session_id": call_session_id, "reason": reason},
+            headers=self._headers(),
+            timeout=10.0,
+        )
+        response.raise_for_status()
+
     async def append_transcript(
         self,
         *,

@@ -27,6 +27,7 @@ from app.auth import (
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import AdminMembership, AdminRole, AdminUser, OAuthLoginState
+from app.enterprise_service import create_billing_account_for_user
 from app.utils.security import require_admin_access
 
 router = APIRouter(prefix="/auth", tags=["portal-auth"])
@@ -290,7 +291,9 @@ def complete_google_login(
             or_(AdminUser.google_subject == subject, AdminUser.email == email)
         )
     )
-    if user is None and settings.google_login_auto_provision:
+    # Auto-provisioning is deliberately limited to the client portal.  The
+    # administrator portal never creates privileged accounts from Google.
+    if user is None and portal == "client" and settings.google_login_auto_provision:
         user = AdminUser(
             username=email,
             email=email,
@@ -299,10 +302,18 @@ def complete_google_login(
             google_subject=subject,
             auth_provider="google",
             password_hash="!google-only",
-            role=AdminRole.READ_ONLY,
+            role=AdminRole.CLINIC_ADMIN,
             is_active=True,
+            email_verified_at=datetime.now(UTC),
         )
         session.add(user)
+        session.flush()
+        create_billing_account_for_user(
+            session,
+            user=user,
+            display_name=user.display_name or email,
+            billing_email=email,
+        )
         session.commit()
         session.refresh(user)
     if user is None:

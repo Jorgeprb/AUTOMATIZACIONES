@@ -74,10 +74,10 @@ describe("LoginPage", () => {
       ["/login"],
     );
     await user.type(screen.getByLabelText("Usuario"), "admin");
-    await user.type(screen.getByLabelText("Contraseña"), "Tatodobajocontrol");
+    await user.type(screen.getByLabelText("Contraseña"), "Test-only-password-123!");
     await user.click(screen.getByRole("button", { name: "Entrar" }));
     expect(await screen.findByText("Panel privado")).toBeInTheDocument();
-    expect(loginWithPassword).toHaveBeenCalledWith("admin", "Tatodobajocontrol");
+    expect(loginWithPassword).toHaveBeenCalledWith("admin", "Test-only-password-123!");
   });
 
   it("allows private routes when the server session is active", async () => {

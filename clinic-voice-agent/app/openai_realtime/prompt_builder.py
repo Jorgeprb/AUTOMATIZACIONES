@@ -354,12 +354,18 @@ def build_realtime_instructions(context: ClinicContext) -> str:
             if config.use_prices and config.allow_price_answers
             else "Uso de precios desactivado; no menciones precios."
         )
+        aliases = ", ".join(service.aliases_json or []) or "ninguno"
+        phrases = ", ".join(service.common_phrases_json or []) or "ninguna"
+        keywords = ", ".join(service.keywords_json or []) or "ninguna"
+        disambiguation = _clean(service.disambiguation_instructions) or "Pregunta cuál quiere si hay ambigüedad."
         service_lines.append(
             f"- {service.public_name}: service_id real={service.id}. "
             f"{description} "
             f"Duración: {service.duration_minutes} minutos. "
             f"Precio: {price}. "
             f"Trabajadores: {_service_worker_names(service, workers_by_id)}. "
+            f"Alias: {aliases}. Expresiones habituales: {phrases}. "
+            f"Palabras clave: {keywords}. Desambiguación: {disambiguation}. "
             f"Estado: {booking_state}."
         )
     if not service_lines:
@@ -600,6 +606,19 @@ interpretar referencias como "la primera", "esa" o "a las nueve".
 
 Modo configurado: {config.service_prompt_mode}.
 {service_prompt_rule}
+Clasifica la petición libre únicamente contra los servicios reales anteriores y
+usa siempre el service_id real. Los alias, expresiones y palabras clave sirven
+para clasificar, no para inventar servicios. Si dos servicios encajan, pregunta
+cuál quiere usando sus nombres públicos.
+
+# Preferencia de profesional
+
+Preguntar preferencia: {"sí" if config.ask_worker_preference_enabled else "no"}.
+Si está activado y todavía no conoces la preferencia, pregunta de forma natural:
+«Tes preferencia por algún barbeiro ou peluqueiro?». Si el contexto de cliente
+conocido incluye un profesional preferido y suggest_preferred_worker_enabled está
+activo, pregunta si quiere reservar con esa persona como la última vez. Si no
+prefiere a nadie, busca el primer horario real disponible y pregunta día y franja.
 
 # Reservas: comportamiento natural y exacto
 

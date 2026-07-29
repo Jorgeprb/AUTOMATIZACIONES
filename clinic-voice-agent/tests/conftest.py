@@ -7,9 +7,10 @@ import uuid
 from collections.abc import Generator
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app import models as domain_models  # noqa: F401
@@ -57,6 +58,30 @@ def anyio_backend() -> str:
 def database_engine() -> Generator[Engine, None, None]:
     """Create an isolated PostgreSQL schema for one test."""
     database_url = os.environ["DATABASE_URL"]
+    if database_url.startswith("sqlite"):
+        test_engine = create_engine(
+            database_url,
+            pool_pre_ping=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+
+        @event.listens_for(test_engine, "connect")
+        def register_sqlite_functions(dbapi_connection, _connection_record) -> None:
+            dbapi_connection.create_function(
+                "char_length",
+                1,
+                lambda value: len(value) if value is not None else None,
+            )
+
+        Base.metadata.create_all(test_engine)
+        try:
+            yield test_engine
+        finally:
+            Base.metadata.drop_all(test_engine)
+            test_engine.dispose()
+        return
+
     schema_name = f"test_{uuid.uuid4().hex}"
     admin_engine = create_engine(database_url, pool_pre_ping=True)
 

@@ -355,6 +355,48 @@ class SimulationEngine:
                     raise ValueError(
                         "La configuración del asistente no pertenece a la clínica."
                     )
+            else:
+                assistant_config = session.scalar(
+                    select(AssistantConfig).where(
+                        AssistantConfig.clinic_id == clinic.id,
+                        AssistantConfig.is_active.is_(True),
+                    )
+                )
+                if assistant_config is None:
+                    # The simulator must also work for newly seeded clinics that do
+                    # not yet have a saved assistant profile. Persist a normal
+                    # default configuration so the exact same scheduling/tool path
+                    # is exercised as in a real call.
+                    assistant_config = AssistantConfig(
+                        clinic_id=clinic.id,
+                        name="Configuración del simulador",
+                        realtime_model="gpt-realtime-2",
+                        realtime_voice="marin",
+                        language=clinic.default_language or "es-ES",
+                        first_message="Hola, ¿en qué puedo ayudarte?",
+                        system_prompt=(
+                            "Gestiona información y citas de forma natural. No "
+                            "inventes servicios, trabajadores ni disponibilidad."
+                        ),
+                        safety_prompt=(
+                            "No diagnostiques ni recomiendes medicación. Ante una "
+                            "urgencia, indica llamar al 112."
+                        ),
+                        booking_policy_prompt=(
+                            "Propón huecos reales y reserva cuando la persona acepte "
+                            "un horario de forma natural."
+                        ),
+                        cancellation_policy_prompt=(
+                            "Identifica la cita correcta antes de cancelarla."
+                        ),
+                        transfer_policy_prompt=(
+                            "Transfiere peticiones fuera de alcance o solicitudes "
+                            "expresas de atención humana."
+                        ),
+                        is_active=True,
+                    )
+                    session.add(assistant_config)
+                    session.flush()
             self._prepare_fake_calendars(session, clinic)
             call = CallSession(
                 clinic_id=clinic.id,

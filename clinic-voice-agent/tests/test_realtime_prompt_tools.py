@@ -61,11 +61,9 @@ def test_propose_slots_schema_prefers_service_id_or_duration() -> None:
     parameters = propose_tool["parameters"]
     properties = parameters["properties"]
 
-    assert parameters["oneOf"] == [
-        {"required": ["service_id"]},
-        {"required": ["service_name"]},
-        {"required": ["duration_minutes"]},
-    ]
+    assert "oneOf" not in parameters
+    assert {"service_id", "service_name", "duration_minutes"}.issubset(properties)
+    assert parameters["type"] == "object"
     assert "service_id" in properties
     assert "service_name" in properties
     assert "duration_minutes" in properties

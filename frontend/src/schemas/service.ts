@@ -8,6 +8,10 @@ export const serviceFormSchema = z.object({
     .min(1, "El nombre público es obligatorio")
     .max(200),
   description: z.string().trim().optional().or(z.literal("")),
+  aliases_text: z.string().max(3000),
+  common_phrases_text: z.string().max(5000),
+  keywords_text: z.string().max(3000),
+  disambiguation_instructions: z.string().max(5000),
   price_text: z.string().trim().max(200).optional().or(z.literal("")),
   price_amount: z
     .string()
@@ -32,6 +36,10 @@ export interface ServicePayload {
   name: string;
   public_name: string;
   description: string | null;
+  aliases_json: string[];
+  common_phrases_json: string[];
+  keywords_json: string[];
+  disambiguation_instructions: string | null;
   price_text: string | null;
   price_amount: string | null;
   currency: string;
@@ -48,6 +56,10 @@ export const serviceDefaults: ServiceFormValues = {
   name: "",
   public_name: "",
   description: "",
+  aliases_text: "",
+  common_phrases_text: "",
+  keywords_text: "",
+  disambiguation_instructions: "",
   price_text: "",
   price_amount: "",
   currency: "EUR",

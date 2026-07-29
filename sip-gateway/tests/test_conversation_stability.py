@@ -60,7 +60,8 @@ async def _tool_executor(name: str, arguments: dict[str, object]) -> dict[str, o
 def test_external_tts_session_uses_text_and_manual_transcript_gating() -> None:
     session = build_realtime_session(_context())
     assert session["output_modalities"] == ["text"]
-    assert session["instructions"] == "Responde en español."
+    assert session["instructions"].startswith("Responde en español.")
+    assert "El saludo inicial ya fue reproducido" in session["instructions"]
     assert session["audio"]["input"]["turn_detection"]["create_response"] is False
     assert "temperature" not in session
 

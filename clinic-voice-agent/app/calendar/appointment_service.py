@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.calendar.event_templates import (
@@ -34,7 +34,12 @@ from app.models import (
     Service,
     Worker,
     IntegrationOutbox,
+    ClinicCustomer,
+    ClinicResource,
+    ResourceReservation,
+    ServiceResourceRequirement,
 )
+from app.customer_service import normalize_customer_phone
 
 from app.utils.phone import normalize_phone
 
@@ -211,6 +216,18 @@ def check_exact_availability(
             reason="The slot overlaps an existing appointment.",
         )
     try:
+        _lock_and_validate_resources(
+            session,
+            clinic_id=clinic_id,
+            service_id=service_id,
+            start_at=start_at,
+            end_at=end_at,
+            timezone=clinic.timezone,
+            lock=False,
+        )
+    except AppointmentUnavailable as exc:
+        return AvailabilityResult(available=False, reason=str(exc))
+    try:
         available = check_slot_available(
             client,
             worker=worker,
@@ -226,6 +243,102 @@ def check_exact_availability(
         available=available,
         reason=None if available else "The slot is busy or outside working hours.",
     )
+
+
+
+
+def _resource_schedule_allows(resource: ClinicResource, *, start_at: datetime, end_at: datetime, timezone: str) -> bool:
+    """Check optional weekly resource hours using the same half-open semantics."""
+    schedule = resource.schedule_json or {}
+    if not schedule:
+        return True
+    local_start = start_at.astimezone(ZoneInfo(timezone))
+    local_end = end_at.astimezone(ZoneInfo(timezone))
+    if local_start.date() != local_end.date():
+        return False
+    weekday = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")[local_start.weekday()]
+    ranges = schedule.get(weekday, [])
+    for item in ranges if isinstance(ranges, list) else []:
+        try:
+            start_h, start_m = map(int, str(item["start"]).split(":", 1))
+            end_h, end_m = map(int, str(item["end"]).split(":", 1))
+        except (KeyError, ValueError, TypeError):
+            continue
+        range_start = local_start.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
+        range_end = local_start.replace(hour=end_h % 24, minute=end_m, second=0, microsecond=0)
+        if end_h == 24:
+            range_end += timedelta(days=1)
+        if range_start <= local_start and local_end <= range_end:
+            return True
+    return False
+
+
+def _lock_and_validate_resources(
+    session: Session,
+    *,
+    clinic_id: uuid.UUID,
+    service_id: uuid.UUID | None,
+    start_at: datetime,
+    end_at: datetime,
+    timezone: str,
+    lock: bool,
+) -> list[tuple[ClinicResource, int]]:
+    if service_id is None:
+        return []
+    requirements = list(session.scalars(select(ServiceResourceRequirement).where(ServiceResourceRequirement.clinic_id == clinic_id, ServiceResourceRequirement.service_id == service_id)))
+    resolved: list[tuple[ClinicResource, int]] = []
+    for requirement in requirements:
+        query = select(ClinicResource).where(ClinicResource.id == requirement.resource_id, ClinicResource.clinic_id == clinic_id, ClinicResource.is_active.is_(True))
+        if lock:
+            query = query.with_for_update()
+        resource = session.scalar(query)
+        if resource is None or requirement.quantity > resource.capacity:
+            raise AppointmentUnavailable("A required resource is unavailable.")
+        if not _resource_schedule_allows(resource, start_at=start_at, end_at=end_at, timezone=timezone):
+            raise AppointmentUnavailable("A required resource is outside its working hours.")
+        used = session.scalar(select(func.coalesce(func.sum(ResourceReservation.quantity), 0)).where(ResourceReservation.resource_id == resource.id, ResourceReservation.start_at < end_at.astimezone(UTC), ResourceReservation.end_at > start_at.astimezone(UTC))) or 0
+        if int(used) + requirement.quantity > resource.capacity:
+            raise AppointmentUnavailable("A required resource has no remaining capacity.")
+        resolved.append((resource, requirement.quantity))
+    return resolved
+
+
+def _upsert_customer_after_booking(
+    session: Session,
+    *,
+    clinic_id: uuid.UUID,
+    name: str,
+    phone: str,
+    worker_id: uuid.UUID,
+    call_session: CallSession | None,
+    config: AssistantConfig | None,
+) -> ClinicCustomer | None:
+    if config is not None and not config.remember_customer_after_booking:
+        return None
+    try:
+        normalized = normalize_customer_phone(phone)
+    except ValueError:
+        return None
+    customer = session.scalar(select(ClinicCustomer).where(ClinicCustomer.clinic_id == clinic_id, ClinicCustomer.normalized_phone == normalized))
+    now = datetime.now(UTC)
+    if customer is None:
+        customer = ClinicCustomer(clinic_id=clinic_id, name=name.strip(), normalized_phone=normalized, display_phone=phone.strip(), personalization_enabled=True, is_active=True, first_contact_at=now, last_contact_at=now, preferred_worker_id=worker_id)
+        session.add(customer)
+        session.flush()
+    else:
+        # Do not replace a useful known name with a short or uncertain transcript.
+        if len(name.strip()) >= 3 and (not customer.name or customer.name == "Cliente"):
+            customer.name = name.strip()
+        customer.display_phone = phone.strip()
+        customer.last_contact_at = now
+        if customer.preferred_worker_id is None or (config and config.suggest_preferred_worker_enabled):
+            customer.preferred_worker_id = worker_id
+        customer.is_active = True
+    if call_session is not None:
+        call_session.customer_id = customer.id
+        if not call_session.caller_name:
+            call_session.caller_name = customer.name
+    return customer
 
 
 def _compensate_google_event(
@@ -377,6 +490,15 @@ def create_appointment_transactional(
             blocked_end=blocked_end,
         ):
             raise AppointmentUnavailable("The slot was booked by another appointment.")
+        reserved_resources = _lock_and_validate_resources(
+            session,
+            clinic_id=clinic_id,
+            service_id=service_id,
+            start_at=start_at,
+            end_at=end_at,
+            timezone=clinic.timezone,
+            lock=True,
+        )
         try:
             google_available = check_slot_available(
                 client,
@@ -460,6 +582,15 @@ def create_appointment_transactional(
                 "Google Calendar could not create the event."
             ) from exc
 
+        customer = _upsert_customer_after_booking(
+            session,
+            clinic_id=clinic_id,
+            name=patient_name,
+            phone=normalized_phone,
+            worker_id=worker.id,
+            call_session=call_session,
+            config=assistant_config,
+        )
         appointment = Appointment(
             id=appointment_id,
             clinic_id=clinic_id,
@@ -476,9 +607,21 @@ def create_appointment_transactional(
             status=AppointmentStatus.CONFIRMED,
             source=AppointmentSource.VOICE_BOT,
             call_session_id=call_session_id,
+            customer_id=(customer.id if customer is not None else None),
         )
         session.add(appointment)
         session.flush()
+        for resource, quantity in reserved_resources:
+            session.add(
+                ResourceReservation(
+                    clinic_id=clinic_id,
+                    appointment_id=appointment.id,
+                    resource_id=resource.id,
+                    quantity=quantity,
+                    start_at=start_at.astimezone(UTC),
+                    end_at=end_at.astimezone(UTC),
+                )
+            )
         session.commit()
         return appointment
     except (

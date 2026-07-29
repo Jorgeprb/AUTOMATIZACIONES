@@ -44,6 +44,10 @@ function formValues(service: Service): ServiceFormValues {
     name: service.name,
     public_name: service.public_name,
     description: service.description ?? "",
+    aliases_text: service.aliases_json.join(", "),
+    common_phrases_text: service.common_phrases_json.join("\n"),
+    keywords_text: service.keywords_json.join(", "),
+    disambiguation_instructions: service.disambiguation_instructions ?? "",
     price_text: service.price_text ?? "",
     price_amount: service.price_amount ?? "",
     currency: service.currency,
@@ -58,8 +62,17 @@ function formValues(service: Service): ServiceFormValues {
 }
 
 function payload(values: ServiceFormValues): ServicePayload {
+  const list = (value: string): string[] => value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const { aliases_text, common_phrases_text, keywords_text, ...base } = values;
   return {
-    ...values,
+    ...base,
+    aliases_json: list(aliases_text),
+    common_phrases_json: list(common_phrases_text),
+    keywords_json: list(keywords_text),
+    disambiguation_instructions: values.disambiguation_instructions || null,
     description: values.description || null,
     price_text: values.price_text || null,
     price_amount: values.price_amount || null,

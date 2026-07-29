@@ -224,13 +224,12 @@ def test_dynamic_prompt_has_prices_knowledge_and_tenant_isolation(
     assert "Luis" in prompt
     assert f"service_id real={service.id}" in prompt
     assert f"worker_id real={worker.id}" in prompt
-    assert "envía service_id y no envíes" in prompt
-    assert "duration_minutes solo cuando no tengas service_id" in prompt
-    assert "Nunca inventes worker_id ni service_id" in prompt
-    assert "No pidas frases exactas" in prompt
-    assert "aceptación natural" in prompt
-    assert "Nunca inventes precios, servicios, trabajadores" in prompt
-    assert "Llame al 112 ahora o acuda a urgencias" in prompt
+    assert "usa siempre el service_id real" in prompt
+    assert "no inventes identificadores" in prompt
+    assert "No exijas una frase exacta" in prompt
+    assert "acepta naturalmente un hueco" in prompt
+    assert "Nunca inventes precios, servicios, profesionales" in prompt
+    assert "indica llamar al 112 o acudir a" in prompt
     assert "f1b2d3c4-5678-4abc-9def-1234567890ab" not in prompt
     assert "c0ffeec0-0000-4000-8000-000000000001" not in prompt
     assert "Clínica Ajena Secreta" not in prompt
@@ -313,13 +312,12 @@ def test_dynamic_prompt_respects_assistant_behavior_fields(
     context = resolve_clinic_by_called_number("+34910001003", session=db_session)
     prompt = build_realtime_instructions(context)
 
-    assert "Tono configurado: comercial" in prompt
-    assert "Longitud de respuesta: corta" in prompt
-    assert "Propón como máximo 1 horarios" in prompt
-    assert "Cancelaciones permitidas: no" in prompt
+    assert "Tono: comercial. Extensión habitual: corta." in prompt
+    assert "sin recitar más de 1 horarios" in prompt
+    assert "Cancelaciones: no permitidas" in prompt
     assert "Uso de precios desactivado" in prompt
     assert "Estilo conversacional: natural" in prompt
-    assert "Nivel de iniciativa: alto" in prompt
+    assert "Iniciativa: alto" in prompt
     assert "No atendemos llamadas comerciales" in prompt
     assert "Transfiere quejas" in prompt
     assert "# Perfil de voz" in prompt

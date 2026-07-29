@@ -60,10 +60,14 @@ class PublicRateLimitMiddleware(BaseHTTPMiddleware):
         """Return a limit only for public mutable/integration routes."""
         if path == "/webhooks/openai/realtime":
             return self._settings.webhook_rate_limit_per_minute
-        if path == "/auth/login":
+        if path in {"/auth/login", "/auth/register", "/auth/forgot-password", "/auth/resend-verification", "/auth/reset-password"}:
             return min(20, self._settings.public_rate_limit_per_minute)
+        if path == "/api/webhooks/stripe":
+            return self._settings.webhook_rate_limit_per_minute
         if path.startswith("/auth/google/"):
             return self._settings.public_rate_limit_per_minute
+        if path == "/api/billing/checkout":
+            return min(20, self._settings.public_rate_limit_per_minute)
         return None
 
     async def dispatch(
