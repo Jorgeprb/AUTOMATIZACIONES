@@ -4,7 +4,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { LoadingState } from "@/components/common/LoadingState";
 import { RequireAuth } from "@/components/layout/RequireAuth";
-import { isAdminPortal } from "@/lib/portal";
+import { isAdminPortal, isClientPortal } from "@/lib/portal";
 
 const DashboardPage = lazy(() =>
   import("@/pages/DashboardPage").then((module) => ({
@@ -116,7 +116,7 @@ export default function App() {
             />
             <Route
               path="clinics/:clinicId/flows"
-              element={<FlowEditorPage />}
+              element={isClientPortal ? <Navigate to="/clinics" replace /> : <FlowEditorPage />}
             />
             <Route
               path="clinics/:clinicId/knowledge"
@@ -141,8 +141,8 @@ export default function App() {
             <Route path="users" element={isAdminPortal ? <ClientAccountsPage /> : <Navigate to="/" replace />} />
             <Route path="business" element={isAdminPortal ? <BusinessAdminPage /> : <Navigate to="/" replace />} />
             <Route path="onboarding" element={<OnboardingPage />} />
-            <Route path="account" element={<CommercialAccountPage />} />
-            <Route path="settings" element={<SettingsPage />} />
+            <Route path="account" element={isClientPortal ? <Navigate to="/clinics" replace /> : <CommercialAccountPage />} />
+            <Route path="settings" element={isClientPortal ? <Navigate to="/" replace /> : <SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Route>

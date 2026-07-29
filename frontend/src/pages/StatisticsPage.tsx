@@ -60,14 +60,16 @@ export function StatisticsPage() {
           <FilterField label="Periodo">
             <Select
               value={filters.period}
-              onChange={(event) =>
+              onChange={(event) => {
+                const period = event.target.value;
                 setFilters({
                   ...filters,
-                  period: event.target.value,
-                  date_from: event.target.value === "custom" ? filters.date_from : undefined,
-                  date_to: event.target.value === "custom" ? filters.date_to : undefined,
-                })
-              }
+                  period,
+                  ...(period === "custom"
+                    ? customRange(filters.date_from, filters.date_to)
+                    : { date_from: undefined, date_to: undefined }),
+                });
+              }}
             >
               <option value="today">Hoy</option>
               <option value="7d">Últimos 7 días</option>
@@ -91,7 +93,8 @@ export function StatisticsPage() {
           <FilterField label="Estado de cita">
             <Select value={filters.appointment_status ?? ""} onChange={(event) => setFilters({ ...filters, appointment_status: event.target.value || undefined })}>
               <option value="">Todos</option>
-              <option value="scheduled">Programada</option>
+              <option value="pending">Pendiente</option>
+              <option value="confirmed">Confirmada</option>
               <option value="completed">Completada</option>
               <option value="cancelled">Cancelada</option>
               <option value="no_show">No presentado</option>
@@ -149,3 +152,14 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
   return <Card><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent>{children}</CardContent></Card>;
 }
 function dateInput(value?:string) { return value ? value.slice(0,10) : ""; }
+function customRange(dateFrom?: string, dateTo?: string) {
+  if (dateFrom && dateTo) return { date_from: dateFrom, date_to: dateTo };
+  const end = new Date();
+  const start = new Date(end);
+  start.setDate(start.getDate() - 30);
+  const asDate = (value: Date) => value.toISOString().slice(0, 10);
+  return {
+    date_from: `${asDate(start)}T00:00:00`,
+    date_to: `${asDate(end)}T23:59:59`,
+  };
+}

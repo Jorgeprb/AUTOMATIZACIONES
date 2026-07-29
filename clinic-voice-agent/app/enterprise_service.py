@@ -113,12 +113,19 @@ def create_clinic_for_account(
     email: str | None,
     address: str | None,
 ) -> Clinic:
+    requested_phone = main_phone_number.strip()
+    if not requested_phone or requested_phone.casefold() in {
+        "pending",
+        "pendiente",
+        "pending-assignment",
+    }:
+        requested_phone = f"pending-{uuid.uuid4().hex[:20]}"
     clinic = Clinic(
         billing_account_id=account.id,
         name=name.strip(),
         timezone=timezone,
         default_language="gl-ES",
-        main_phone_number=main_phone_number.strip(),
+        main_phone_number=requested_phone,
         email=email.strip().casefold() if email else None,
         address=address.strip() if address else None,
         is_active=True,

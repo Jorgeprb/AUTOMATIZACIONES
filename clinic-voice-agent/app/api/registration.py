@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import delete, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.auth import AdminIdentity, _identity_for_user, _set_session_cookies
@@ -241,7 +242,14 @@ def onboarding_clinic(
         email=payload.email,
         address=payload.address,
     )
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ya existe una clínica con ese teléfono principal.",
+        ) from exc
     return {"clinic_id": str(clinic.id), "billing_account_id": str(account.id)}
 
 

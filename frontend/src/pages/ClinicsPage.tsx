@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, ExternalLink, Pencil, Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -10,6 +10,7 @@ import {
   listClinics,
   updateClinic,
 } from "@/api/clinics";
+import { createAdditionalClinic } from "@/api/registration";
 import { ClinicForm } from "@/components/forms/ClinicForm";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { EmptyState } from "@/components/common/EmptyState";
@@ -19,6 +20,8 @@ import { PageHeader } from "@/components/common/PageHeader";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { DataTable, type DataTableColumn } from "@/components/tables/DataTable";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -77,6 +80,7 @@ export function ClinicsPage() {
   const [deletingClinic, setDeletingClinic] = useState<Clinic | null>(null);
   const authQuery = useQuery({ queryKey: ["auth", "me"], queryFn: getCurrentAdmin, staleTime: 60_000 });
   const canManageTenants = authQuery.data?.role === "super_admin";
+  const canCreateClinic = canManageTenants || isClientPortal;
 
   const clinicsQuery = useQuery({
     queryKey: ["clinics", "admin-list"],
@@ -88,10 +92,23 @@ export function ClinicsPage() {
   };
 
   const createMutation = useMutation({
-    mutationFn: createClinic,
-    onSuccess: async (clinic) => {
+    mutationFn: async (values: ClinicPayload) => {
+      if (isClientPortal) {
+        const result = await createAdditionalClinic({
+          name: values.name,
+          timezone: values.timezone,
+          main_phone_number: values.main_phone_number,
+          email: values.email,
+          address: values.address,
+        });
+        return result.clinic_id;
+      }
+      const clinic = await createClinic(values);
+      return clinic.id;
+    },
+    onSuccess: async (clinicId) => {
       await refreshClinics();
-      setActiveClinicId(clinic.id);
+      setActiveClinicId(clinicId);
       setFormOpen(false);
       toast.success("Clínica creada");
     },
@@ -222,15 +239,18 @@ export function ClinicsPage() {
       <PageHeader
         title={isClientPortal ? "Mis clínicas" : "Clínicas"}
         description={isClientPortal ? "Accede a los datos y configuraciones de las clínicas asignadas a tu cuenta." : "Gestiona los tenants, datos públicos y estado operativo de la plataforma."}
-        actions={canManageTenants ?
+        actions={canCreateClinic ?
           <Button
+            size={isClientPortal ? "icon" : "default"}
+            title={isClientPortal ? "Añadir clínica" : undefined}
+            aria-label={isClientPortal ? "Añadir clínica" : undefined}
             onClick={() => {
               setEditingClinic(null);
               setFormOpen(true);
             }}
           >
             <Plus className="size-4" />
-            Nueva clínica
+            {!isClientPortal ? "Nueva clínica" : null}
           </Button>
         : undefined}
       />
@@ -254,7 +274,7 @@ export function ClinicsPage() {
             icon={Building2}
             title="No hay clínicas"
             description="Crea la primera clínica para empezar a configurar el asistente."
-            action={canManageTenants ? <Button onClick={() => setFormOpen(true)}><Plus className="size-4" />Crear clínica</Button> : undefined}
+            action={canCreateClinic ? <Button onClick={() => setFormOpen(true)}><Plus className="size-4" />Crear clínica</Button> : undefined}
           />
         )
       ) : null}
@@ -275,15 +295,21 @@ export function ClinicsPage() {
               Configura los datos básicos que utilizarán el panel y el asistente.
             </DialogDescription>
           </DialogHeader>
-          <ClinicForm
-            defaultValues={
-              editingClinic ? formValues(editingClinic) : clinicDefaults
-            }
-            onSubmit={handleSubmit}
-            onCancel={() => setFormOpen(false)}
-            isPending={createMutation.isPending || updateMutation.isPending}
-            submitLabel={editingClinic ? "Guardar cambios" : "Crear clínica"}
-          />
+          {isClientPortal && !editingClinic ? (
+            <ClientClinicCreateForm
+              isPending={createMutation.isPending}
+              onCancel={() => setFormOpen(false)}
+              onSubmit={handleSubmit}
+            />
+          ) : (
+            <ClinicForm
+              defaultValues={editingClinic ? formValues(editingClinic) : clinicDefaults}
+              onSubmit={handleSubmit}
+              onCancel={() => setFormOpen(false)}
+              isPending={createMutation.isPending || updateMutation.isPending}
+              submitLabel={editingClinic ? "Guardar cambios" : "Crear clínica"}
+            />
+          )}
         </DialogContent>
       </Dialog>
 
@@ -301,5 +327,96 @@ export function ClinicsPage() {
         }}
       />
     </div>
+  );
+}
+
+function ClientClinicCreateForm({
+  isPending,
+  onCancel,
+  onSubmit,
+}: {
+  isPending: boolean;
+  onCancel: () => void;
+  onSubmit: (values: ClinicFormValues) => Promise<void>;
+}) {
+  const [values, setValues] = useState({
+    name: "",
+    timezone: "Europe/Madrid",
+    main_phone_number: "",
+    email: "",
+    address: "",
+  });
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await onSubmit({
+      ...clinicDefaults,
+      name: values.name.trim(),
+      timezone: values.timezone.trim(),
+      main_phone_number: values.main_phone_number.trim() || "pending",
+      email: values.email.trim(),
+      address: values.address.trim(),
+    });
+  };
+
+  return (
+    <form className="space-y-4" onSubmit={(event) => void submit(event)}>
+      <div className="space-y-1.5">
+        <Label htmlFor="new-clinic-name">Nombre</Label>
+        <Input
+          id="new-clinic-name"
+          required
+          maxLength={200}
+          value={values.name}
+          onChange={(event) => setValues({ ...values, name: event.target.value })}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="new-clinic-timezone">Zona horaria</Label>
+        <Input
+          id="new-clinic-timezone"
+          required
+          maxLength={64}
+          value={values.timezone}
+          onChange={(event) => setValues({ ...values, timezone: event.target.value })}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="new-clinic-phone">Teléfono principal</Label>
+        <Input
+          id="new-clinic-phone"
+          maxLength={32}
+          placeholder="Opcional hasta que se asigne el número"
+          value={values.main_phone_number}
+          onChange={(event) => setValues({ ...values, main_phone_number: event.target.value })}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="new-clinic-email">Email</Label>
+        <Input
+          id="new-clinic-email"
+          type="email"
+          maxLength={320}
+          value={values.email}
+          onChange={(event) => setValues({ ...values, email: event.target.value })}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="new-clinic-address">Dirección</Label>
+        <Input
+          id="new-clinic-address"
+          value={values.address}
+          onChange={(event) => setValues({ ...values, address: event.target.value })}
+        />
+      </div>
+      <div className="flex justify-end gap-2 pt-2">
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancelar
+        </Button>
+        <Button type="submit" disabled={isPending || !values.name.trim()}>
+          {isPending ? "Creando…" : "Crear clínica"}
+        </Button>
+      </div>
+    </form>
   );
 }

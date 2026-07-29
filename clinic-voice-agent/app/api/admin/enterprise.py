@@ -5,9 +5,8 @@ from __future__ import annotations
 import csv
 import io
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Annotated
-from zoneinfo import ZoneInfo
 
 from fastapi import (
     APIRouter,
@@ -21,6 +20,7 @@ from fastapi import (
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
+from app.analytics_service import build_clinic_analytics
 from app.api.admin.common import clinic_or_404, commit_or_conflict, nested_or_404
 from app.auth import AdminPrincipal
 from app.customer_service import (
@@ -44,7 +44,6 @@ from app.enterprise_schemas import (
     CustomerImportResult,
     CustomerMergeRequest,
     GlobalAnalyticsResponse,
-    MetricPoint,
     ProvisioningRead,
     ProvisioningUpdate,
     RelatedAppointmentRead,
@@ -56,7 +55,6 @@ from app.enterprise_schemas import (
 from app.enterprise_service import enqueue_outbox
 from app.models import (
     Appointment,
-    AppointmentStatus,
     BillingPrice,
     BillingProduct,
     CallAnalysis,
@@ -72,7 +70,6 @@ from app.models import (
     ResourceReservation,
     Service,
     ServiceResourceRequirement,
-    Worker,
 )
 from app.utils.security import require_admin_access
 
@@ -732,24 +729,6 @@ def replace_requirements(
     return payload
 
 
-def _period(
-    clinic: Clinic, period: str, date_from: datetime | None, date_to: datetime | None
-) -> tuple[datetime, datetime]:
-    zone = ZoneInfo(clinic.timezone)
-    now = datetime.now(zone)
-    if date_from and date_to:
-        return date_from.astimezone(UTC), date_to.astimezone(UTC)
-    if period == "today":
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    elif period == "month":
-        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    elif period == "30d":
-        start = now - timedelta(days=30)
-    else:
-        start = now - timedelta(days=7)
-    return start.astimezone(UTC), now.astimezone(UTC)
-
-
 @router.get(
     "/admin/clinics/{clinic_id}/analytics", response_model=ClinicAnalyticsResponse
 )
@@ -765,165 +744,16 @@ def clinic_analytics(
     appointment_status: str | None = None,
 ) -> ClinicAnalyticsResponse:
     clinic = clinic_or_404(session, clinic_id)
-    start, end = _period(clinic, period, date_from, date_to)
-    aq = select(Appointment).where(
-        Appointment.clinic_id == clinic_id,
-        Appointment.created_at >= start,
-        Appointment.created_at <= end,
-    )
-    if worker_id:
-        aq = aq.where(Appointment.worker_id == worker_id)
-    if service_id:
-        aq = aq.where(Appointment.service_id == service_id)
-    if phone_number:
-        aq = aq.where(Appointment.patient_phone.ilike(f"%{phone_number}%"))
-    if appointment_status:
-        aq = aq.where(Appointment.status == appointment_status)
-    appointments = list(session.scalars(aq))
-    calls = list(
-        session.scalars(
-            select(CallSession).where(
-                CallSession.clinic_id == clinic_id,
-                CallSession.started_at >= start,
-                CallSession.started_at <= end,
-            )
-        )
-    )
-    service_names: dict[uuid.UUID, str] = dict(
-        session.execute(
-            select(Service.id, Service.name).where(Service.clinic_id == clinic_id)
-        ).tuples()
-    )
-    worker_names: dict[uuid.UUID, str] = dict(
-        session.execute(
-            select(Worker.id, Worker.name).where(Worker.clinic_id == clinic_id)
-        ).tuples()
-    )
-    analyses = list(
-        session.scalars(
-            select(CallAnalysis).where(
-                CallAnalysis.clinic_id == clinic_id,
-                CallAnalysis.created_at >= start,
-                CallAnalysis.created_at <= end,
-            )
-        )
-    )
-
-    def points(counter: dict[str, int]) -> list[MetricPoint]:
-        return [
-            MetricPoint(key=k, label=k, value=float(v))
-            for k, v in sorted(counter.items())
-        ]
-
-    def count_by(values: list[str]) -> dict[str, int]:
-        result: dict[str, int] = {}
-        for value in values:
-            result[value] = result.get(value, 0) + 1
-        return result
-
-    cancelled = sum(a.status == AppointmentStatus.CANCELLED for a in appointments)
-    completed = sum(a.status == AppointmentStatus.COMPLETED for a in appointments)
-    no_show = sum(a.status == AppointmentStatus.NO_SHOW for a in appointments)
-    estimated = sum(
-        int((service.price_amount or 0) * 100)
-        for a in appointments
-        if a.status != AppointmentStatus.CANCELLED
-        and a.service_id
-        and (service := session.get(Service, a.service_id)) is not None
-    )
-    booked_calls = len({a.call_session_id for a in appointments if a.call_session_id})
-    durations = [
-        (c.ended_at - c.started_at).total_seconds() for c in calls if c.ended_at
-    ]
-    new_customers = (
-        session.scalar(
-            select(func.count(ClinicCustomer.id)).where(
-                ClinicCustomer.clinic_id == clinic_id,
-                ClinicCustomer.created_at >= start,
-                ClinicCustomer.created_at <= end,
-            )
-        )
-        or 0
-    )
-    recurring = len({a.customer_id for a in appointments if a.customer_id}) - int(
-        new_customers
-    )
-    service_counter = count_by(
-        [
-            service_names.get(a.service_id, "Sin servicio")
-            if a.service_id
-            else "Sin servicio"
-            for a in appointments
-        ]
-    )
-    worker_counter = count_by(
-        [worker_names.get(a.worker_id, "Sin profesional") for a in appointments]
-    )
-    status_counter = count_by(
-        [
-            str(a.status.value if hasattr(a.status, "value") else a.status)
-            for a in appointments
-        ]
-    )
-    weekday_counter = count_by(
-        [
-            a.start_at.astimezone(ZoneInfo(clinic.timezone)).strftime("%A")
-            for a in appointments
-        ]
-    )
-    hour_counter = count_by(
-        [
-            f"{a.start_at.astimezone(ZoneInfo(clinic.timezone)).hour:02d}:00"
-            for a in appointments
-        ]
-    )
-    timeline_counter = count_by(
-        [
-            a.start_at.astimezone(ZoneInfo(clinic.timezone)).date().isoformat()
-            for a in appointments
-        ]
-    )
-    sentiment_counter = count_by([a.sentiment_label for a in analyses])
-    heat = count_by(
-        [
-            f"{a.start_at.astimezone(ZoneInfo(clinic.timezone)).weekday()}:{a.start_at.astimezone(ZoneInfo(clinic.timezone)).hour}"
-            for a in appointments
-        ]
-    )
-    return ClinicAnalyticsResponse(
-        appointments_created=len(appointments),
-        appointments_cancelled=cancelled,
-        appointments_completed=completed,
-        appointments_no_show=no_show,
-        cancellation_rate=cancelled / len(appointments) if appointments else 0,
-        call_to_booking_conversion=booked_calls / len(calls) if calls else 0,
-        estimated_revenue_minor=estimated,
-        calls_answered=len(calls),
-        calls_failed=sum(
-            str(c.status.value if hasattr(c.status, "value") else c.status) == "failed"
-            for c in calls
-        ),
-        average_call_duration_seconds=sum(durations) / len(durations)
-        if durations
-        else 0,
-        new_customers=int(new_customers),
-        returning_customers=max(0, recurring),
-        appointments_by_service=points(service_counter),
-        appointments_by_worker=points(worker_counter),
-        appointments_by_weekday=points(weekday_counter),
-        appointments_by_hour=points(hour_counter),
-        appointment_statuses=points(status_counter),
-        sentiments=points(sentiment_counter),
-        timeline=points(timeline_counter),
-        heatmap=[
-            {
-                "key": key,
-                "value": value,
-                "day": int(key.split(":")[0]),
-                "hour": int(key.split(":")[1]),
-            }
-            for key, value in heat.items()
-        ],
+    return build_clinic_analytics(
+        session,
+        clinic=clinic,
+        period=period,
+        date_from=date_from,
+        date_to=date_to,
+        worker_id=worker_id,
+        service_id=service_id,
+        phone_number=phone_number,
+        appointment_status=appointment_status,
     )
 
 
