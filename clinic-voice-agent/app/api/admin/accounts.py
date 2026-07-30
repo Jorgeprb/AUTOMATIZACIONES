@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,16 +13,42 @@ from sqlalchemy.orm import Session
 
 from app.auth import AdminPrincipal, hash_password
 from app.db import get_db
-from app.models import AdminMembership, AdminRole, AdminSession, AdminUser, Clinic
+from app.models import (
+    AdminMembership,
+    AdminRole,
+    AdminSession,
+    AdminUser,
+    Clinic,
+    PhoneNumber,
+    PhoneProvisioningOrder,
+)
 from app.utils.security import require_admin_access
 
 router = APIRouter(prefix="/admin/users", tags=["Admin · Client accounts"])
+
+
+class ClinicPhoneRead(BaseModel):
+    id: uuid.UUID
+    phone_number: str
+    label: str
+    is_active: bool
+
+
+class PendingProvisioningRead(BaseModel):
+    id: uuid.UUID
+    status: str
+    quantity: int
+    created_at: datetime
 
 
 class MembershipRead(BaseModel):
     clinic_id: uuid.UUID
     clinic_name: str
     role: AdminRole
+    phone_numbers: list[ClinicPhoneRead] = Field(default_factory=list)
+    pending_provisioning: list[PendingProvisioningRead] = Field(
+        default_factory=list
+    )
 
 
 class PortalUserRead(BaseModel):
@@ -89,6 +116,59 @@ def _serialize(session: Session, user: AdminUser) -> PortalUserRead:
             .order_by(Clinic.name)
         )
     )
+    clinic_ids = [clinic_id for clinic_id, _name, _role in memberships]
+    phone_numbers: dict[uuid.UUID, list[ClinicPhoneRead]] = {
+        clinic_id: [] for clinic_id in clinic_ids
+    }
+    pending_provisioning: dict[uuid.UUID, list[PendingProvisioningRead]] = {
+        clinic_id: [] for clinic_id in clinic_ids
+    }
+    if clinic_ids:
+        for row in session.execute(
+            select(
+                PhoneNumber.clinic_id,
+                PhoneNumber.id,
+                PhoneNumber.phone_number,
+                PhoneNumber.label,
+                PhoneNumber.is_active,
+            )
+            .where(PhoneNumber.clinic_id.in_(clinic_ids))
+            .order_by(PhoneNumber.clinic_id, PhoneNumber.created_at)
+        ):
+            phone_numbers[row.clinic_id].append(
+                ClinicPhoneRead(
+                    id=row.id,
+                    phone_number=row.phone_number,
+                    label=row.label,
+                    is_active=row.is_active,
+                )
+            )
+        for row in session.execute(
+            select(
+                PhoneProvisioningOrder.clinic_id,
+                PhoneProvisioningOrder.id,
+                PhoneProvisioningOrder.status,
+                PhoneProvisioningOrder.quantity,
+                PhoneProvisioningOrder.created_at,
+            )
+            .where(
+                PhoneProvisioningOrder.clinic_id.in_(clinic_ids),
+                PhoneProvisioningOrder.status == "paid_pending_provisioning",
+                PhoneProvisioningOrder.assigned_number.is_(None),
+            )
+            .order_by(
+                PhoneProvisioningOrder.clinic_id,
+                PhoneProvisioningOrder.created_at,
+            )
+        ):
+            pending_provisioning[row.clinic_id].append(
+                PendingProvisioningRead(
+                    id=row.id,
+                    status=row.status,
+                    quantity=row.quantity,
+                    created_at=row.created_at,
+                )
+            )
     return PortalUserRead(
         id=user.id,
         username=user.username,
@@ -100,7 +180,13 @@ def _serialize(session: Session, user: AdminUser) -> PortalUserRead:
         is_active=user.is_active,
         google_connected=bool(user.google_subject),
         memberships=[
-            MembershipRead(clinic_id=clinic_id, clinic_name=name, role=role)
+            MembershipRead(
+                clinic_id=clinic_id,
+                clinic_name=name,
+                role=role,
+                phone_numbers=phone_numbers.get(clinic_id, []),
+                pending_provisioning=pending_provisioning.get(clinic_id, []),
+            )
             for clinic_id, name, role in memberships
         ],
     )

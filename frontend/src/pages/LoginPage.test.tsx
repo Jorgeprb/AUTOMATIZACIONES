@@ -69,7 +69,7 @@ describe("LoginPage", () => {
     renderWithProviders(
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/" element={<div>Panel privado</div>} />
+        <Route path="/users" element={<div>Panel privado</div>} />
       </Routes>,
       ["/login"],
     );

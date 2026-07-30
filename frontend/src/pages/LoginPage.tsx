@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getCurrentAdmin, loginWithPassword } from "@/lib/auth";
-import { isClientPortal, portalMode } from "@/lib/portal";
+import { isAdminPortal, isClientPortal, portalMode } from "@/lib/portal";
 
 type LoginLocationState = { from?: string };
 
@@ -28,7 +28,7 @@ export function LoginPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const state = location.state as LoginLocationState | null;
-  const redirectTo = state?.from && state.from !== "/login" ? state.from : "/";
+  const redirectTo = state?.from && state.from !== "/login" ? state.from : isAdminPortal ? "/users" : "/";
   const authError = useMemo(() => new URLSearchParams(location.search).get("auth_error"), [location.search]);
 
   const [username, setUsername] = useState("");

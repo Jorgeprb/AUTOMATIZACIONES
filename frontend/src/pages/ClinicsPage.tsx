@@ -165,7 +165,7 @@ export function ClinicsPage() {
           <div>
             <Link
               className="font-semibold text-[#263249] hover:text-[#315efb]"
-              to={isClientPortal && !access.unlocked ? "/" : isClientPortal ? `/clinics/${clinic.id}/settings/general` : `/clinics/${clinic.id}`}
+              to={isClientPortal && !access.unlocked ? "/" : `/clinics/${clinic.id}/settings/general`}
               onClick={() => setActiveClinicId(clinic.id)}
             >
               {clinic.name}
@@ -218,7 +218,7 @@ export function ClinicsPage() {
           <div className="flex justify-end gap-1">
             <Button asChild size="icon" variant="ghost" title="Abrir">
               <Link
-                to={isClientPortal && !access.unlocked ? "/" : isClientPortal ? `/clinics/${clinic.id}/settings/general` : `/clinics/${clinic.id}`}
+                to={isClientPortal && !access.unlocked ? "/" : `/clinics/${clinic.id}/settings/general`}
                 onClick={() => setActiveClinicId(clinic.id)}
               >
                 <ExternalLink className="size-4" />

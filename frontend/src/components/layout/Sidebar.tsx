@@ -1,20 +1,14 @@
 import {
   BarChart3,
   Bot,
-  Box,
   Building2,
-  CalendarDays,
   CreditCard,
   FlaskConical,
   LayoutDashboard,
   LockKeyhole,
   MessageSquareText,
   Settings,
-  Sparkles,
-  Stethoscope,
   UserRoundCog,
-  Users,
-  Workflow,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -26,22 +20,7 @@ import { getCurrentAdmin } from "@/lib/auth";
 import { isAdminPortal, isClientPortal } from "@/lib/portal";
 import { cn } from "@/lib/utils";
 
-const adminClinicItems = [
-  { label: "Clientes", icon: UserRoundCog, suffix: "customers" },
-  { label: "Trabajadores", icon: Users, suffix: "workers" },
-  { label: "Recursos", icon: Box, suffix: "resources" },
-  { label: "Estadísticas", icon: BarChart3, suffix: "statistics" },
-  { label: "Servicios", icon: Stethoscope, suffix: "services" },
-  { label: "Asistente", icon: Bot, suffix: "assistant" },
-  { label: "Flujos", icon: Workflow, suffix: "flows" },
-  { label: "Conocimiento", icon: Sparkles, suffix: "knowledge" },
-  { label: "Conversaciones", icon: MessageSquareText, suffix: "conversations" },
-  { label: "Calendario", icon: CalendarDays, suffix: "calendar" },
-  { label: "Consola de prueba", icon: FlaskConical, suffix: "test" },
-  { label: "Compras y suscripciones", icon: CreditCard, suffix: "purchases" },
-];
-
-const clientClinicItems = [
+const clinicItems = [
   { label: "Ajustes de la clínica", icon: Settings, suffix: "settings/general" },
   { label: "Configuración del asistente", icon: Bot, suffix: "assistant" },
   { label: "Clientes", icon: UserRoundCog, suffix: "customers" },
@@ -118,32 +97,33 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   });
   const pendingProvisioning = Number(global.data?.pending_provisioning ?? 0);
   const locked = isClientPortal && !access.unlocked;
-  const clinicItems = isClientPortal ? clientClinicItems : adminClinicItems;
   const purchasesPath = activeClinicId
     ? `/clinics/${activeClinicId}/purchases`
     : "/clinics";
-  const baseItems = [
-    { label: "Dashboard", icon: LayoutDashboard, path: "/" },
-    {
-      label: isClientPortal ? "Mis clínicas" : "Clínicas",
-      icon: Building2,
-      path: "/clinics",
-    },
-    ...(isClientPortal
-      ? [{ label: "Compras y suscripciones", icon: CreditCard, path: purchasesPath }]
-      : []),
-    ...(isAdminPortal && superAdmin
-      ? [
-          { label: "Usuarios y accesos", icon: UserRoundCog, path: "/users" },
-          {
-            label: "Negocio y provisión",
-            icon: CreditCard,
-            path: "/business",
-            badge: pendingProvisioning,
-          },
-        ]
-      : []),
-  ];
+  const baseItems = isClientPortal
+    ? [
+        { label: "Dashboard", icon: LayoutDashboard, path: "/" },
+        { label: "Mis clínicas", icon: Building2, path: "/clinics" },
+        {
+          label: "Compras y suscripciones",
+          icon: CreditCard,
+          path: purchasesPath,
+        },
+      ]
+    : [
+        {
+          label: "Usuarios y clínicas",
+          icon: UserRoundCog,
+          path: "/users",
+          badge: pendingProvisioning,
+        },
+        { label: "Clínicas", icon: Building2, path: "/clinics" },
+        {
+          label: "Negocio y provisión",
+          icon: CreditCard,
+          path: "/business",
+        },
+      ];
 
   return (
     <div className="flex h-full flex-col bg-white">

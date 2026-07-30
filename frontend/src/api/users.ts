@@ -1,10 +1,24 @@
 import { apiRequest } from "@/api/client";
 
 export type PortalRole = "super_admin" | "clinic_admin" | "operator" | "read_only";
+export type PortalPhone = {
+  id: string;
+  phone_number: string;
+  label: string;
+  is_active: boolean;
+};
+export type PortalPendingProvisioning = {
+  id: string;
+  status: string;
+  quantity: number;
+  created_at: string;
+};
 export type PortalMembership = {
   clinic_id: string;
   clinic_name: string;
   role: PortalRole;
+  phone_numbers: PortalPhone[];
+  pending_provisioning: PortalPendingProvisioning[];
 };
 export type PortalUser = {
   id: string;

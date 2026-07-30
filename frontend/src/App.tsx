@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { LoadingState } from "@/components/common/LoadingState";
@@ -104,6 +104,14 @@ function unlocked(element: ReactNode) {
   );
 }
 
+function ClinicRootRoute() {
+  const { clinicId } = useParams<{ clinicId: string }>();
+  if (isAdminPortal && clinicId) {
+    return <Navigate to={`/clinics/${clinicId}/settings/general`} replace />;
+  }
+  return <ClinicDetailPage />;
+}
+
 export default function App() {
   return (
     <Suspense fallback={<div className="p-8"><LoadingState rows={6} /></div>}>
@@ -112,9 +120,9 @@ export default function App() {
         <Route path="register" element={<RegisterPage />} />
         <Route element={<RequireAuth />}>
           <Route element={<AppShell />}>
-            <Route index element={<DashboardPage />} />
+            <Route index element={isAdminPortal ? <Navigate to="/users" replace /> : <DashboardPage />} />
             <Route path="clinics" element={<ClinicsPage />} />
-            <Route path="clinics/:clinicId" element={unlocked(<ClinicDetailPage />)} />
+            <Route path="clinics/:clinicId" element={unlocked(<ClinicRootRoute />)} />
             <Route path="clinics/:clinicId/settings/:section?" element={unlocked(<ClinicSettingsPage />)} />
             <Route path="clinics/:clinicId/workers" element={unlocked(<WorkersPage />)} />
             <Route path="clinics/:clinicId/customers" element={unlocked(<CustomersPage />)} />
@@ -158,7 +166,7 @@ export default function App() {
             <Route path="onboarding" element={<OnboardingPage />} />
             <Route path="account" element={isClientPortal ? <Navigate to="/clinics" replace /> : <CommercialAccountPage />} />
             <Route path="settings" element={isClientPortal ? <Navigate to="/" replace /> : <SettingsPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<Navigate to={isAdminPortal ? "/users" : "/"} replace />} />
           </Route>
         </Route>
       </Routes>

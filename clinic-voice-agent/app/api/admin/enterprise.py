@@ -66,6 +66,7 @@ from app.models import (
     ClinicSubscription,
     PaymentRecord,
     PhoneNumber,
+    PhoneProvider,
     PhoneProvisioningOrder,
     ResourceReservation,
     Service,
@@ -964,23 +965,55 @@ def update_provisioning(
             raise HTTPException(
                 status_code=422, detail="Assigned number is required before activation."
             )
+        row.provisioned_at = row.provisioned_at or now
         row.activated_at = row.activated_at or now
+        provider_name = (row.provider or "voipstudio").strip().casefold()
+        provider_aliases = {
+            "voip_studio": PhoneProvider.VOIPSTUDIO,
+            "voipstudio": PhoneProvider.VOIPSTUDIO,
+            "twilio": PhoneProvider.TWILIO,
+            "other": PhoneProvider.OTHER,
+        }
+        provider = provider_aliases.get(provider_name, PhoneProvider.OTHER)
+        conflicting_clinic = session.scalar(
+            select(Clinic.id).where(
+                Clinic.main_phone_number == row.assigned_number,
+                Clinic.id != row.clinic_id,
+            )
+        )
+        if conflicting_clinic is not None:
+            raise HTTPException(
+                status_code=409, detail="Assigned number already belongs to another clinic."
+            )
         phone = session.scalar(
             select(PhoneNumber).where(PhoneNumber.phone_number == row.assigned_number)
         )
+        if phone is not None and phone.clinic_id != row.clinic_id:
+            raise HTTPException(
+                status_code=409, detail="Assigned number already belongs to another clinic."
+            )
         if phone is None:
             phone = PhoneNumber(
                 clinic_id=row.clinic_id,
                 phone_number=row.assigned_number,
-                provider=row.provider or "voip_studio",
+                label="Número Autogal",
+                provider=provider,
                 is_active=True,
             )
             session.add(phone)
         phone.clinic_id = row.clinic_id
+        phone.provider = provider
         phone.is_active = True
         phone.provisioning_order_id = row.id
         phone.clinic_subscription_id = row.subscription_id
         phone.external_provider_id = row.external_provider_id
+        phone.sip_target = row.sip_target
+        phone.webhook_url = row.webhook_url
+        phone.notes = row.notes
+        clinic = session.get(Clinic, row.clinic_id)
+        if clinic is None:
+            raise HTTPException(status_code=404, detail="Clinic not found.")
+        clinic.main_phone_number = row.assigned_number
         from app.enterprise_service import upsert_entitlement
 
         upsert_entitlement(
