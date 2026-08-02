@@ -18,9 +18,15 @@ from app.models import (
     AdminRole,
     AdminSession,
     AdminUser,
+    BillingAccountMember,
     Clinic,
     PhoneNumber,
     PhoneProvisioningOrder,
+)
+from app.enterprise_service import (
+    account_for_user,
+    create_billing_account_for_user,
+    create_clinic_for_account,
 )
 from app.utils.security import require_admin_access
 
@@ -62,6 +68,14 @@ class PortalUserRead(BaseModel):
     is_active: bool
     google_connected: bool
     memberships: list[MembershipRead]
+    unassigned_provisioning: list[PendingProvisioningRead] = Field(default_factory=list)
+
+
+class PortalClinicCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    timezone: str = Field(default="Europe/Madrid", min_length=1, max_length=80)
+    email: str | None = Field(default=None, max_length=320)
+    address: str | None = Field(default=None, max_length=1000)
 
 
 class PortalUserCreate(BaseModel):
@@ -153,7 +167,9 @@ def _serialize(session: Session, user: AdminUser) -> PortalUserRead:
             )
             .where(
                 PhoneProvisioningOrder.clinic_id.in_(clinic_ids),
-                PhoneProvisioningOrder.status == "paid_pending_provisioning",
+                PhoneProvisioningOrder.status.in_(
+                    ("paid_pending_provisioning", "provisioned")
+                ),
                 PhoneProvisioningOrder.assigned_number.is_(None),
             )
             .order_by(
@@ -169,6 +185,37 @@ def _serialize(session: Session, user: AdminUser) -> PortalUserRead:
                     created_at=row.created_at,
                 )
             )
+    account_ids = list(
+        session.scalars(
+            select(BillingAccountMember.billing_account_id).where(
+                BillingAccountMember.user_id == user.id
+            )
+        )
+    )
+    unassigned = (
+        [
+            PendingProvisioningRead(
+                id=row.id,
+                status=row.status,
+                quantity=row.quantity,
+                created_at=row.created_at,
+            )
+            for row in session.scalars(
+                select(PhoneProvisioningOrder)
+                .where(
+                    PhoneProvisioningOrder.billing_account_id.in_(account_ids),
+                    PhoneProvisioningOrder.clinic_id.is_(None),
+                    PhoneProvisioningOrder.status.in_(
+                    ("paid_pending_provisioning", "provisioned")
+                ),
+                    PhoneProvisioningOrder.assigned_number.is_(None),
+                )
+                .order_by(PhoneProvisioningOrder.created_at)
+            )
+        ]
+        if account_ids
+        else []
+    )
     return PortalUserRead(
         id=user.id,
         username=user.username,
@@ -189,6 +236,7 @@ def _serialize(session: Session, user: AdminUser) -> PortalUserRead:
             )
             for clinic_id, name, role in memberships
         ],
+        unassigned_provisioning=unassigned,
     )
 
 
@@ -262,6 +310,48 @@ def create_portal_user(
     session.commit()
     session.refresh(user)
     return _serialize(session, user)
+
+
+@router.post("/{user_id}/clinics", response_model=MembershipRead, status_code=201)
+def create_user_clinic(
+    user_id: uuid.UUID,
+    payload: PortalClinicCreate,
+    session: Annotated[Session, Depends(get_db)],
+    principal: Annotated[AdminPrincipal, Depends(require_admin_access)],
+) -> MembershipRead:
+    _require_super_admin(principal)
+    user = session.get(AdminUser, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Account not found.")
+    if user.role == AdminRole.SUPER_ADMIN:
+        raise HTTPException(status_code=422, detail="A global administrator does not own clinics.")
+    account = account_for_user(session, user.id)
+    if account is None:
+        account = create_billing_account_for_user(
+            session,
+            user=user,
+            display_name=user.display_name or user.username,
+            billing_email=user.email or user.username,
+        )
+    clinic = create_clinic_for_account(
+        session,
+        account=account,
+        owner=user,
+        name=payload.name,
+        timezone=payload.timezone,
+        main_phone_number="pending-assignment",
+        email=payload.email,
+        address=payload.address,
+    )
+    session.commit()
+    session.refresh(clinic)
+    return MembershipRead(
+        clinic_id=clinic.id,
+        clinic_name=clinic.name,
+        role=AdminRole.CLINIC_ADMIN,
+        phone_numbers=[],
+        pending_provisioning=[],
+    )
 
 
 @router.patch("/{user_id}", response_model=PortalUserRead)

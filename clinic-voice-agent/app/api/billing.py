@@ -105,7 +105,11 @@ def create_checkout(
 ) -> CheckoutResponse:
     _stripe(settings)
     account = require_account_for_principal(session, principal)
-    require_account_clinic(session, account=account, clinic_id=payload.clinic_id)
+    clinic = (
+        require_account_clinic(session, account=account, clinic_id=payload.clinic_id)
+        if payload.clinic_id is not None
+        else None
+    )
     sync_catalog_from_settings(session, settings)
     price_ids = {line.price_id for line in payload.lines}
     rows = list(
@@ -120,11 +124,16 @@ def create_checkout(
         raise HTTPException(
             status_code=422, detail="One or more catalog prices are invalid."
         )
+    if clinic is None and any(row.billing_type == "recurring" for row in rows):
+        raise HTTPException(
+            status_code=422,
+            detail="Crea o selecciona una clínica antes de contratar una mensualidad.",
+        )
     stripe_lines = []
     one_time = recurring = 0
     order = PurchaseOrder(
         billing_account_id=account.id,
-        clinic_id=payload.clinic_id,
+        clinic_id=clinic.id if clinic is not None else None,
         created_by_user_id=principal.user_id,
         status="checkout_pending",
         currency="EUR",
@@ -173,6 +182,12 @@ def create_checkout(
         customer_id = customer["id"]
         account.stripe_customer_id = customer_id
     mode = "subscription" if has_recurring else "payment"
+    metadata = {
+        "order_id": str(order.id),
+        "billing_account_id": str(account.id),
+    }
+    if clinic is not None:
+        metadata["clinic_id"] = str(clinic.id)
     kwargs: dict[str, Any] = {
         "mode": mode,
         "customer": customer_id,
@@ -180,21 +195,11 @@ def create_checkout(
         "success_url": settings.stripe_success_url,
         "cancel_url": settings.stripe_cancel_url,
         "client_reference_id": str(order.id),
-        "metadata": {
-            "order_id": str(order.id),
-            "billing_account_id": str(account.id),
-            "clinic_id": str(payload.clinic_id),
-        },
+        "metadata": metadata,
         "allow_promotion_codes": True,
     }
     if mode == "subscription":
-        kwargs["subscription_data"] = {
-            "metadata": {
-                "order_id": str(order.id),
-                "clinic_id": str(payload.clinic_id),
-                "billing_account_id": str(account.id),
-            }
-        }
+        kwargs["subscription_data"] = {"metadata": metadata}
     checkout = stripe.checkout.Session.create(**kwargs)
     order.stripe_checkout_session_id = checkout["id"]
     order.checkout_url = checkout["url"]

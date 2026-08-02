@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.calendar.google_client import (
     GoogleAuthorizationRequired,
+    GoogleCalendarError,
     get_authorized_calendar_client,
     get_authorized_google_credentials,
     get_event_colors,
@@ -94,14 +95,25 @@ def list_calendars(
             settings,
             clinic_id,
         )
+        calendars = list_available_calendars(client)
+        colors = get_event_colors(client)
     except GoogleAuthorizationRequired as exc:
         raise HTTPException(
             status_code=status.HTTP_428_PRECONDITION_REQUIRED,
             detail=str(exc),
         ) from exc
-
-    calendars = list_available_calendars(client)
-    colors = get_event_colors(client)
+    except GoogleCalendarError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_424_FAILED_DEPENDENCY,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        # Google discovery clients surface transport/API failures as third-party
+        # exceptions. They are dependency failures, not authentication failures.
+        raise HTTPException(
+            status_code=status.HTTP_424_FAILED_DEPENDENCY,
+            detail="Google Calendar no pudo devolver los calendarios disponibles.",
+        ) from exc
     return CalendarListResponse(
         calendars=[
             CalendarInfoResponse(

@@ -102,7 +102,7 @@ export interface CommercialSummary {
   orders: Array<{ id: string; status: string; total_one_time_minor: number; total_recurring_minor: number; created_at: string }>;
   subscriptions: Array<{ id: string; clinic_id: string; status: string; quantity: number; current_period_end: string | null; cancel_at_period_end: boolean; canceled_at: string | null }>;
   payments: Array<{ id: string; clinic_id: string | null; amount_minor: number; currency: string; status: string; paid_at: string | null; failure_code: string | null; created_at: string }>;
-  provisioning: Array<{ id: string; clinic_id: string; status: string; quantity: number; assigned_number: string | null; provisioned_at: string | null; activated_at: string | null; created_at: string; updated_at: string }>;
+  provisioning: Array<{ id: string; clinic_id: string | null; status: string; quantity: number; assigned_number: string | null; provisioned_at: string | null; activated_at: string | null; created_at: string; updated_at: string }>;
   entitlements: Array<{ id: string; clinic_id: string; code: string; status: string; quantity: number }>;
   phone_numbers: string[];
   can_use_production: boolean;
@@ -127,6 +127,9 @@ export function updateCustomer(clinicId: string, id: string, payload: Partial<Cu
 }
 export function anonymizeCustomer(clinicId: string, id: string): Promise<ClinicCustomer> {
   return apiRequest(`/api/admin/clinics/${clinicId}/customers/${id}/anonymize`, { method: "POST" });
+}
+export function deleteCustomer(clinicId: string, id: string): Promise<void> {
+  return apiRequest(`/api/admin/clinics/${clinicId}/customers/${id}`, { method: "DELETE" });
 }
 export function mergeCustomers(clinicId: string, source: string, target: string): Promise<ClinicCustomer> {
   return apiRequest(`/api/admin/clinics/${clinicId}/customers/merge`, { method: "POST", body: JSON.stringify({ source_customer_id: source, target_customer_id: target }) });
@@ -175,14 +178,14 @@ export function getAnalytics(clinicId: string, filters: AnalyticsFilters): Promi
 }
 export function getCatalog(): Promise<CatalogItem[]> { return apiRequest("/api/billing/catalog"); }
 export function getCommercialSummary(): Promise<CommercialSummary> { return apiRequest("/api/billing/summary"); }
-export function createCheckout(clinicId: string, lines: Array<{price_id:string;quantity:number}>): Promise<{order_id:string;checkout_url:string}> {
+export function createCheckout(clinicId: string | null, lines: Array<{price_id:string;quantity:number}>): Promise<{order_id:string;checkout_url:string}> {
   return apiRequest("/api/billing/checkout", { method: "POST", body: JSON.stringify({ clinic_id: clinicId, lines }) });
 }
 export function openBillingPortal(): Promise<{url:string}> { return apiRequest("/api/billing/portal", { method: "POST" }); }
 export function cancelSubscription(id:string): Promise<{status:string}> { return apiRequest(`/api/billing/subscriptions/${id}/cancel`, { method:"POST" }); }
 export function reactivateSubscription(id:string): Promise<{status:string}> { return apiRequest(`/api/billing/subscriptions/${id}/reactivate`, { method:"POST" }); }
 
-export interface ProvisioningOrder { id:string; clinic_id:string; billing_account_id:string; status:string; quantity:number; assigned_number:string|null; provider:string|null; external_provider_id:string|null; sip_target:string|null; webhook_url:string|null; notes:string|null; created_at:string; }
+export interface ProvisioningOrder { id:string; clinic_id:string|null; billing_account_id:string; status:string; quantity:number; assigned_number:string|null; provider:string|null; external_provider_id:string|null; sip_target:string|null; webhook_url:string|null; notes:string|null; created_at:string; }
 export function getGlobalAnalytics():Promise<Record<string,number>>{return apiRequest('/api/admin/analytics/global');}
 export function listBillingAccounts():Promise<Array<{id:string;display_name:string;billing_email:string;status:string;owner:string|null;clinics:Array<{id:string;name:string}>;subscriptions:Array<{id:string;status:string}>;provisioning:Array<{id:string;status:string;assigned_number:string|null}>}>>{return apiRequest('/api/admin/billing/accounts');}
 export function listAdminProducts():Promise<CatalogProduct[]>{return apiRequest('/api/admin/billing/products');}

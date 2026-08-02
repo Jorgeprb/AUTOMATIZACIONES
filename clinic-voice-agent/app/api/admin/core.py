@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import math
 import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
-from sqlalchemy import cast, or_, select, update
+from sqlalchemy import cast, func, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
@@ -113,6 +114,27 @@ def _require_super_admin(principal: AdminPrincipal) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Solo la administración global puede gestionar números y rutas SIP.",
         )
+
+def _worker_read(worker: Worker) -> WorkerRead:
+    """Serialize legacy workers without failing on nullable historical values."""
+    return WorkerRead(
+        id=worker.id,
+        clinic_id=worker.clinic_id,
+        name=worker.name or "Profesional",
+        role=worker.role or "Profesional",
+        public_description=worker.public_description,
+        calendar_id=worker.calendar_id,
+        color_id=worker.color_id,
+        phone_extension=worker.phone_extension,
+        email=worker.email,
+        is_active=True if worker.is_active is None else worker.is_active,
+        inherit_clinic_hours=(
+            True if worker.inherit_clinic_hours is None else worker.inherit_clinic_hours
+        ),
+        working_hours_json=worker.working_hours_json or {},
+        created_at=worker.created_at,
+        updated_at=worker.updated_at,
+    )
 
 VOICE_LABELS = {
     "marin": "Marin · recomendada por OpenAI",
@@ -489,12 +511,19 @@ def list_workers(
     statement = select(Worker).where(Worker.clinic_id == clinic_id)
     if is_active is not None:
         statement = statement.where(Worker.is_active.is_(is_active))
-    return paginate(
-        session,
-        statement.order_by(Worker.name, Worker.id),
-        schema=WorkerRead,
+    ordered = statement.order_by(Worker.name, Worker.id)
+    total = session.scalar(
+        select(func.count()).select_from(ordered.order_by(None).subquery())
+    ) or 0
+    rows = session.scalars(
+        ordered.offset((page - 1) * page_size).limit(page_size)
+    ).all()
+    return Page[WorkerRead](
+        items=[_worker_read(worker) for worker in rows],
+        total=total,
         page=page,
         page_size=page_size,
+        pages=math.ceil(total / page_size) if total else 0,
     )
 
 
@@ -508,7 +537,7 @@ def create_worker(
     clinic_id: uuid.UUID,
     payload: WorkerCreate,
     session: Annotated[Session, Depends(get_db)],
-) -> Worker:
+) -> WorkerRead:
     """Create one clinic worker."""
     clinic_or_404(session, clinic_id)
     worker = Worker(clinic_id=clinic_id, **payload.model_dump())
@@ -518,7 +547,7 @@ def create_worker(
         detail="This calendar is already linked to another clinic worker.",
     )
     session.refresh(worker)
-    return worker
+    return _worker_read(worker)
 
 
 @router.get(
@@ -530,15 +559,16 @@ def get_worker(
     clinic_id: uuid.UUID,
     worker_id: uuid.UUID,
     session: Annotated[Session, Depends(get_db)],
-) -> Worker:
+) -> WorkerRead:
     """Get one clinic worker."""
-    return nested_or_404(
+    worker = nested_or_404(
         session,
         Worker,
         clinic_id=clinic_id,
         resource_id=worker_id,
         label="Worker",
     )
+    return _worker_read(worker)
 
 
 @router.patch(
@@ -551,16 +581,22 @@ def update_worker(
     worker_id: uuid.UUID,
     payload: WorkerUpdate,
     session: Annotated[Session, Depends(get_db)],
-) -> Worker:
+) -> WorkerRead:
     """Partially update one worker."""
-    worker = get_worker(clinic_id, worker_id, session)
+    worker = nested_or_404(
+        session,
+        Worker,
+        clinic_id=clinic_id,
+        resource_id=worker_id,
+        label="Worker",
+    )
     apply_update(worker, payload)
     commit_or_conflict(
         session,
         detail="This calendar is already linked to another clinic worker.",
     )
     session.refresh(worker)
-    return worker
+    return _worker_read(worker)
 
 
 @router.delete(
@@ -574,7 +610,13 @@ def delete_worker(
     session: Annotated[Session, Depends(get_db)],
 ) -> DeleteResponse:
     """Delete a worker when no appointment restricts it."""
-    worker = get_worker(clinic_id, worker_id, session)
+    worker = nested_or_404(
+        session,
+        Worker,
+        clinic_id=clinic_id,
+        resource_id=worker_id,
+        label="Worker",
+    )
     session.delete(worker)
     commit_or_conflict(
         session,
@@ -745,7 +787,7 @@ def test_admin_worker_freebusy(
     clinic = clinic_or_404(session, clinic_id)
     if not worker.calendar_id:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Worker does not have a linked calendar.",
         )
     try:
@@ -764,7 +806,7 @@ def test_admin_worker_freebusy(
         ) from exc
     except SchedulingError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_424_FAILED_DEPENDENCY,
             detail=str(exc),
         ) from exc
     return WorkerFreeBusyTestResponse(
@@ -1395,8 +1437,30 @@ def delete_assistant_config(
     config_id: uuid.UUID,
     session: Annotated[Session, Depends(get_db)],
 ) -> DeleteResponse:
-    """Delete one assistant configuration."""
+    """Delete one assistant configuration without leaving the clinic unusable."""
     config = get_assistant_config(clinic_id, config_id, session)
+    if config.is_active:
+        replacement = session.scalar(
+            select(AssistantConfig)
+            .where(
+                AssistantConfig.clinic_id == clinic_id,
+                AssistantConfig.id != config_id,
+            )
+            .order_by(AssistantConfig.created_at.desc())
+        )
+        if replacement is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "No puedes eliminar la única configuración activa. "
+                    "Crea otra configuración antes de eliminarla."
+                ),
+            )
+        # Flush the deactivation before activating its replacement so the
+        # partial unique index never observes two active configurations.
+        config.is_active = False
+        session.flush()
+        replacement.is_active = True
     session.delete(config)
     commit_or_conflict(session)
     return DeleteResponse(id=config_id)

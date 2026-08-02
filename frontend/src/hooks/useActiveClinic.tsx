@@ -36,12 +36,20 @@ export function ActiveClinicProvider({ children }: { children: ReactNode }) {
   const clinics = clinicsQuery.data ?? [];
 
   useEffect(() => {
-    if (!clinics.length) return;
+    if (!clinics.length) {
+      if (!clinicsQuery.isLoading && activeClinicId !== null) {
+        setActiveClinicIdState(null);
+        localStorage.removeItem(STORAGE_KEY);
+      }
+      return;
+    }
     const exists = clinics.some((clinic) => clinic.id === activeClinicId);
     if (!exists) {
-      setActiveClinicIdState(clinics[0]?.id ?? null);
+      const firstClinicId = clinics[0]?.id ?? null;
+      setActiveClinicIdState(firstClinicId);
+      if (firstClinicId) localStorage.setItem(STORAGE_KEY, firstClinicId);
     }
-  }, [activeClinicId, clinics]);
+  }, [activeClinicId, clinics, clinicsQuery.isLoading]);
 
   const setActiveClinicId = (clinicId: string | null) => {
     setActiveClinicIdState(clinicId);

@@ -84,18 +84,22 @@ def _appointment_summary(appointment: Appointment) -> CallAppointmentRead:
     return CallAppointmentRead(
         id=appointment.id,
         worker_id=appointment.worker_id,
-        worker_name=appointment.worker.name,
+        worker_name=(
+            appointment.worker.name
+            if appointment.worker is not None
+            else "Profesional eliminado"
+        ),
         service_id=appointment.service_id,
         service_name=(
             appointment.service.public_name if appointment.service is not None else None
         ),
-        patient_name=appointment.patient_name,
-        patient_phone=appointment.patient_phone,
+        patient_name=appointment.patient_name or "Cliente histórico",
+        patient_phone=appointment.patient_phone or "desconocido",
         start_at=appointment.start_at,
         end_at=appointment.end_at,
-        status=appointment.status,
-        source=appointment.source,
-        google_event_id=appointment.google_event_id,
+        status=appointment.status or AppointmentStatus.CANCELLED,
+        source=appointment.source or AppointmentSource.ADMIN,
+        google_event_id=appointment.google_event_id or f"historical:{appointment.id}",
     )
 
 
@@ -103,15 +107,38 @@ def _call_analysis(call: CallSession) -> CallAnalysisRead:
     """Map one call with its first linked appointment and duration."""
     appointment = min(
         call.appointments,
-        key=lambda item: item.created_at,
+        key=lambda item: item.created_at or item.start_at,
         default=None,
     )
     duration_seconds = (
-        max(0, int((call.ended_at - call.started_at).total_seconds()))
-        if call.ended_at is not None
+        max(0, int((call.ended_at - (call.started_at or call.created_at)).total_seconds()))
+        if call.ended_at is not None and (call.started_at is not None or call.created_at is not None)
         else None
     )
-    values = CallRead.model_validate(call).model_dump()
+    started_at = call.started_at or call.created_at
+    values = CallRead(
+        id=call.id,
+        clinic_id=call.clinic_id,
+        phone_number_id=call.phone_number_id,
+        assistant_config_id=call.assistant_config_id,
+        openai_call_id=call.openai_call_id or f"historical:{call.id}",
+        provider_call_id=call.provider_call_id,
+        caller_phone=call.caller_phone or "desconocido",
+        caller_name=call.caller_name,
+        called_number=call.called_number or "desconocido",
+        status=call.status or CallStatus.FAILED,
+        detected_intent=call.detected_intent,
+        outcome=call.outcome,
+        recording_enabled=bool(call.recording_enabled),
+        transcript_enabled=bool(call.transcript_enabled),
+        conversation_state_json=call.conversation_state_json or {},
+        transcript_text=call.transcript_text,
+        summary_text=call.summary_text,
+        started_at=started_at,
+        ended_at=call.ended_at,
+        created_at=call.created_at or started_at,
+        updated_at=call.updated_at or call.created_at or started_at,
+    ).model_dump()
     return CallAnalysisRead(
         **values,
         duration_seconds=duration_seconds,
@@ -122,11 +149,22 @@ def _call_analysis(call: CallSession) -> CallAnalysisRead:
     )
 
 
+def _event_read(event: CallEvent) -> CallEventRead:
+    """Serialize historical events with nullable payloads safely."""
+    return CallEventRead(
+        id=event.id,
+        event_type=event.event_type or "unknown",
+        payload_json=event.payload_json or {},
+        created_at=event.created_at or datetime.now(UTC),
+    )
+
+
 def _is_tool_event(event: CallEvent) -> bool:
     """Identify persisted function calls and tool outputs."""
-    event_type = event.event_type.casefold()
-    payload_type = str(event.payload_json.get("type", "")).casefold()
-    item = event.payload_json.get("item")
+    event_type = (event.event_type or "").casefold()
+    payload = event.payload_json or {}
+    payload_type = str(payload.get("type", "")).casefold()
+    item = payload.get("item")
     item_type = str(item.get("type", "")).casefold() if isinstance(item, dict) else ""
     return (
         "function_call" in event_type
@@ -138,7 +176,7 @@ def _is_tool_event(event: CallEvent) -> bool:
 
 def _is_error_event(event: CallEvent) -> bool:
     """Identify Realtime or local error events."""
-    event_type = event.event_type.casefold()
+    event_type = (event.event_type or "").casefold()
     return (
         event_type == "error" or event_type.endswith(".error") or "failed" in event_type
     )
@@ -147,7 +185,7 @@ def _is_error_event(event: CallEvent) -> bool:
 def _call_detail(call: CallSession) -> CallAnalysisDetail:
     """Build the complete classified analysis response."""
     base = _call_analysis(call).model_dump()
-    events = [CallEventRead.model_validate(event) for event in call.events]
+    events = [_event_read(event) for event in call.events]
     return CallAnalysisDetail(
         **base,
         clinic_name=(
@@ -155,12 +193,12 @@ def _call_detail(call: CallSession) -> CallAnalysisDetail:
         ),
         events=events,
         tool_calls=[
-            CallEventRead.model_validate(event)
+            _event_read(event)
             for event in call.events
             if _is_tool_event(event)
         ],
         errors=[
-            CallEventRead.model_validate(event)
+            _event_read(event)
             for event in call.events
             if _is_error_event(event)
         ],
@@ -201,7 +239,11 @@ def _transcript_turns(transcript_text: str | None) -> list[TranscriptTurnRead]:
 def _redact_value(value: object, old_phone: str) -> object:
     """Recursively remove a caller phone from stored diagnostic payloads."""
     if isinstance(value, str):
-        return value.replace(old_phone, "[ANONYMIZED]")
+        return (
+            value.replace(old_phone, "[ANONYMIZED]")
+            if old_phone
+            else value
+        )
     if isinstance(value, list):
         return [_redact_value(item, old_phone) for item in value]
     if isinstance(value, dict):
@@ -211,7 +253,7 @@ def _redact_value(value: object, old_phone: str) -> object:
 
 def _anonymize_call(session: Session, call: CallSession, *, clear_events: bool) -> None:
     """Remove personal conversation data while preserving appointment links."""
-    old_phone = call.caller_phone
+    old_phone = call.caller_phone or ""
     call.caller_phone = "anonymized"
     call.caller_name = None
     call.provider_call_id = None
@@ -239,7 +281,11 @@ def _appointment_analysis(appointment: Appointment) -> AppointmentAnalysisRead:
     values = AppointmentRead.model_validate(appointment).model_dump()
     return AppointmentAnalysisRead(
         **values,
-        worker_name=appointment.worker.name,
+        worker_name=(
+            appointment.worker.name
+            if appointment.worker is not None
+            else "Profesional eliminado"
+        ),
         service_name=(
             appointment.service.public_name if appointment.service is not None else None
         ),
@@ -384,17 +430,17 @@ def list_calls(
         )
     if call_date is not None:
         statement = statement.where(
-            func.date(func.timezone(clinic.timezone, CallSession.started_at))
+            func.date(func.timezone(clinic.timezone or "Europe/Madrid", CallSession.started_at))
             == call_date
         )
     if date_from is not None:
         statement = statement.where(
-            func.date(func.timezone(clinic.timezone, CallSession.started_at))
+            func.date(func.timezone(clinic.timezone or "Europe/Madrid", CallSession.started_at))
             >= date_from
         )
     if date_to is not None:
         statement = statement.where(
-            func.date(func.timezone(clinic.timezone, CallSession.started_at)) <= date_to
+            func.date(func.timezone(clinic.timezone or "Europe/Madrid", CallSession.started_at)) <= date_to
         )
     if outcome is not None:
         statement = statement.where(CallSession.outcome == outcome)
@@ -412,7 +458,7 @@ def list_calls(
         statement = statement.where(
             CallSession.appointments.any(Appointment.service_id == service_id)
         )
-    ordered = statement.order_by(CallSession.started_at.desc(), CallSession.id)
+    ordered = statement.order_by(CallSession.started_at.desc().nullslast(), CallSession.created_at.desc(), CallSession.id)
     total = (
         session.scalar(
             select(func.count()).select_from(ordered.order_by(None).subquery())
@@ -504,12 +550,19 @@ def list_call_events(
     """List the raw event timeline for one call conversation."""
     _call_model_or_404(session, clinic_id, call_id)
     statement = select(CallEvent).where(CallEvent.call_session_id == call_id)
-    return paginate(
-        session,
-        statement.order_by(CallEvent.created_at, CallEvent.id),
-        schema=CallEventRead,
+    ordered = statement.order_by(CallEvent.created_at, CallEvent.id)
+    total = session.scalar(
+        select(func.count()).select_from(ordered.order_by(None).subquery())
+    ) or 0
+    rows = session.scalars(
+        ordered.offset((page - 1) * page_size).limit(page_size)
+    ).all()
+    return Page[CallEventRead](
+        items=[_event_read(event) for event in rows],
+        total=total,
         page=page,
         page_size=page_size,
+        pages=math.ceil(total / page_size) if total else 0,
     )
 
 
@@ -531,7 +584,7 @@ def list_call_tool_calls(
         .order_by(CallEvent.created_at, CallEvent.id)
     ).all()
     return [
-        CallEventRead.model_validate(event) for event in events if _is_tool_event(event)
+        _event_read(event) for event in events if _is_tool_event(event)
     ]
 
 

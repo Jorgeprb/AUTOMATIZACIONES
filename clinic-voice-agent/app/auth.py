@@ -24,6 +24,13 @@ _SESSION_TOKEN_BYTES = 48
 _CSRF_TOKEN_BYTES = 32
 
 
+def _utc_datetime(value: datetime) -> datetime:
+    """Normalize database datetimes for safe comparisons across drivers."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 @dataclass(frozen=True, slots=True)
 class AdminPrincipal:
     """Authenticated administrator identity attached to a request."""
@@ -157,7 +164,10 @@ def authenticate_admin(
             dklen=32,
         )
         return None
-    if user.locked_until is not None and user.locked_until > now:
+    if (
+        user.locked_until is not None
+        and _utc_datetime(user.locked_until) > now
+    ):
         return None
     if not verify_password(password, user.password_hash):
         user.failed_login_count += 1
@@ -204,6 +214,12 @@ def create_admin_session(
     session.add(record)
     session.commit()
     session.refresh(record)
+    # SQLite and some legacy drivers can return timezone-naive values even for
+    # DateTime(timezone=True). Normalise the in-memory record returned to callers;
+    # PostgreSQL values are already aware and remain unchanged.
+    record.expires_at = _utc_datetime(record.expires_at)
+    if record.revoked_at is not None:
+        record.revoked_at = _utc_datetime(record.revoked_at)
     return raw_token, csrf_token, record
 
 
@@ -241,7 +257,11 @@ def principal_from_session(
     record = session.scalar(
         select(AdminSession).where(AdminSession.token_hash == _hash_token(raw_token))
     )
-    if record is None or record.revoked_at is not None or record.expires_at <= now:
+    if (
+        record is None
+        or record.revoked_at is not None
+        or _utc_datetime(record.expires_at) <= now
+    ):
         return None
     user = session.get(AdminUser, record.user_id)
     if user is None or not user.is_active:

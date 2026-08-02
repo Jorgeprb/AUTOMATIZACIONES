@@ -37,6 +37,11 @@ from app.models import (
 router = APIRouter(prefix="/admin")
 
 
+def _clean_text(value: object) -> str:
+    """Return a stripped string for nullable historical records."""
+    return value.strip() if isinstance(value, str) else ""
+
+
 def _item(
     clinic_id: uuid.UUID,
     *,
@@ -159,18 +164,18 @@ def build_setup_status(
 
     basic_complete = all(
         (
-            clinic.name.strip(),
-            clinic.timezone.strip(),
-            clinic.default_language.strip(),
-            clinic.main_phone_number.strip(),
-            (clinic.address or "").strip(),
-            (clinic.email or "").strip(),
-            (clinic.emergency_message or "").strip(),
-            clinic.opening_hours_json,
+            _clean_text(clinic.name),
+            _clean_text(clinic.timezone),
+            _clean_text(clinic.default_language),
+            _clean_text(clinic.main_phone_number),
+            _clean_text(clinic.address),
+            _clean_text(clinic.email),
+            _clean_text(clinic.emergency_message),
+            clinic.opening_hours_json or {},
         )
     )
     phone_configured = any(
-        phone.phone_number.strip() and _configured_sip_target(phone.sip_target)
+        _clean_text(phone.phone_number) and _configured_sip_target(phone.sip_target)
         for phone in phones
     )
     calendars_linked = bool(workers) and all(
@@ -185,12 +190,12 @@ def build_setup_status(
     )
     prompt_reviewed = active_config is not None and all(
         (
-            active_config.first_message.strip(),
-            active_config.system_prompt.strip(),
-            active_config.safety_prompt.strip(),
-            active_config.booking_policy_prompt.strip(),
-            active_config.cancellation_policy_prompt.strip(),
-            active_config.transfer_policy_prompt.strip(),
+            _clean_text(active_config.first_message),
+            _clean_text(active_config.system_prompt),
+            _clean_text(active_config.safety_prompt),
+            _clean_text(active_config.booking_policy_prompt),
+            _clean_text(active_config.cancellation_policy_prompt),
+            _clean_text(active_config.transfer_policy_prompt),
         )
     )
     webhook_configured = any(_public_webhook(phone.webhook_url) for phone in phones)
@@ -484,7 +489,14 @@ def get_dashboard(
         upcoming_appointments=upcoming_appointments,
         recent_errors=failed_calls + error_events,
         last_call=(
-            DashboardLastCall.model_validate(last_call, from_attributes=True)
+            DashboardLastCall(
+                id=last_call.id,
+                caller_phone=_clean_text(last_call.caller_phone) or "desconocido",
+                called_number=_clean_text(last_call.called_number) or "desconocido",
+                status=last_call.status or CallStatus.FAILED,
+                outcome=last_call.outcome,
+                started_at=last_call.started_at or last_call.created_at or now,
+            )
             if last_call is not None
             else None
         ),

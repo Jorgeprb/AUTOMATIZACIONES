@@ -13,7 +13,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import AdminPrincipal
+from app.auth import AdminPrincipal, _utc_datetime
 from app.config import Settings
 from app.models import (
     AdminMembership,
@@ -47,21 +47,21 @@ class PortalAccessState:
 def portal_access_state_for_account(
     session: Session, billing_account_id: uuid.UUID
 ) -> PortalAccessState:
-    purchased = frozenset(
-        clinic_id
-        for clinic_id in session.scalars(
-            select(PurchaseOrder.clinic_id)
+    paid_phone_orders = list(
+        session.execute(
+            select(PurchaseOrder.id, PurchaseOrder.clinic_id)
             .join(PurchaseOrderItem, PurchaseOrderItem.order_id == PurchaseOrder.id)
             .join(BillingProduct, BillingProduct.id == PurchaseOrderItem.product_id)
             .where(
                 PurchaseOrder.billing_account_id == billing_account_id,
                 PurchaseOrder.status == "paid",
-                PurchaseOrder.clinic_id.is_not(None),
                 BillingProduct.code == "phone_number",
             )
             .distinct()
         )
-        if clinic_id is not None
+    )
+    purchased = frozenset(
+        clinic_id for _order_id, clinic_id in paid_phone_orders if clinic_id is not None
     )
     assigned = frozenset(
         session.scalars(
@@ -75,19 +75,22 @@ def portal_access_state_for_account(
         )
     )
     pending = frozenset(
-        session.scalars(
+        clinic_id
+        for clinic_id in session.scalars(
             select(PhoneProvisioningOrder.clinic_id)
             .where(
                 PhoneProvisioningOrder.billing_account_id == billing_account_id,
+                PhoneProvisioningOrder.clinic_id.is_not(None),
                 PhoneProvisioningOrder.status.in_(
                     ("paid_pending_provisioning", "provisioned")
                 ),
             )
             .distinct()
         )
+        if clinic_id is not None
     )
     return PortalAccessState(
-        unlocked=bool(purchased or assigned),
+        unlocked=bool(paid_phone_orders or assigned),
         purchased_clinic_ids=purchased,
         assigned_phone_clinic_ids=assigned,
         pending_activation_clinic_ids=pending,
@@ -394,7 +397,7 @@ def consume_action_token(
     )
     row = next((item for item in active_tokens if item.token_hash == digest), None)
     now = datetime.now(UTC)
-    if row is None or row.expires_at <= now:
+    if row is None or _utc_datetime(row.expires_at) <= now:
         return None
     for token in active_tokens:
         token.used_at = now

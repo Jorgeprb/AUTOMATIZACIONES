@@ -55,8 +55,6 @@ def _order_from_object(session: Session, data: dict[str, Any]) -> PurchaseOrder 
 
 
 def _ensure_provisioning_for_order(session: Session, order: PurchaseOrder) -> None:
-    if order.clinic_id is None:
-        return
     items = list(
         session.scalars(
             select(PurchaseOrderItem).where(PurchaseOrderItem.order_id == order.id)
@@ -82,15 +80,16 @@ def _ensure_provisioning_for_order(session: Session, order: PurchaseOrder) -> No
                     quantity=item.quantity,
                 )
             )
-        upsert_entitlement(
-            session,
-            clinic_id=order.clinic_id,
-            billing_account_id=order.billing_account_id,
-            code="phone_number",
-            status_value="pending",
-            quantity=item.quantity,
-            metadata={"purchase_order_id": str(order.id)},
-        )
+        if order.clinic_id is not None:
+            upsert_entitlement(
+                session,
+                clinic_id=order.clinic_id,
+                billing_account_id=order.billing_account_id,
+                code="phone_number",
+                status_value="pending",
+                quantity=item.quantity,
+                metadata={"purchase_order_id": str(order.id)},
+            )
     enqueue_outbox(
         session,
         kind="email.send",

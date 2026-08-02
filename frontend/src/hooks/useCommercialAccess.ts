@@ -8,7 +8,10 @@ export function useCommercialAccess() {
     queryKey: ["billing", "summary"],
     queryFn: getCommercialSummary,
     enabled: isClientPortal,
-    staleTime: 30_000,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
+    refetchOnMount: "always",
     retry: false,
   });
 

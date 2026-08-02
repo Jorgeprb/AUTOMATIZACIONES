@@ -87,7 +87,6 @@ const ResourcesPage = lazy(() => import("@/pages/ResourcesPage").then((module) =
 const StatisticsPage = lazy(() => import("@/pages/StatisticsPage").then((module) => ({ default: module.StatisticsPage })));
 const PurchasesPage = lazy(() => import("@/pages/PurchasesPage").then((module) => ({ default: module.PurchasesPage })));
 const RegisterPage = lazy(() => import("@/pages/RegisterPage").then((module) => ({ default: module.RegisterPage })));
-const OnboardingPage = lazy(() => import("@/pages/OnboardingPage").then((module) => ({ default: module.OnboardingPage })));
 const BusinessAdminPage = lazy(() => import("@/pages/BusinessAdminPage").then((module) => ({ default: module.BusinessAdminPage })));
 const CommercialAccountPage = lazy(() => import("@/pages/CommercialAccountPage").then((module) => ({ default: module.CommercialAccountPage })));
 const LoginPage = lazy(() =>
@@ -121,14 +120,15 @@ export default function App() {
         <Route element={<RequireAuth />}>
           <Route element={<AppShell />}>
             <Route index element={isAdminPortal ? <Navigate to="/users" replace /> : <DashboardPage />} />
-            <Route path="clinics" element={<ClinicsPage />} />
+            <Route path="clinics" element={isAdminPortal ? <Navigate to="/users" replace /> : <ClinicsPage />} />
+            <Route path="purchases" element={isClientPortal ? <PurchasesPage /> : <Navigate to="/users" replace />} />
             <Route path="clinics/:clinicId" element={unlocked(<ClinicRootRoute />)} />
             <Route path="clinics/:clinicId/settings/:section?" element={unlocked(<ClinicSettingsPage />)} />
             <Route path="clinics/:clinicId/workers" element={unlocked(<WorkersPage />)} />
             <Route path="clinics/:clinicId/customers" element={unlocked(<CustomersPage />)} />
             <Route path="clinics/:clinicId/resources" element={unlocked(<ResourcesPage />)} />
             <Route path="clinics/:clinicId/statistics" element={unlocked(<StatisticsPage />)} />
-            <Route path="clinics/:clinicId/purchases" element={<PurchasesPage />} />
+            <Route path="clinics/:clinicId/purchases" element={<Navigate to="/purchases" replace />} />
             <Route
               path="clinics/:clinicId/services"
               element={unlocked(<ServicesPage />)}
@@ -163,7 +163,7 @@ export default function App() {
             />
             <Route path="users" element={isAdminPortal ? <ClientAccountsPage /> : <Navigate to="/" replace />} />
             <Route path="business" element={isAdminPortal ? <BusinessAdminPage /> : <Navigate to="/" replace />} />
-            <Route path="onboarding" element={<OnboardingPage />} />
+            <Route path="onboarding" element={<Navigate to="/" replace />} />
             <Route path="account" element={isClientPortal ? <Navigate to="/clinics" replace /> : <CommercialAccountPage />} />
             <Route path="settings" element={isClientPortal ? <Navigate to="/" replace /> : <SettingsPage />} />
             <Route path="*" element={<Navigate to={isAdminPortal ? "/users" : "/"} replace />} />

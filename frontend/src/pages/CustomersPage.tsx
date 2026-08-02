@@ -6,6 +6,7 @@ import {
   Plus,
   Search,
   Settings2,
+  Trash2,
   Upload,
   UserRound,
 } from "lucide-react";
@@ -17,6 +18,7 @@ import {
   anonymizeCustomer,
   createCustomer,
   createCustomerField,
+  deleteCustomer,
   deleteCustomerField,
   exportCustomers,
   getCustomer,
@@ -33,6 +35,7 @@ import {
   type CustomerFieldType,
 } from "@/api/enterprise";
 import { listWorkers } from "@/api/workers";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ErrorState } from "@/components/common/ErrorState";
 import { LoadingState } from "@/components/common/LoadingState";
@@ -86,6 +89,7 @@ export function CustomersPage() {
   const [mergeSource, setMergeSource] = useState<ClinicCustomer | null>(null);
   const [mergeTargetId, setMergeTargetId] = useState("");
   const [editing, setEditing] = useState<ClinicCustomer | null>(null);
+  const [deletingCustomer, setDeletingCustomer] = useState<ClinicCustomer | null>(null);
   const [form, setForm] = useState<CustomerFormState>(emptyCustomer);
   const [editingField, setEditingField] = useState<CustomerFieldDefinition | null>(null);
   const [fieldForm, setFieldForm] = useState<CustomerFieldPayload>(emptyField);
@@ -151,6 +155,16 @@ export function CustomersPage() {
       await refreshCustomers();
       setDetailCustomerId(null);
       toast.success("Cliente anonimizado sin eliminar su historial");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const removeCustomer = useMutation({
+    mutationFn: (id: string) => deleteCustomer(clinicId as string, id),
+    onSuccess: async () => {
+      await refreshCustomers();
+      setDetailCustomerId(null);
+      setDeletingCustomer(null);
+      toast.success("Cliente eliminado de forma segura");
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -283,21 +297,25 @@ export function CustomersPage() {
         />
       ) : (
         <div className="overflow-hidden rounded-2xl border border-[#e4e8ef] bg-white">
-          <div className="hidden grid-cols-[minmax(180px,1.2fr)_180px_minmax(180px,1fr)_160px] gap-4 border-b bg-[#f8fafc] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#718096] md:grid">
-            <span>Cliente</span><span>Teléfono</span><span>Profesional</span><span>Último contacto</span>
+          <div className="hidden grid-cols-[minmax(180px,1.2fr)_180px_minmax(180px,1fr)_150px_84px] gap-4 border-b bg-[#f8fafc] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#718096] md:grid">
+            <span>Cliente</span><span>Teléfono</span><span>Profesional</span><span>Último contacto</span><span>Acciones</span>
           </div>
           {customers.map((row) => (
-            <button
-              type="button"
+            <div
               key={row.id}
-              className="grid w-full gap-2 border-b px-5 py-4 text-left transition last:border-b-0 hover:bg-[#f8fbff] md:grid-cols-[minmax(180px,1.2fr)_180px_minmax(180px,1fr)_160px] md:items-center md:gap-4"
-              onClick={() => setDetailCustomerId(row.id)}
+              className="grid gap-2 border-b px-5 py-3 transition last:border-b-0 hover:bg-[#f8fbff] md:grid-cols-[minmax(180px,1.2fr)_180px_minmax(180px,1fr)_150px_84px] md:items-center md:gap-4"
             >
-              <span><strong className="block text-[#172033]">{row.name}</strong><small className="text-[#748094]">{row.email ?? "Sin email"}</small></span>
+              <button type="button" className="text-left" onClick={() => setDetailCustomerId(row.id)}>
+                <strong className="block text-[#172033]">{row.name}</strong><small className="text-[#748094]">{row.email ?? "Sin email"}</small>
+              </button>
               <span className="text-sm text-[#566277]">{row.display_phone}</span>
               <span className="text-sm text-[#566277]">{row.preferred_worker_id ? workerNames.get(row.preferred_worker_id) ?? "Profesional eliminado" : "Sin preferencia"}</span>
               <span className="text-sm text-[#748094]">{formatDate(row.last_contact_at)}</span>
-            </button>
+              <div className="flex justify-end gap-1">
+                <Button size="icon" variant="ghost" title="Editar" onClick={() => startCustomer(row)}><Settings2 className="size-4" /></Button>
+                <Button size="icon" variant="ghost" title="Eliminar" onClick={() => setDeletingCustomer(row)}><Trash2 className="size-4 text-[#bd3341]" /></Button>
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -351,6 +369,16 @@ export function CustomersPage() {
         onDelete={(id) => removeField.mutate(id)}
         pending={saveField.isPending}
       />
+      <ConfirmDialog
+        open={Boolean(deletingCustomer)}
+        onOpenChange={(open) => !open && setDeletingCustomer(null)}
+        title="Eliminar cliente"
+        description="Si tiene citas o llamadas, sus datos serán anonimizados y se conservarán los snapshots históricos. Si no tiene referencias, se eliminará físicamente."
+        confirmLabel="Eliminar cliente"
+        isPending={removeCustomer.isPending}
+        onConfirm={() => deletingCustomer && removeCustomer.mutate(deletingCustomer.id)}
+      />
+
       <Dialog open={Boolean(mergeSource)} onOpenChange={(open) => !open && setMergeSource(null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Fusionar duplicado</DialogTitle></DialogHeader>

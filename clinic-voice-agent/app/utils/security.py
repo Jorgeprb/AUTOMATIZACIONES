@@ -120,6 +120,10 @@ def _enforce_principal_permissions(request: Request, principal: AdminPrincipal) 
 def _client_portal_path_allowed_while_locked(request: Request) -> bool:
     path = request.url.path.rstrip("/") or "/"
     method = request.method.upper()
+    if path in {"/auth/me", "/auth/logout"}:
+        return True
+    if path in {"/auth/onboarding/clinic", "/auth/onboarding/clinics"}:
+        return method == "POST"
     if path.startswith("/api/billing"):
         return True
     if path == "/api/admin/clinics":

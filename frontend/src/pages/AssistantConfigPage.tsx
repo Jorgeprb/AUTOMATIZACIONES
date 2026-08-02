@@ -7,6 +7,7 @@ import {
   FileText,
   Pencil,
   Plus,
+  Trash2,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -14,11 +15,13 @@ import { toast } from "sonner";
 import {
   activateAssistantConfig,
   createAssistantConfig,
+  deleteAssistantConfig,
   getAssistantOptions,
   listAssistantConfigs,
   previewPrompt,
   updateAssistantConfig,
 } from "@/api/assistants";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ErrorState } from "@/components/common/ErrorState";
 import { LoadingState } from "@/components/common/LoadingState";
@@ -188,6 +191,7 @@ export function AssistantConfigPage() {
   const [preview, setPreview] = useState<PromptPreview | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<AssistantConfig | null>(null);
+  const [deletingConfig, setDeletingConfig] = useState<AssistantConfig | null>(null);
 
   const query = useQuery({
     queryKey: ["assistants", clinicId],
@@ -246,6 +250,16 @@ export function AssistantConfigPage() {
     mutationFn: (configId: string) =>
       previewPrompt(clinicId as string, configId),
     onSuccess: setPreview,
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (configId: string) =>
+      deleteAssistantConfig(clinicId as string, configId),
+    onSuccess: async () => {
+      setDeletingConfig(null);
+      await refresh();
+      toast.success("Configuración eliminada");
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -331,7 +345,7 @@ export function AssistantConfigPage() {
                     {`Idioma: ${config.language}`}
                   </StatusBadge>
                 </div>
-                <div className="grid gap-2 sm:grid-cols-3">
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                   <Button
                     variant="outline"
                     onClick={() => {
@@ -357,6 +371,14 @@ export function AssistantConfigPage() {
                   >
                     <CheckCircle2 className="size-4" />
                     {config.is_active ? "Activa" : "Activar"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setDeletingConfig(config)}
+                    disabled={deleteMutation.isPending}
+                  >
+                    <Trash2 className="size-4 text-[#bd3341]" />
+                    Eliminar
                   </Button>
                 </div>
               </CardContent>
@@ -410,6 +432,18 @@ export function AssistantConfigPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={Boolean(deletingConfig)}
+        onOpenChange={(open) => !open && setDeletingConfig(null)}
+        title="Eliminar configuración"
+        description={deletingConfig?.is_active
+          ? "Es la configuración activa. Se activará automáticamente la versión más reciente disponible. Si es la única, el servidor impedirá eliminarla."
+          : "Se eliminará esta versión. Las llamadas históricas conservarán sus datos y referencias seguras."}
+        confirmLabel="Eliminar configuración"
+        isPending={deleteMutation.isPending}
+        onConfirm={() => deletingConfig && deleteMutation.mutate(deletingConfig.id)}
+      />
 
       <Dialog open={Boolean(preview)} onOpenChange={(open) => !open && setPreview(null)}>
         <DialogContent className="max-w-4xl">

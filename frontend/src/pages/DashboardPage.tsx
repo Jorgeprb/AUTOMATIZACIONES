@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Bot,
+  Building2,
   CalendarCheck2,
   CalendarClock,
   CheckCircle2,
@@ -45,15 +46,13 @@ import { formatDateTime } from "@/lib/format";
 import { isClientPortal } from "@/lib/portal";
 
 function WelcomeDashboard({
-  clinicId,
   clinicName,
   demoPhone,
 }: {
-  clinicId: string | null;
   clinicName?: string;
   demoPhone: string;
 }) {
-  const purchasePath = clinicId ? `/clinics/${clinicId}/purchases` : "/clinics";
+  const purchasePath = "/purchases?add=phone_number";
   return (
     <div className="space-y-7">
       <PageHeader
@@ -81,11 +80,6 @@ function WelcomeDashboard({
                   <ShoppingCart className="size-4" /> Comprar un número
                 </Link>
               </Button>
-              {!clinicId ? (
-                <Button asChild variant="outline">
-                  <Link to="/clinics">Crear primero una clínica</Link>
-                </Button>
-              ) : null}
             </div>
           </div>
           <div className="rounded-2xl border border-[#dbe3ff] bg-white p-5 shadow-sm">
@@ -102,6 +96,44 @@ function WelcomeDashboard({
               </a>
             </Button>
           </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function PaidWithoutClinicDashboard({ demoPhone }: { demoPhone: string }) {
+  return (
+    <div className="space-y-7">
+      <PageHeader
+        title="Bienvenido a Autogal"
+        description="La compra está confirmada. Ya puedes preparar la clínica mientras activamos tu número."
+      />
+      <Card className="border-[#f1d397] bg-[#fff9ed]">
+        <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
+          <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#fff0cf] text-[#9a6818]">
+            <Clock3 className="size-5" />
+          </span>
+          <div className="flex-1">
+            <p className="font-semibold text-[#765116]">Número comprado · pendiente de activación</p>
+            <p className="mt-1 text-sm leading-6 text-[#80672f]">
+              El pago está confirmado. La asignación puede tardar hasta 24 horas. Crea una clínica con sus datos básicos para que administración pueda vincularle el número.
+            </p>
+          </div>
+          <Button asChild variant="outline">
+            <Link to="/clinics"><Building2 className="size-4" /> Gestionar mis clínicas</Link>
+          </Button>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="grid gap-5 p-6 md:grid-cols-[1fr_auto] md:items-center">
+          <div>
+            <p className="font-semibold text-[#27334a]">Prueba del asistente</p>
+            <p className="mt-1 text-sm text-[#748095]">Mientras preparamos tu número, puedes seguir probando el bot en {demoPhone}.</p>
+          </div>
+          <Button asChild variant="outline">
+            <a href={`tel:${demoPhone.replace(/\s+/g, "")}`}><PhoneCall className="size-4" /> Llamar a la prueba</a>
+          </Button>
         </CardContent>
       </Card>
     </div>
@@ -129,7 +161,11 @@ export function DashboardPage() {
   const demoPhone = access.summary?.demo_phone_number || "+34 881 17 08 37";
   if (!activeClinicId || !activeClinic) {
     return isClientPortal ? (
-      <WelcomeDashboard clinicId={null} demoPhone={demoPhone} />
+      access.unlocked ? (
+        <PaidWithoutClinicDashboard demoPhone={demoPhone} />
+      ) : (
+        <WelcomeDashboard demoPhone={demoPhone} />
+      )
     ) : (
       <EmptyState
         icon={Stethoscope}
@@ -146,7 +182,6 @@ export function DashboardPage() {
   if (isClientPortal && !access.unlocked) {
     return (
       <WelcomeDashboard
-        clinicId={activeClinicId}
         clinicName={activeClinic.name}
         demoPhone={demoPhone}
       />
@@ -160,7 +195,12 @@ export function DashboardPage() {
   const dashboard = dashboardQuery.data;
   const setup = setupQuery.data;
   const pendingActivation = Boolean(
-    access.summary?.pending_activation_clinic_ids.includes(activeClinicId),
+    access.summary?.pending_activation_clinic_ids.includes(activeClinicId) ||
+      access.summary?.provisioning.some(
+        (row) =>
+          row.clinic_id === null &&
+          ["paid_pending_provisioning", "provisioned"].includes(row.status),
+      ),
   );
 
   return (
@@ -183,7 +223,7 @@ export function DashboardPage() {
               </p>
             </div>
             <Button asChild variant="outline">
-              <Link to={`/clinics/${activeClinicId}/purchases`}>Ver estado</Link>
+              <Link to="/purchases">Ver estado</Link>
             </Button>
           </CardContent>
         </Card>

@@ -59,6 +59,7 @@ function NavItem({
   return (
     <NavLink
       to={to}
+      end={["/", "/clinics", "/purchases", "/users", "/business"].includes(to)}
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(
@@ -97,9 +98,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   });
   const pendingProvisioning = Number(global.data?.pending_provisioning ?? 0);
   const locked = isClientPortal && !access.unlocked;
-  const purchasesPath = activeClinicId
-    ? `/clinics/${activeClinicId}/purchases`
-    : "/clinics";
+  const purchasesPath = "/purchases";
   const baseItems = isClientPortal
     ? [
         { label: "Dashboard", icon: LayoutDashboard, path: "/" },
@@ -117,7 +116,6 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           path: "/users",
           badge: pendingProvisioning,
         },
-        { label: "Clínicas", icon: Building2, path: "/clinics" },
         {
           label: "Negocio y provisión",
           icon: CreditCard,

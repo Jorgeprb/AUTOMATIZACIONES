@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     AdminPrincipal,
+    _utc_datetime,
     authenticate_admin,
     create_admin_session,
     revoke_admin_session,
@@ -243,7 +244,10 @@ def complete_google_login(
     transaction = session.scalar(
         select(OAuthLoginState).where(OAuthLoginState.state_hash == state_hash)
     )
-    if transaction is None or transaction.expires_at <= datetime.now(UTC):
+    if (
+        transaction is None
+        or _utc_datetime(transaction.expires_at) <= datetime.now(UTC)
+    ):
         return _oauth_error_redirect(settings, portal="client", code="expired_state")
     portal = transaction.portal
     redirect_uri = transaction.redirect_uri

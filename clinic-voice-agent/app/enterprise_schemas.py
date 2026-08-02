@@ -296,7 +296,7 @@ class CheckoutLine(BaseModel):
 
 
 class CheckoutRequest(BaseModel):
-    clinic_id: uuid.UUID
+    clinic_id: uuid.UUID | None = None
     lines: list[CheckoutLine] = Field(min_length=1, max_length=20)
 
 
@@ -342,7 +342,7 @@ class PaymentRead(ORMModel):
 class ProvisioningRead(ORMModel):
     id: uuid.UUID
     billing_account_id: uuid.UUID
-    clinic_id: uuid.UUID
+    clinic_id: uuid.UUID | None
     purchase_order_id: uuid.UUID | None
     subscription_id: uuid.UUID | None
     status: str
@@ -360,6 +360,7 @@ class ProvisioningRead(ORMModel):
 
 
 class ProvisioningUpdate(BaseModel):
+    clinic_id: uuid.UUID | None = None
     assigned_number: str | None = Field(default=None, max_length=32)
     provider: str | None = Field(default=None, max_length=48)
     external_provider_id: str | None = Field(default=None, max_length=255)
@@ -384,7 +385,7 @@ class EntitlementRead(ORMModel):
 
 class ClientProvisioningRead(ORMModel):
     id: uuid.UUID
-    clinic_id: uuid.UUID
+    clinic_id: uuid.UUID | None
     status: str
     quantity: int
     assigned_number: str | None

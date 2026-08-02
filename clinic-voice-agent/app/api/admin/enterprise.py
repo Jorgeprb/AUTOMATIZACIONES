@@ -68,6 +68,7 @@ from app.models import (
     PhoneNumber,
     PhoneProvider,
     PhoneProvisioningOrder,
+    PurchaseOrder,
     ResourceReservation,
     Service,
     ServiceResourceRequirement,
@@ -955,12 +956,40 @@ def update_provisioning(
     if row is None:
         raise HTTPException(status_code=404, detail="Provisioning order not found.")
     values = payload.model_dump(exclude_unset=True)
+    requested_clinic_id = values.pop("clinic_id", None)
+    if "clinic_id" in payload.model_fields_set:
+        if requested_clinic_id is None:
+            if row.status == "active":
+                raise HTTPException(status_code=422, detail="An active number requires a clinic.")
+            row.clinic_id = None
+        else:
+            clinic = session.scalar(
+                select(Clinic).where(
+                    Clinic.id == requested_clinic_id,
+                    Clinic.billing_account_id == row.billing_account_id,
+                )
+            )
+            if clinic is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="The selected clinic does not belong to this billing account.",
+                )
+            row.clinic_id = clinic.id
+            if row.purchase_order_id is not None:
+                purchase_order = session.get(PurchaseOrder, row.purchase_order_id)
+                if purchase_order is not None:
+                    purchase_order.clinic_id = clinic.id
     for key, value in values.items():
         setattr(row, key, value)
     now = datetime.now(UTC)
     if row.status == "provisioned" and row.provisioned_at is None:
         row.provisioned_at = now
     if row.status == "active":
+        if row.clinic_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Selecciona una clínica real antes de activar el número.",
+            )
         if not row.assigned_number:
             raise HTTPException(
                 status_code=422, detail="Assigned number is required before activation."

@@ -31,6 +31,7 @@ export type PortalUser = {
   is_active: boolean;
   google_connected: boolean;
   memberships: PortalMembership[];
+  unassigned_provisioning: PortalPendingProvisioning[];
 };
 export type PortalUserPayload = {
   email: string;
@@ -48,3 +49,7 @@ export const updatePortalUser = (userId: string, payload: Partial<PortalUserPayl
   apiRequest<PortalUser>(`/api/admin/users/${userId}`, { method: "PATCH", body: JSON.stringify(payload) });
 export const deletePortalUser = (userId: string) =>
   apiRequest<void>(`/api/admin/users/${userId}`, { method: "DELETE" });
+
+export type PortalClinicCreate = { name: string; timezone: string; email?: string | null; address?: string | null };
+export const createUserClinic = (userId: string, payload: PortalClinicCreate) =>
+  apiRequest<PortalMembership>(`/api/admin/users/${userId}/clinics`, { method: "POST", body: JSON.stringify(payload) });

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Building2,
+  ExternalLink,
   Phone,
   Plus,
   ShieldCheck,
@@ -15,6 +16,7 @@ import { toast } from "sonner";
 import { listClinics } from "@/api/clinics";
 import {
   createPortalUser,
+  createUserClinic,
   deletePortalUser,
   listPortalUsers,
   updatePortalUser,
@@ -60,7 +62,7 @@ const roleLabels: Record<PortalRole, string> = {
 interface PendingAssignment {
   id: string;
   user: PortalUser;
-  membership: PortalMembership;
+  membership: PortalMembership | null;
   quantity: number;
   createdAt: string;
 }
@@ -71,6 +73,8 @@ export function ClientAccountsPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<PortalUser | null>(null);
   const [deleting, setDeleting] = useState<PortalUser | null>(null);
+  const [managing, setManaging] = useState<PortalUser | null>(null);
+  const [clinicForm, setClinicForm] = useState({ name: "", timezone: "Europe/Madrid", email: "", address: "" });
   const [form, setForm] = useState(initialForm);
   const usersQuery = useQuery({
     queryKey: ["portal-users"],
@@ -109,6 +113,24 @@ export function ClientAccountsPage() {
     },
     onError: (error: Error) => toast.error(error.message),
   });
+  const createClinicMutation = useMutation({
+    mutationFn: () => createUserClinic(managing!.id, {
+      name: clinicForm.name,
+      timezone: clinicForm.timezone,
+      email: clinicForm.email || null,
+      address: clinicForm.address || null,
+    }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["portal-users"] }),
+        queryClient.invalidateQueries({ queryKey: ["clinics"] }),
+        queryClient.invalidateQueries({ queryKey: ["billing-accounts"] }),
+      ]);
+      setClinicForm({ name: "", timezone: "Europe/Madrid", email: "", address: "" });
+      toast.success("Clínica creada y vinculada al usuario");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const startCreate = () => {
     setEditing(null);
@@ -144,6 +166,17 @@ export function ClientAccountsPage() {
           }
         }
       }
+      for (const pending of user.unassigned_provisioning ?? []) {
+        if (!unique.has(pending.id)) {
+          unique.set(pending.id, {
+            id: pending.id,
+            user,
+            membership: null,
+            quantity: pending.quantity,
+            createdAt: pending.created_at,
+          });
+        }
+      }
     }
     return [...unique.values()].sort(
       (left, right) =>
@@ -161,6 +194,9 @@ export function ClientAccountsPage() {
   }
   const clinics = clinicsQuery.data?.items ?? [];
   const users = usersQuery.data ?? [];
+  const managedUser = managing
+    ? users.find((user) => user.id === managing.id) ?? managing
+    : null;
 
   return (
     <div className="space-y-7">
@@ -199,7 +235,7 @@ export function ClientAccountsPage() {
                 >
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold text-[#333c50]">
-                      {item.membership.clinic_name}
+                      {item.membership?.clinic_name ?? "Compra todavía sin clínica"}
                     </p>
                     <p className="mt-1 truncate text-sm text-[#758096]">
                       {item.user.display_name || item.user.email || item.user.username}
@@ -251,7 +287,12 @@ export function ClientAccountsPage() {
                     {user.email || user.username}
                   </p>
                 </div>
-                <div className="flex shrink-0 gap-1">
+                <div className="flex shrink-0 flex-wrap gap-1">
+                  {user.role !== "super_admin" ? (
+                    <Button variant="outline" size="sm" onClick={() => setManaging(user)}>
+                      <Plus className="size-4" /> Clínicas y números
+                    </Button>
+                  ) : null}
                   <Button variant="outline" size="sm" onClick={() => startEdit(user)}>
                     Editar
                   </Button>
@@ -344,11 +385,59 @@ export function ClientAccountsPage() {
                     Este usuario todavía no tiene clínicas asignadas.
                   </div>
                 )}
+                {(user.unassigned_provisioning ?? []).map((pending) => (
+                  <div key={pending.id} className="mt-3 flex flex-col gap-2 rounded-xl border border-[#efc5cb] bg-[#fff5f6] p-3 sm:flex-row sm:items-center">
+                    <span className="flex-1 text-sm font-semibold text-[#a33141]">Número comprado pendiente de vincular a una clínica real</span>
+                    <Button size="sm" onClick={() => navigate(`/business?provisioning=${pending.id}&mode=assign`)}>Vincular y asignar</Button>
+                  </div>
+                ))}
               </div>
             </CardContent>
           </Card>
         ))}
       </div>
+
+      <Dialog open={Boolean(managedUser)} onOpenChange={(value) => !value && setManaging(null)}>
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Clínicas y números</DialogTitle>
+            <DialogDescription>{managedUser?.display_name || managedUser?.email || managedUser?.username}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {managedUser?.memberships.length ? managedUser.memberships.map((membership) => (
+              <div key={membership.clinic_id} className="rounded-xl border p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <strong>{membership.clinic_name}</strong>
+                  <Button size="sm" variant="outline" onClick={() => navigate(`/clinics/${membership.clinic_id}/settings/general`)}>
+                    Editar datos <ExternalLink className="size-4" />
+                  </Button>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {membership.phone_numbers.length ? membership.phone_numbers.map((phone) => (
+                    <p key={phone.id} className="flex items-center gap-2 rounded-lg bg-[#f7f9fc] px-3 py-2 text-sm"><Phone className="size-4" />{phone.phone_number}<span className="ml-auto text-xs">{phone.is_active ? "Activo" : "Inactivo"}</span></p>
+                  )) : <p className="text-sm text-[#7c8799]">Sin números asignados.</p>}
+                  {membership.pending_provisioning.map((pending) => (
+                    <Button key={pending.id} size="sm" onClick={() => navigate(`/business?provisioning=${pending.id}&mode=assign`)}>Asignar número pendiente</Button>
+                  ))}
+                </div>
+              </div>
+            )) : <p className="rounded-xl border border-dashed p-4 text-sm text-[#6f7b90]">Todavía no tiene clínicas.</p>}
+
+            <div className="rounded-xl border bg-[#fbfcfe] p-4">
+              <h3 className="font-semibold">Crear nueva clínica para este usuario</h3>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div><Label>Nombre</Label><Input value={clinicForm.name} onChange={(event) => setClinicForm({ ...clinicForm, name: event.target.value })} /></div>
+                <div><Label>Zona horaria</Label><Input value={clinicForm.timezone} onChange={(event) => setClinicForm({ ...clinicForm, timezone: event.target.value })} /></div>
+                <div><Label>Email</Label><Input type="email" value={clinicForm.email} onChange={(event) => setClinicForm({ ...clinicForm, email: event.target.value })} /></div>
+                <div><Label>Dirección</Label><Input value={clinicForm.address} onChange={(event) => setClinicForm({ ...clinicForm, address: event.target.value })} /></div>
+              </div>
+              <Button className="mt-3" disabled={!clinicForm.name.trim() || createClinicMutation.isPending} onClick={() => createClinicMutation.mutate()}>
+                <Plus className="size-4" />{createClinicMutation.isPending ? "Creando…" : "Crear clínica"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

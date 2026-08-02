@@ -12,6 +12,7 @@ from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build  # type: ignore[import-untyped]
+from googleapiclient.errors import HttpError  # type: ignore[import-untyped]
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -246,11 +247,16 @@ def create_calendar_for_worker(
     clinic = session.get(Clinic, worker.clinic_id)
     if clinic is None:
         raise WorkerCalendarError("Worker clinic does not exist.")
-    calendar = create_secondary_calendar(
-        client,
-        summary=summary or f"{clinic.name} - {worker.name}",
-        timezone=clinic.timezone,
-    )
+    try:
+        calendar = create_secondary_calendar(
+            client,
+            summary=summary or f"{clinic.name} - {worker.name}",
+            timezone=clinic.timezone,
+        )
+    except HttpError as exc:
+        raise WorkerCalendarError(
+            "Google Calendar rechazó la creación del calendario del trabajador."
+        ) from exc
     worker.calendar_id = calendar.id
     if color_id is not None:
         worker.color_id = color_id
@@ -267,7 +273,12 @@ def link_calendar_to_worker(
     color_id: str | None = None,
 ) -> CalendarInfo:
     """Validate a writable calendar and link it to a worker."""
-    calendar_item = client.calendarList().get(calendarId=calendar_id).execute()
+    try:
+        calendar_item = client.calendarList().get(calendarId=calendar_id).execute()
+    except HttpError as exc:
+        raise WorkerCalendarError(
+            "No se pudo consultar el calendario seleccionado en Google."
+        ) from exc
     access_role = calendar_item.get("accessRole")
     if access_role not in {"owner", "writer"}:
         raise WorkerCalendarError(

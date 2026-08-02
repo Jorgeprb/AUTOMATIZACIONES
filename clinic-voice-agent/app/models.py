@@ -2071,8 +2071,8 @@ class PhoneProvisioningOrder(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
         nullable=False,
     )
-    clinic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    clinic_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("clinics.id", ondelete="SET NULL"), index=True, nullable=True
     )
     purchase_order_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("purchase_orders.id", ondelete="SET NULL"), nullable=True

@@ -1,2 +1,4 @@
-Archivos modificados para homogeneizar admin.autogal.es y crear la vista Usuarios y clínicas.
-No requiere migración. Consulta docs/ADMIN_PORTAL_USERS_CLINICS_20260730.md.
+Paquete incremental de las correcciones Autogal del 2 de agosto de 2026.
+Contiene únicamente archivos añadidos o modificados respecto al ZIP base.
+La migración 20260802_0024 debe aplicarse antes de arrancar la API actualizada.
+Consulta docs/AUTOGAL_FINAL_CORRECTIONS_20260802.md.
